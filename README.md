@@ -19,7 +19,9 @@ A production-ready, **installable PWA** that lets any university run **all of it
 
 ## 🚀 Deploy to Vercel
 
-1. Push/import this repo on [vercel.com/new](https://vercel.com/new)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Ftomabiswas411-source%2FUniversityHub&project-name=university-hub&repository-name=UniversityHub)
+
+1. Click **Deploy** above (or import the repo at [vercel.com/new](https://vercel.com/new))
 2. Add environment variables (Project → Settings → Environment Variables):
 
    | Name | Value |
