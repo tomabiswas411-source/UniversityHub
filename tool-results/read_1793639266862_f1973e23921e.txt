@@ -1,0 +1,809 @@
+     1→/**
+     2→ * UniversityHub — Database Seed Script
+     3→ * Seeds the remote Turso database with realistic demo data.
+     4→ * Usage: bun scripts/seed.ts
+     5→ *
+     6→ * WARNING: This wipes all existing data first (idempotent re-seed).
+     7→ */
+     8→import { PrismaClient } from "@prisma/client";
+     9→import { PrismaLibSQL } from "@prisma/adapter-libsql";
+    10→import bcrypt from "bcryptjs";
+    11→
+    12→// ---------- DB client (same logic as src/lib/db.ts) ----------
+    13→const url = process.env.TURSO_DATABASE_URL;
+    14→const authToken = process.env.TURSO_AUTH_TOKEN;
+    15→if (!url || !authToken) {
+    16→  console.error("Missing TURSO env vars");
+    17→  process.exit(1);
+    18→}
+    19→const libsql = new PrismaLibSQL({ url, authToken });
+    20→const db = new PrismaClient({ adapter: libsql });
+    21→
+    22→const PW_STAFF = await bcrypt.hash("Admin@2025", 10); // super admin
+    23→const PW_HEAD = await bcrypt.hash("Head@2025", 10);
+    24→const PW_TEACHER = await bcrypt.hash("Teacher@2025", 10);
+    25→
+    26→const DAYS = ["saturday", "sunday", "monday", "tuesday", "wednesday", "thursday"];
+    27→
+    28→async function wipe() {
+    29→  // FK-safe order
+    30→  await db.notification.deleteMany();
+    31→  await db.result.deleteMany();
+    32→  await db.assignment.deleteMany();
+    33→  await db.scheduleChange.deleteMany();
+    34→  await db.schedule.deleteMany();
+    35→  await db.notice.deleteMany();
+    36→  await db.academicCalendar.deleteMany();
+    37→  await db.siteSettings.deleteMany();
+    38→  await db.course.deleteMany();
+    39→  await db.room.deleteMany();
+    40→  await db.timeSlot.deleteMany();
+    41→  await db.program.deleteMany();
+    42→  await db.user.deleteMany();
+    43→  await db.department.deleteMany();
+    44→  await db.university.deleteMany();
+    45→  await db.plan.deleteMany();
+    46→  console.log("✓ Wiped existing data");
+    47→}
+    48→
+    49→async function seedPlans() {
+    50→  const plans = [
+    51→    {
+    52→      name: "Free",
+    53→      slug: "free",
+    54→      tagline: "Perfect for getting started",
+    55→      priceMonthly: 0,
+    56→      priceYearly: 0,
+    57→      maxDepartments: 2,
+    58→      maxStudents: 100,
+    59→      maxTeachers: 10,
+    60→      sortOrder: 1,
+    61→      features: JSON.stringify([
+    62→        "Up to 2 departments",
+    63→        "100 students",
+    64→        "Class routines & notices",
+    65→        "Basic notifications",
+    66→        "Community support",
+    67→      ]),
+    68→    },
+    69→    {
+    70→      name: "Basic",
+    71→      slug: "basic",
+    72→      tagline: "For small universities",
+    73→      priceMonthly: 49,
+    74→      priceYearly: 490,
+    75→      maxDepartments: 5,
+    76→      maxStudents: 1000,
+    77→      maxTeachers: 50,
+    78→      sortOrder: 2,
+    79→      features: JSON.stringify([
+    80→        "Up to 5 departments",
+    81→        "1,000 students",
+    82→        "Everything in Free",
+    83→        "PWA mobile app",
+    84→        "Real-time notifications + sound",
+    85→        "Assignments & results",
+    86→        "Email support",
+    87→      ]),
+    88→    },
+    89→    {
+    90→      name: "Standard",
+    91→      slug: "standard",
+    92→      tagline: "Most popular choice",
+    93→      priceMonthly: 99,
+    94→      priceYearly: 990,
+    95→      maxDepartments: 15,
+    96→      maxStudents: 5000,
+    97→      maxTeachers: 200,
+    98→      sortOrder: 3,
+    99→      features: JSON.stringify([
+   100→        "Up to 15 departments",
+   101→        "5,000 students",
+   102→        "Everything in Basic",
+   103→        "Academic calendar",
+   104→        "Advanced analytics",
+   105→        "Priority support",
+   106→        "Custom branding",
+   107→      ]),
+   108→    },
+   109→    {
+   110→      name: "Premium",
+   111→      slug: "premium",
+   112→      tagline: "For large institutions",
+   113→      priceMonthly: 199,
+   114→      priceYearly: 1990,
+   115→      maxDepartments: -1,
+   116→      maxStudents: -1,
+   117→      maxTeachers: -1,
+   118→      sortOrder: 4,
+   119→      features: JSON.stringify([
+   120→        "Unlimited departments",
+   121→        "Unlimited students",
+   122→        "Everything in Standard",
+   123→        "Dedicated account manager",
+   124→        "Custom integrations",
+   125→        "24/7 phone support",
+   126→        "SLA guarantee",
+   127→      ]),
+   128→    },
+   129→  ];
+   130→  for (const p of plans) await db.plan.create({ data: p });
+   131→  console.log("✓ 4 subscription plans created");
+   132→}
+   133→
+   134→async function seedUniversityAndDepartments() {
+   135→  const standard = await db.plan.findUnique({ where: { slug: "standard" } });
+   136→
+   137→  const ru = await db.university.create({
+   138→    data: {
+   139→      name: "University of Rajshahi",
+   140→      slug: "ru",
+   141→      shortName: "RU",
+   142→      address: "Rajshahi-6205, Bangladesh",
+   143→      contactEmail: "info@ru.ac.bd",
+   144→      contactPhone: "+880-741-7550",
+   145→      websiteURL: "https://www.ru.ac.bd",
+   146→      aboutText:
+   147→        "University of Rajshahi is one of the largest and premier public universities in Bangladesh, known for excellence in education and research.",
+   148→      planId: standard?.id,
+   149→    },
+   150→  });
+   151→
+   152→  const ice = await db.department.create({
+   153→    data: {
+   154→      universityId: ru.id,
+   155→      name: "Information & Communication Engineering",
+   156→      shortName: "ICE",
+   157→      code: "ICE",
+   158→      building: "ICE Building, Dean Complex",
+   159→      contactEmail: "ice@ru.ac.bd",
+   160→      contactPhone: "+880-1521706294",
+   161→      description:
+   162→        "The Department of Information & Communication Engineering blends computer science, electronics and communication technologies to produce skilled engineers.",
+   163→    },
+   164→  });
+   165→
+   166→  const cse = await db.department.create({
+   167→    data: {
+   168→      universityId: ru.id,
+   169→      name: "Computer Science & Engineering",
+   170→      shortName: "CSE",
+   171→      code: "CSE",
+   172→      building: "CSE Building, Science Complex",
+   173→      contactEmail: "cse@ru.ac.bd",
+   174→      description:
+   175→        "The Department of CSE offers modern computing education covering software engineering, AI, and systems.",
+   176→    },
+   177→  });
+   178→
+   179→  const math = await db.department.create({
+   180→    data: {
+   181→      universityId: ru.id,
+   182→      name: "Mathematics",
+   183→      shortName: "MATH",
+   184→      code: "MATH",
+   185→      building: "Science Building",
+   186→      contactEmail: "math@ru.ac.bd",
+   187→      description:
+   188→        "The Department of Mathematics is dedicated to pure and applied mathematics research and teaching.",
+   189→    },
+   190→  });
+   191→
+   192→  // Programs
+   193→  const iceBsc = await db.program.create({
+   194→    data: { departmentId: ice.id, name: "Bachelor of Science (Honours)", shortName: "BSc", semesterCount: 8 },
+   195→  });
+   196→  const iceMsc = await db.program.create({
+   197→    data: { departmentId: ice.id, name: "Master of Science", shortName: "MSc", semesterCount: 3 },
+   198→  });
+   199→  const cseBsc = await db.program.create({
+   200→    data: { departmentId: cse.id, name: "Bachelor of Science (Honours)", shortName: "BSc", semesterCount: 8 },
+   201→  });
+   202→  const mathBsc = await db.program.create({
+   203→    data: { departmentId: math.id, name: "Bachelor of Science (Honours)", shortName: "BSc", semesterCount: 8 },
+   204→  });
+   205→
+   206→  console.log("✓ University (RU) + 3 departments + 4 programs created");
+   207→  return { ru, ice, cse, math, iceBsc, iceMsc, cseBsc, mathBsc };
+   208→}
+   209→
+   210→async function seedUsers(ctx: Awaited<ReturnType<typeof seedUniversityAndDepartments>>) {
+   211→  const { ru, ice, cse, math, iceBsc, cseBsc, mathBsc } = ctx;
+   212→
+   213→  // ---- Platform Super Admin (no university) ----
+   214→  await db.user.create({
+   215→    data: {
+   216→      role: "super_admin",
+   217→      fullName: "System Manager",
+   218→      email: "admin@universityhub.com",
+   219→      password: PW_STAFF,
+   220→      designation: "Platform Administrator",
+   221→    },
+   222→  });
+   223→
+   224→  // ---- Department Heads ----
+   225→  await db.user.create({
+   226→    data: {
+   227→      universityId: ru.id,
+   228→      departmentId: ice.id,
+   229→      role: "dept_admin",
+   230→      fullName: "Prof. Dr. Ahsan Habib",
+   231→      email: "head.ice@ru.ac.bd",
+   232→      password: PW_HEAD,
+   233→      designation: "Department Head & Professor",
+   234→      officeRoom: "ICE-501",
+   235→      phone: "+8801711000001",
+   236→    },
+   237→  });
+   238→  await db.user.create({
+   239→    data: {
+   240→      universityId: ru.id,
+   241→      departmentId: cse.id,
+   242→      role: "dept_admin",
+   243→      fullName: "Prof. Dr. Nurul Islam",
+   244→      email: "head.cse@ru.ac.bd",
+   245→      password: PW_HEAD,
+   246→      designation: "Department Head & Professor",
+   247→      officeRoom: "CSE-401",
+   248→    },
+   249→  });
+   250→  await db.user.create({
+   251→    data: {
+   252→      universityId: ru.id,
+   253→      departmentId: math.id,
+   254→      role: "dept_admin",
+   255→      fullName: "Dr. Salma Khatun",
+   256→      email: "head.math@ru.ac.bd",
+   257→      password: PW_HEAD,
+   258→      designation: "Department Head & Associate Professor",
+   259→      officeRoom: "MATH-202",
+   260→    },
+   261→  });
+   262→
+   263→  // ---- ICE Teachers ----
+   264→  const iceTeachersData = [
+   265→    { fullName: "Dr. Md. Abdur Rahman", designation: "Professor", officeRoom: "ICE-401" },
+   266→    { fullName: "Dr. Samira Begum", designation: "Associate Professor", officeRoom: "ICE-402" },
+   267→    { fullName: "Tanvir Ahmed", designation: "Assistant Professor", officeRoom: "ICE-403" },
+   268→    { fullName: "Nusrat Jahan", designation: "Lecturer", officeRoom: "ICE-404" },
+   269→    { fullName: "Mahmudul Hasan", designation: "Lecturer", officeRoom: "ICE-405" },
+   270→  ];
+   271→  const iceTeachers = [];
+   272→  for (let i = 0; i < iceTeachersData.length; i++) {
+   273→    const t = iceTeachersData[i];
+   274→    iceTeachers.push(
+   275→      await db.user.create({
+   276→        data: {
+   277→          universityId: ru.id,
+   278→          departmentId: ice.id,
+   279→          role: "teacher",
+   280→          fullName: t.fullName,
+   281→          email: `teacher${i + 1}.ice@ru.ac.bd`,
+   282→          password: PW_TEACHER,
+   283→          designation: t.designation,
+   284→          officeRoom: t.officeRoom,
+   285→          bio: `${t.designation} at ICE, University of Rajshahi.`,
+   286→        },
+   287→      })
+   288→    );
+   289→  }
+   290→
+   291→  // ---- CSE Teachers ----
+   292→  const cseTeachers = [];
+   293→  const cseTeachersData = [
+   294→    { fullName: "Dr. Kamrul Hasan", designation: "Professor" },
+   295→    { fullName: "Rashida Akter", designation: "Assistant Professor" },
+   296→    { fullName: "Imran Kabir", designation: "Lecturer" },
+   297→  ];
+   298→  for (let i = 0; i < cseTeachersData.length; i++) {
+   299→    const t = cseTeachersData[i];
+   300→    cseTeachers.push(
+   301→      await db.user.create({
+   302→        data: {
+   303→          universityId: ru.id,
+   304→          departmentId: cse.id,
+   305→          role: "teacher",
+   306→          fullName: t.fullName,
+   307→          email: `teacher${i + 1}.cse@ru.ac.bd`,
+   308→          password: PW_TEACHER,
+   309→          designation: t.designation,
+   310→        },
+   311→      })
+   312→    );
+   313→  }
+   314→
+   315→  // ---- MATH Teachers ----
+   316→  const mathTeachers = [];
+   317→  for (let i = 0; i < 2; i++) {
+   318→    mathTeachers.push(
+   319→      await db.user.create({
+   320→        data: {
+   321→          universityId: ru.id,
+   322→          departmentId: math.id,
+   323→          role: "teacher",
+   324→          fullName: i === 0 ? "Dr. Farhana Yasmin" : "Abdul Karim",
+   325→          email: `teacher${i + 1}.math@ru.ac.bd`,
+   326→          password: PW_TEACHER,
+   327→          designation: i === 0 ? "Professor" : "Assistant Professor",
+   328→        },
+   329→      })
+   330→    );
+   331→  }
+   332→
+   333→  // ---- Students (ICE: 6, CSE: 3, MATH: 2) ----
+   334→  const students = [];
+   335→  const studentPlan = [
+   336→    { dept: ice, program: iceBsc, count: 6, prefix: 21, idBase: 2103001, rollBase: 2103001, section: "A" },
+   337→    { dept: cse, program: cseBsc, count: 3, prefix: 21, idBase: 2105001, rollBase: 2105001, section: "A" },
+   338→    { dept: math, program: mathBsc, count: 2, prefix: 21, idBase: 2107001, rollBase: 2107001, section: "B" },
+   339→  ];
+   340→  const studentNames = [
+   341→    "Topu Biswas", "Sadia Afrin", "Rakib Hossain", "Mehedi Hasan",
+   342→    "Tasnim Rahman", "Arif Chowdhury", "Lima Akter", "Sohan Mahmud",
+   343→    "Jannatul Ferdous", "Rasel Mia", "Priya Sarker", "Naeem Uddin",
+   344→  ];
+   345→  let nameIdx = 0;
+   346→  for (const sp of studentPlan) {
+   347→    for (let i = 0; i < sp.count; i++) {
+   348→      const idNumber = String(sp.idBase + i);
+   349→      const roll = String(sp.rollBase + i);
+   350→      students.push(
+   351→        await db.user.create({
+   352→          data: {
+   353→            universityId: ru.id,
+   354→            departmentId: sp.dept.id,
+   355→            role: "student",
+   356→            fullName: studentNames[nameIdx++ % studentNames.length],
+   357→            studentIdNumber: idNumber,
+   358→            rollNumber: roll,
+   359→            programId: sp.program.id,
+   360→            semester: 1,
+   361→            section: sp.section,
+   362→            designation: "Student",
+   363→          },
+   364→        })
+   365→      );
+   366→    }
+   367→  }
+   368→
+   369→  console.log(
+   370→    `✓ Users created: 1 super admin, 3 heads, ${iceTeachers.length + cseTeachers.length + mathTeachers.length} teachers, ${students.length} students`
+   371→  );
+   372→  return { iceTeachers, cseTeachers, mathTeachers, students };
+   373→}
+   374→
+   375→async function seedAcademics(
+   376→  ctx: Awaited<ReturnType<typeof seedUniversityAndDepartments>>,
+   377→  users: Awaited<ReturnType<typeof seedUsers>>
+   378→) {
+   379→  const { ice, cse, math, iceBsc, iceMsc, cseBsc, mathBsc } = ctx;
+   380→
+   381→  // ---- Courses ----
+   382→  const iceCoursesData = [
+   383→    { code: "ICE-1101", name: "Digital Electronics", creditHours: 3, type: "theory", semester: 1, programId: iceBsc.id },
+   384→    { code: "ICE-1102", name: "Programming Fundamentals", creditHours: 3, type: "theory", semester: 1, programId: iceBsc.id },
+   385→    { code: "ICE-1103", name: "Electrical Circuits", creditHours: 3, type: "theory", semester: 1, programId: iceBsc.id },
+   386→    { code: "ICE-1104", name: "Programming Lab", creditHours: 1.5, type: "lab", semester: 1, programId: iceBsc.id },
+   387→    { code: "ICE-2101", name: "Data Structures", creditHours: 3, type: "theory", semester: 2, programId: iceBsc.id },
+   388→    { code: "ICE-2102", name: "Digital Logic Design", creditHours: 3, type: "theory", semester: 2, programId: iceBsc.id },
+   389→    { code: "ICE-5101", name: "Advanced Algorithms", creditHours: 3, type: "theory", semester: 1, programId: iceMsc.id },
+   390→    { code: "ICE-5102", name: "Machine Learning", creditHours: 3, type: "theory", semester: 1, programId: iceMsc.id },
+   391→  ];
+   392→  const iceCourses = [];
+   393→  for (const c of iceCoursesData) {
+   394→    iceCourses.push(await db.course.create({ data: { ...c, departmentId: ice.id } }));
+   395→  }
+   396→
+   397→  const cseCoursesData = [
+   398→    { code: "CSE-1101", name: "Introduction to Computing", creditHours: 3, type: "theory", semester: 1, programId: cseBsc.id },
+   399→    { code: "CSE-1102", name: "Structured Programming", creditHours: 3, type: "theory", semester: 1, programId: cseBsc.id },
+   400→    { code: "CSE-1104", name: "Programming Lab", creditHours: 1.5, type: "lab", semester: 1, programId: cseBsc.id },
+   401→  ];
+   402→  const cseCourses = [];
+   403→  for (const c of cseCoursesData) {
+   404→    cseCourses.push(await db.course.create({ data: { ...c, departmentId: cse.id } }));
+   405→  }
+   406→
+   407→  const mathCourses = [];
+   408→  const mathCoursesData = [
+   409→    { code: "MATH-1101", name: "Calculus", creditHours: 4, type: "theory", semester: 1, programId: mathBsc.id },
+   410→    { code: "MATH-1102", name: "Linear Algebra", creditHours: 3, type: "theory", semester: 1, programId: mathBsc.id },
+   411→  ];
+   412→  for (const c of mathCoursesData) {
+   413→    mathCourses.push(await db.course.create({ data: { ...c, departmentId: math.id } }));
+   414→  }
+   415→
+   416→  // ---- Rooms ----
+   417→  const iceRoomsData = [
+   418→    { roomNumber: "301", type: "classroom", capacity: 50 },
+   419→    { roomNumber: "302", type: "classroom", capacity: 50 },
+   420→    { roomNumber: "Lab-1", type: "lab", capacity: 30 },
+   421→    { roomNumber: "Lab-2", type: "lab", capacity: 30 },
+   422→  ];
+   423→  const iceRooms = [];
+   424→  for (const r of iceRoomsData) {
+   425→    iceRooms.push(await db.room.create({ data: { ...r, departmentId: ice.id, building: "ICE Building" } }));
+   426→  }
+   427→  const cseRooms = [];
+   428→  for (const r of [
+   429→    { roomNumber: "201", type: "classroom", capacity: 45 },
+   430→    { roomNumber: "Lab-1", type: "lab", capacity: 35 },
+   431→  ]) {
+   432→    cseRooms.push(await db.room.create({ data: { ...r, departmentId: cse.id, building: "CSE Building" } }));
+   433→  }
+   434→  const mathRooms = [
+   435→    await db.room.create({ data: { roomNumber: "105", type: "classroom", capacity: 60, departmentId: math.id, building: "Science Building" } }),
+   436→  ];
+   437→
+   438→  // ---- TimeSlots (shared pattern per department) ----
+   439→  async function makeSlots(departmentId: string) {
+   440→    const slotDefs = [
+   441→      { label: "1st Period", startTime: "08:00", endTime: "08:50", slotOrder: 1 },
+   442→      { label: "2nd Period", startTime: "09:00", endTime: "09:50", slotOrder: 2 },
+   443→      { label: "3rd Period", startTime: "10:00", endTime: "10:50", slotOrder: 3 },
+   444→      { label: "4th Period", startTime: "11:00", endTime: "11:50", slotOrder: 4 },
+   445→      { label: "Lunch Break", startTime: "12:00", endTime: "13:00", slotOrder: 5, isBreak: true },
+   446→      { label: "5th Period", startTime: "13:00", endTime: "13:50", slotOrder: 6 },
+   447→      { label: "6th Period", startTime: "14:00", endTime: "14:50", slotOrder: 7 },
+   448→    ];
+   449→    const slots = [];
+   450→    for (const s of slotDefs) slots.push(await db.timeSlot.create({ data: { ...s, departmentId } }));
+   451→    return slots;
+   452→  }
+   453→  const iceSlots = await makeSlots(ice.id);
+   454→  const cseSlots = await makeSlots(cse.id);
+   455→  const mathSlots = await makeSlots(math.id);
+   456→
+   457→  console.log("✓ Courses, rooms & time slots created");
+   458→
+   459→  return { iceCourses, cseCourses, mathCourses, iceRooms, cseRooms, mathRooms, iceSlots, cseSlots, mathSlots };
+   460→}
+   461→
+   462→async function seedSchedules(
+   463→  ctx: Awaited<ReturnType<typeof seedUniversityAndDepartments>>,
+   464→  users: Awaited<ReturnType<typeof seedUsers>>,
+   465→  academics: Awaited<ReturnType<typeof seedAcademics>>
+   466→) {
+   467→  const { ice, cse, math, iceBsc, iceMsc, cseBsc, mathBsc } = ctx;
+   468→  const { iceTeachers, cseTeachers, mathTeachers } = users;
+   469→  const { iceCourses, cseCourses, mathCourses, iceRooms, cseRooms, mathRooms, iceSlots, cseSlots, mathSlots } = academics;
+   470→
+   471→  let total = 0;
+   472→  const busyTeacher = new Set<string>(); // `${teacherId}|${day}|${slotIdx}`
+   473→  const busyRoom = new Set<string>(); // `${roomId}|${day}|${slotIdx}`
+   474→
+   475→  async function place(
+   476→    departmentId: string,
+   477→    programId: string,
+   478→    semester: number,
+   479→    course: { id: string; code: string; name: string; type: string },
+   480→    teachers: { id: string; fullName: string }[],
+   481→    rooms: { id: string; roomNumber: string }[],
+   482→    slots: { id: string; startTime: string; endTime: string; isBreak: boolean }[],
+   483→    day: string,
+   484→    slotIdx: number,
+   485→    createdById: string
+   486→  ): Promise<boolean> {
+   487→    const slot = slots[slotIdx];
+   488→    if (!slot || slot.isBreak) return false;
+   489→
+   490→    // find free teacher (prefer one whose subject area fits by round robin)
+   491→    let chosenTeacher = null;
+   492→    for (const t of teachers) {
+   493→      const key = `${t.id}|${day}|${slotIdx}`;
+   494→      if (!busyTeacher.has(key)) {
+   495→        chosenTeacher = t;
+   496→        break;
+   497→      }
+   498→    }
+   499→    if (!chosenTeacher) return false;
+   500→
+   501→    // find free room — labs need lab rooms
+   502→    let chosenRoom = null;
+   503→    for (const r of rooms) {
+   504→      const key = `${r.id}|${day}|${slotIdx}`;
+   505→      const isLabRoom = r.roomNumber.toLowerCase().includes("lab");
+   506→      if (course.type === "lab" && !isLabRoom) continue;
+   507→      if (course.type !== "lab" && isLabRoom) continue;
+   508→      if (!busyRoom.has(key)) {
+   509→        chosenRoom = r;
+   510→        break;
+   511→      }
+   512→    }
+   513→    if (!chosenRoom) return false;
+   514→
+   515→    busyTeacher.add(`${chosenTeacher.id}|${day}|${slotIdx}`);
+   516→    busyRoom.add(`${chosenRoom.id}|${day}|${slotIdx}`);
+   517→
+   518→    await db.schedule.create({
+   519→      data: {
+   520→        departmentId,
+   521→        programId,
+   522→        semester,
+   523→        courseId: course.id,
+   524→        teacherId: chosenTeacher.id,
+   525→        roomId: chosenRoom.id,
+   526→        timeSlotId: slot.id,
+   527→        courseCode: course.code,
+   528→        courseName: course.name,
+   529→        teacherName: chosenTeacher.fullName,
+   530→        roomNumber: chosenRoom.roomNumber,
+   531→        startTime: slot.startTime,
+   532→        endTime: slot.endTime,
+   533→        dayOfWeek: day,
+   534→        classType: course.type === "lab" ? "lab" : "theory",
+   535→        createdBy: createdById,
+   536→      },
+   537→    });
+   538→    total++;
+   539→    return true;
+   540→  }
+   541→
+   542→  // ICE heads create their own schedules
+   543→  const iceHead = await db.user.findFirst({ where: { departmentId: ice.id, role: "dept_admin" } });
+   544→  const cseHead = await db.user.findFirst({ where: { departmentId: cse.id, role: "dept_admin" } });
+   545→  const mathHead = await db.user.findFirst({ where: { departmentId: math.id, role: "dept_admin" } });
+   546→
+   547→  // --- ICE BSc 1st semester: 3 classes/day on 5 days ---
+   548→  const ice1 = iceCourses.filter((c) => c.semester === 1 && c.programId === iceBsc.id);
+   549→  const ice1Grid: [number, number][] = [
+   550→    [0, 0], [0, 1], [0, 2],
+   551→    [1, 0], [1, 2], [1, 3],
+   552→    [2, 1], [2, 2],
+   553→    [3, 0], [3, 1], [3, 3],
+   554→    [4, 0], [4, 2],
+   555→  ];
+   556→  let ci = 0;
+   557→  for (const [dayIdx, slotIdx] of ice1Grid) {
+   558→    const course = ice1[ci % ice1.length];
+   559→    await place(ice.id, iceBsc.id, 1, course, iceTeachers, iceRooms, iceSlots, DAYS[dayIdx], slotIdx, iceHead!.id);
+   560→    ci++;
+   561→  }
+   562→
+   563→  // --- ICE BSc 2nd semester ---
+   564→  const ice2 = iceCourses.filter((c) => c.semester === 2);
+   565→  const ice2Grid: [number, number][] = [
+   566→    [0, 1], [0, 3], [1, 1], [2, 0], [2, 3], [3, 2], [4, 1],
+   567→  ];
+   568→  ci = 0;
+   569→  for (const [dayIdx, slotIdx] of ice2Grid) {
+   570→    const course = ice2[ci % ice2.length];
+   571→    await place(ice.id, iceBsc.id, 2, course, iceTeachers, iceRooms, iceSlots, DAYS[dayIdx], slotIdx, iceHead!.id);
+   572→    ci++;
+   573→  }
+   574→
+   575→  // --- ICE MSc 1st semester ---
+   576→  const iceM = iceCourses.filter((c) => c.programId === iceMsc.id);
+   577→  const iceMGrid: [number, number][] = [[0, 0], [0, 2], [1, 3], [3, 0], [4, 3]];
+   578→  ci = 0;
+   579→  for (const [dayIdx, slotIdx] of iceMGrid) {
+   580→    const course = iceM[ci % iceM.length];
+   581→    await place(ice.id, iceMsc.id, 1, course, iceTeachers, iceRooms, iceSlots, DAYS[dayIdx], slotIdx, iceHead!.id);
+   582→    ci++;
+   583→  }
+   584→
+   585→  // --- CSE BSc 1st semester ---
+   586→  const cseGrid: [number, number][] = [[0, 0], [0, 1], [1, 2], [2, 0], [3, 1], [4, 0]];
+   587→  ci = 0;
+   588→  for (const [dayIdx, slotIdx] of cseGrid) {
+   589→    const course = cseCourses[ci % cseCourses.length];
+   590→    await place(cse.id, cseBsc.id, 1, course, cseTeachers, cseRooms, cseSlots, DAYS[dayIdx], slotIdx, cseHead!.id);
+   591→    ci++;
+   592→  }
+   593→
+   594→  // --- MATH BSc 1st semester ---
+   595→  const mathGrid: [number, number][] = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]];
+   596→  ci = 0;
+   597→  for (const [dayIdx, slotIdx] of mathGrid) {
+   598→    const course = mathCourses[ci % mathCourses.length];
+   599→    await place(math.id, mathBsc.id, 1, course, mathTeachers, mathRooms, mathSlots, DAYS[dayIdx], slotIdx, mathHead!.id);
+   600→    ci++;
+   601→  }
+   602→
+   603→  console.log(`✓ ${total} schedules created (conflict-free)`);
+   604→  return total;
+   605→}
+   606→
+   607→async function seedContent(
+   608→  ctx: Awaited<ReturnType<typeof seedUniversityAndDepartments>>,
+   609→  users: Awaited<ReturnType<typeof seedUsers>>,
+   610→  academics: Awaited<ReturnType<typeof seedAcademics>>
+   611→) {
+   612→  const { ru, ice, cse, math, iceBsc } = ctx;
+   613→  const { iceTeachers, students } = users;
+   614→  const { iceCourses } = academics;
+   615→
+   616→  const iceHead = await db.user.findFirst({ where: { departmentId: ice.id, role: "dept_admin" } });
+   617→  const cseHead = await db.user.findFirst({ where: { departmentId: cse.id, role: "dept_admin" } });
+   618→
+   619→  // ---- Site settings ----
+   620→  await db.siteSettings.create({
+   621→    data: {
+   622→      universityId: ru.id,
+   623→      siteName: "UniversityHub",
+   624→      heroText: "One platform for every department — classes, notices, results and more.",
+   625→      academicSession: "Academic Session 2025",
+   626→      contactEmail: "info@ru.ac.bd",
+   627→      contactPhone: "+880-741-7550",
+   628→      address: "Rajshahi-6205, Bangladesh",
+   629→      aboutText:
+   630→        "UniversityHub is the official academic management platform of University of Rajshahi — bringing every department's routine, notices and academic services into one place.",
+   631→      developerName: "Topu Biswas (AI)",
+   632→    },
+   633→  });
+   634→
+   635→  // ---- Notices ----
+   636→  await db.notice.create({
+   637→    data: {
+   638→      departmentId: ice.id,
+   639→      title: "Welcome to the New Academic Session 2025",
+   640→      content:
+   641→        "All students and teachers of the ICE Department are warmly welcomed to the academic session 2025. Classes begin from Saturday. Please check your weekly routine on this platform regularly.",
+   642→      category: "general",
+   643→      audience: "all",
+   644→      postedBy: iceHead!.id,
+   645→      postedByName: iceHead!.fullName,
+   646→      isPinned: true,
+   647→    },
+   648→  });
+   649→  await db.notice.create({
+   650→    data: {
+   651→      departmentId: ice.id,
+   652→      title: "Mid-Term Examination Schedule Published",
+   653→      content:
+   654→        "The mid-term examination for 1st semester BSc will start from next Sunday. Exam schedule: 10:00 AM - 11:30 AM. Detailed seat plan will be published soon on the notice board.",
+   655→      category: "exam",
+   656→      audience: "students",
+   657→      programId: iceBsc.id,
+   658→      semester: 1,
+   659→      postedBy: iceHead!.id,
+   660→      postedByName: iceHead!.fullName,
+   661→    },
+   662→  });
+   663→  await db.notice.create({
+   664→    data: {
+   665→      departmentId: ice.id,
+   666→      title: "ICE-1104 Lab Class Moved to Lab-2",
+   667→      content: "This week's Programming Lab (ICE-1104) will be held in Lab-2 instead of Lab-1 due to maintenance work.",
+   668→      category: "academic",
+   669→      audience: "students",
+   670→      programId: iceBsc.id,
+   671→      semester: 1,
+   672→      postedBy: iceHead!.id,
+   673→      postedByName: iceHead!.fullName,
+   674→    },
+   675→  });
+   676→  await db.notice.create({
+   677→    data: {
+   678→      departmentId: cse.id,
+   679→      title: "CSE Freshers' Orientation Program",
+   680→      content: "The orientation program for newly admitted CSE students will be held next Thursday at 10 AM in the CSE seminar hall.",
+   681→      category: "event",
+   682→      audience: "all",
+   683→      postedBy: cseHead!.id,
+   684→      postedByName: cseHead!.fullName,
+   685→    },
+   686→  });
+   687→
+   688→  // ---- Academic calendar ----
+   689→  const now = new Date();
+   690→  const cal = [
+   691→    { title: "Mid-Term Examination Begins", days: 7, eventType: "exam" },
+   692→    { title: "Eid-ul-Fitr Holiday (University Closed)", days: 21, eventType: "holiday" },
+   693→    { title: "Final Examination Form Fill-up Deadline", days: 35, eventType: "exam" },
+   694→    { title: "Annual Sports Competition", days: 45, eventType: "event" },
+   695→  ];
+   696→  for (const c of cal) {
+   697→    const d = new Date(now.getTime() + c.days * 24 * 60 * 60 * 1000);
+   698→    await db.academicCalendar.create({
+   699→      data: {
+   700→        universityId: ru.id,
+   701→        title: c.title,
+   702→        date: d,
+   703→        eventType: c.eventType,
+   704→        description: `${c.eventType === "exam" ? "Examination" : "Event"} scheduled for the session 2025.`,
+   705→      },
+   706→    });
+   707→  }
+   708→
+   709→  // ---- Assignments ----
+   710→  const progCourse = iceCourses.find((c) => c.code === "ICE-1102")!;
+   711→  await db.assignment.create({
+   712→    data: {
+   713→      departmentId: ice.id,
+   714→      courseId: progCourse.id,
+   715→      teacherId: iceTeachers[1].id,
+   716→      title: "Assignment 1: Basic C Programs",
+   717→      description:
+   718→        "Write C programs for the following problems: 1) Fibonacci series, 2) Prime number check, 3) Matrix multiplication. Submit printed hard copy in class.",
+   719→      dueDate: new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000),
+   720→      maxMarks: 20,
+   721→    },
+   722→  });
+   723→  await db.assignment.create({
+   724→    data: {
+   725→      departmentId: ice.id,
+   726→      courseId: progCourse.id,
+   727→      teacherId: iceTeachers[1].id,
+   728→      title: "Lab Report: Loop Programs",
+   729→      description: "Submit lab report covering all loop-based experiments performed in weeks 1-3.",
+   730→      dueDate: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
+   731→      maxMarks: 15,
+   732→    },
+   733→  });
+   734→
+   735→  // ---- Results (CT1 for ICE-1101) ----
+   736→  const digitalCourse = iceCourses.find((c) => c.code === "ICE-1101")!;
+   737→  const iceStudents = students.filter((s) => s.departmentId === ice.id);
+   738→  const marks = [17.5, 15, 19, 12.5, 16, 18];
+   739→  for (let i = 0; i < Math.min(iceStudents.length, marks.length); i++) {
+   740→    const m = marks[i];
+   741→    await db.result.create({
+   742→      data: {
+   743→        departmentId: ice.id,
+   744→        courseId: digitalCourse.id,
+   745→        studentId: iceStudents[i].id,
+   746→        enteredBy: iceTeachers[0].id,
+   747→        examType: "ct1",
+   748→        marks: m,
+   749→        maxMarks: 20,
+   750→        grade: m >= 16 ? "A" : m >= 14 ? "A-" : m >= 12 ? "B" : "B-",
+   751→      },
+   752→    });
+   753→  }
+   754→
+   755→  // ---- Notifications for ICE students ----
+   756→  for (const s of iceStudents.slice(0, 4)) {
+   757→    await db.notification.create({
+   758→      data: {
+   759→        userId: s.id,
+   760→        title: "Welcome to UniversityHub 🎓",
+   761→        body: "Your department's routine, notices and updates are now in one place. You will get instant notifications here.",
+   762→        type: "general",
+   763→      },
+   764→    });
+   765→    await db.notification.create({
+   766→      data: {
+   767→        userId: s.id,
+   768→        title: "New Assignment: Basic C Programs",
+   769→        body: "ICE-1102 — Assignment 1 has been published. Due in 10 days. Check your dashboard for details.",
+   770→        type: "assignment",
+   771→      },
+   772→    });
+   773→  }
+   774→
+   775→  console.log("✓ Settings, notices, calendar, assignments, results & notifications seeded");
+   776→}
+   777→
+   778→async function main() {
+   779→  console.log("🌱 Seeding UniversityHub (Turso)...");
+   780→  await wipe();
+   781→  await seedPlans();
+   782→  const ctx = await seedUniversityAndDepartments();
+   783→  const users = await seedUsers(ctx);
+   784→  const academics = await seedAcademics(ctx, users);
+   785→  await seedSchedules(ctx, users, academics);
+   786→  await seedContent(ctx, users, academics);
+   787→
+   788→  const counts = {
+   789→    universities: await db.university.count(),
+   790→    departments: await db.department.count(),
+   791→    users: await db.user.count(),
+   792→    courses: await db.course.count(),
+   793→    schedules: await db.schedule.count(),
+   794→    notices: await db.notice.count(),
+   795→    notifications: await db.notification.count(),
+   796→  };
+   797→  console.log("📊 Final counts:", counts);
+   798→  console.log("✅ Seed complete!");
+   799→}
+   800→
+   801→main()
+   802→  .catch((e) => {
+   803→    console.error("Seed failed:", e);
+   804→    process.exit(1);
+   805→  })
+   806→  .finally(async () => {
+   807→    await db.$disconnect();
+   808→  });
+   809→

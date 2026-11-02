@@ -1,0 +1,854 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useState } from "react";
+     4→import { motion } from "framer-motion";
+     5→import {
+     6→  Award,
+     7→  Bell,
+     8→  BookOpen,
+     9→  CalendarCheck,
+    10→  CalendarClock,
+    11→  CalendarDays,
+    12→  CalendarRange,
+    13→  CalendarX2,
+    14→  CloudOff,
+    15→  Coffee,
+    16→  ClipboardList,
+    17→  CreditCard,
+    18→  GraduationCap,
+    19→  Hash,
+    20→  MapPin,
+    21→  Megaphone,
+    22→  Pin,
+    23→  RefreshCw,
+    24→  Sunrise,
+    25→  User,
+    26→} from "lucide-react";
+    27→import type { LucideIcon } from "lucide-react";
+    28→import { Badge } from "@/components/ui/badge";
+    29→import { Button } from "@/components/ui/button";
+    30→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    31→import { toast } from "@/hooks/use-toast";
+    32→import { apiGet } from "@/lib/api-client";
+    33→import { useAuthStore } from "@/store/auth-store";
+    34→import {
+    35→  CategoryBadge,
+    36→  ChangeTypeBadge,
+    37→  EmptyState,
+    38→  ExamTypeBadge,
+    39→  GRADIENT_BTN,
+    40→  PanelLoader,
+    41→  SectionCard,
+    42→  StatCard,
+    43→  TimetableGrid,
+    44→} from "@/components/dashboards/dashboard-shared";
+    45→import { timeAgo } from "@/components/shared/notification-bell";
+    46→import type {
+    47→  AcademicCalendarDTO,
+    48→  AssignmentDTO,
+    49→  DayOfWeek,
+    50→  NoticeDTO,
+    51→  ResultDTO,
+    52→  ScheduleChangeDTO,
+    53→  ScheduleDTO,
+    54→  TimeSlotDTO,
+    55→} from "@/types";
+    56→import { DAY_LABELS } from "@/types";
+    57→import { cn } from "@/lib/utils";
+    58→
+    59→/* ============================================================
+    60→   StudentPanel — student home base (view-only)
+    61→   Design language: "Aurora Royale" (violet → fuchsia → amber)
+    62→   ============================================================ */
+    63→
+    64→interface StudentProfile {
+    65→  fullName: string;
+    66→  rollNumber: string | null;
+    67→  studentIdNumber: string | null;
+    68→  semester: number | null;
+    69→  section: string | null;
+    70→  departmentName: string | null;
+    71→  departmentShortName: string | null;
+    72→  universityName: string | null;
+    73→  programId: string | null;
+    74→}
+    75→
+    76→interface StudentDashboardData {
+    77→  profile: StudentProfile;
+    78→  schedules: ScheduleDTO[];
+    79→  changes: ScheduleChangeDTO[];
+    80→  notices: NoticeDTO[];
+    81→  assignments: AssignmentDTO[];
+    82→  results: ResultDTO[];
+    83→  timeSlots: TimeSlotDTO[];
+    84→  calendar: AcademicCalendarDTO[];
+    85→  unreadCount: number;
+    86→  todayClasses: number;
+    87→}
+    88→
+    89→/* ---------------- local helpers ---------------- */
+    90→
+    91→function currentDay(): DayOfWeek {
+    92→  return new Date()
+    93→    .toLocaleDateString("en-US", { weekday: "long" })
+    94→    .toLowerCase() as DayOfWeek;
+    95→}
+    96→
+    97→function fmtDate(iso: string): string {
+    98→  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    99→}
+   100→
+   101→function fmtTime(t: string): string {
+   102→  return t.length >= 5 ? t.slice(0, 5) : t;
+   103→}
+   104→
+   105→function initials(name: string): string {
+   106→  const parts = name.trim().split(/\s+/).slice(0, 2);
+   107→  return (parts.map((w) => w[0]?.toUpperCase() ?? "").join("") || "S");
+   108→}
+   109→
+   110→const CHANGE_BORDER: Record<string, string> = {
+   111→  cancelled: "border-l-rose-500",
+   112→  rescheduled: "border-l-amber-500",
+   113→  time_changed: "border-l-amber-500",
+   114→  room_changed: "border-l-fuchsia-500",
+   115→  extra_class: "border-l-emerald-500",
+   116→};
+   117→
+   118→const EVENT_BADGE: Record<string, string> = {
+   119→  holiday: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
+   120→  exam: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300",
+   121→  event: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
+   122→  class: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+   123→};
+   124→
+   125→function gradeBadgeCls(grade: string | null): string {
+   126→  if (!grade) return "bg-muted text-muted-foreground";
+   127→  if (grade.startsWith("A+"))
+   128→    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
+   129→  if (grade.startsWith("A"))
+   130→    return "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300";
+   131→  if (grade.startsWith("B"))
+   132→    return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
+   133→  if (grade.startsWith("F"))
+   134→    return "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300";
+   135→  return "bg-muted text-muted-foreground"; // C / D
+   136→}
+   137→
+   138→function dueChip(dueISO: string | null): { label: string; cls: string } {
+   139→  if (!dueISO) return { label: "No due date", cls: "bg-muted text-muted-foreground" };
+   140→  const due = new Date(dueISO);
+   141→  const now = new Date();
+   142→  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+   143→  const startOfDue = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+   144→  const days = Math.round((startOfDue.getTime() - startOfToday.getTime()) / 86_400_000);
+   145→  if (days < 0)
+   146→    return { label: "Overdue", cls: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" };
+   147→  if (days <= 3)
+   148→    return {
+   149→      label: days === 0 ? "Due today" : `Due in ${days}d`,
+   150→      cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
+   151→    };
+   152→  return { label: fmtDate(dueISO), cls: "bg-muted text-muted-foreground" };
+   153→}
+   154→
+   155→/* ---------------- small local pieces ---------------- */
+   156→
+   157→function HeroPill({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
+   158→  return (
+   159→    <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur">
+   160→      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+   161→      {children}
+   162→    </span>
+   163→  );
+   164→}
+   165→
+   166→function ChangeRow({ change }: { change: ScheduleChangeDTO }) {
+   167→  const details: string[] = [];
+   168→  if (change.newDay) details.push(DAY_LABELS[change.newDay as DayOfWeek] ?? change.newDay);
+   169→  if (change.newStartTime)
+   170→    details.push(
+   171→      `${fmtTime(change.newStartTime)}${change.newEndTime ? `–${fmtTime(change.newEndTime)}` : ""}`
+   172→    );
+   173→  if (change.newRoomNumber) details.push(`Room ${change.newRoomNumber}`);
+   174→
+   175→  return (
+   176→    <div
+   177→      className={cn(
+   178→        "rounded-xl border bg-background/60 p-3 border-l-4 sm:p-4",
+   179→        CHANGE_BORDER[change.changeType] ?? "border-l-foreground/25"
+   180→      )}
+   181→    >
+   182→      <div className="flex flex-wrap items-center gap-2">
+   183→        <ChangeTypeBadge type={change.changeType} />
+   184→        <span className="text-sm font-bold">{change.courseCode}</span>
+   185→        {change.courseName && (
+   186→          <span className="min-w-0 truncate text-xs text-muted-foreground">{change.courseName}</span>
+   187→        )}
+   188→      </div>
+   189→      <p className="mt-1 text-sm text-muted-foreground">{change.reason}</p>
+   190→      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+   191→        <span className="inline-flex items-center gap-1">
+   192→          <CalendarDays className="h-3 w-3" aria-hidden />
+   193→          Effective {fmtDate(change.effectiveDate)}
+   194→        </span>
+   195→        {details.length > 0 && (
+   196→          <span className="inline-flex items-center gap-1">
+   197→            <MapPin className="h-3 w-3" aria-hidden />
+   198→            {details.join(" · ")}
+   199→          </span>
+   200→        )}
+   201→      </div>
+   202→    </div>
+   203→  );
+   204→}
+   205→
+   206→/* ---------------- main component ---------------- */
+   207→
+   208→export function StudentPanel() {
+   209→  const [data, setData] = useState<StudentDashboardData | null>(null);
+   210→  const [loading, setLoading] = useState(true);
+   211→  const [error, setError] = useState<string | null>(null);
+   212→  const [expandedNotices, setExpandedNotices] = useState<Record<string, boolean>>({});
+   213→  const authUser = useAuthStore((s) => s.user);
+   214→
+   215→  const load = useCallback(async () => {
+   216→    setLoading(true);
+   217→    setError(null);
+   218→    try {
+   219→      const res = await apiGet<StudentDashboardData>("/api/student/dashboard");
+   220→      setData(res);
+   221→    } catch (err) {
+   222→      const message = err instanceof Error ? err.message : "Something went wrong";
+   223→      setError(message);
+   224→      toast({
+   225→        title: "Couldn't load your dashboard",
+   226→        description: message,
+   227→        variant: "destructive",
+   228→      });
+   229→    } finally {
+   230→      setLoading(false);
+   231→    }
+   232→  }, []);
+   233→
+   234→  useEffect(() => {
+   235→    void load();
+   236→  }, [load]);
+   237→
+   238→  /* ---- profile (API is source of truth, auth store as fallback) ---- */
+   239→  const profile = data?.profile ?? null;
+   240→  const fullName = profile?.fullName || authUser?.fullName || "Student";
+   241→  const firstName = fullName.trim().split(/\s+/)[0] || "Student";
+   242→  const rollNumber = profile?.rollNumber ?? authUser?.rollNumber ?? null;
+   243→  const studentIdNumber = profile?.studentIdNumber ?? authUser?.studentIdNumber ?? null;
+   244→  const semester = profile?.semester ?? authUser?.semester ?? null;
+   245→  const section = profile?.section ?? authUser?.section ?? null;
+   246→  const deptShort = profile?.departmentShortName ?? null;
+   247→  const universityName = profile?.universityName ?? authUser?.universityName ?? null;
+   248→  const programLine = `${deptShort ? `${deptShort} · ` : ""}Semester ${semester ?? "–"}${
+   249→    section ? ` · Section ${section}` : ""
+   250→  }`;
+   251→
+   252→  /* ---- derived data ---- */
+   253→  const today = currentDay();
+   254→
+   255→  const todayList = useMemo(() => {
+   256→    return (data?.schedules ?? [])
+   257→      .filter((s) => s.dayOfWeek === today)
+   258→      .sort((a, b) => a.startTime.localeCompare(b.startTime));
+   259→  }, [data, today]);
+   260→
+   261→  const uniqueCourses = useMemo(
+   262→    () => new Set((data?.schedules ?? []).map((s) => s.courseCode)).size,
+   263→    [data]
+   264→  );
+   265→
+   266→  const sortedAssignments = useMemo(() => {
+   267→    return [...(data?.assignments ?? [])].sort((a, b) => {
+   268→      if (!a.dueDate && !b.dueDate) return 0;
+   269→      if (!a.dueDate) return 1;
+   270→      if (!b.dueDate) return -1;
+   271→      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+   272→    });
+   273→  }, [data]);
+   274→
+   275→  const soonestDue = sortedAssignments.find(
+   276→    (a) => a.dueDate && new Date(a.dueDate).getTime() >= Date.now()
+   277→  );
+   278→  const assignmentsSub = soonestDue?.dueDate
+   279→    ? `Next due ${fmtDate(soonestDue.dueDate)}`
+   280→    : sortedAssignments.length > 0
+   281→      ? "No upcoming due dates"
+   282→      : undefined;
+   283→
+   284→  const sortedChanges = useMemo(() => {
+   285→    return [...(data?.changes ?? [])].sort(
+   286→      (a, b) =>
+   287→        new Date(b.effectiveDate).getTime() - new Date(a.effectiveDate).getTime() ||
+   288→        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+   289→    );
+   290→  }, [data]);
+   291→  const recentChanges = sortedChanges.slice(0, 6);
+   292→
+   293→  const sortedCalendar = useMemo(() => {
+   294→    return [...(data?.calendar ?? [])].sort(
+   295→      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+   296→    );
+   297→  }, [data]);
+   298→
+   299→  const resultGroups = useMemo(() => {
+   300→    const map = new Map<string, { code: string; name: string; rows: ResultDTO[] }>();
+   301→    for (const r of data?.results ?? []) {
+   302→      const key = r.courseId || r.courseCode || "unknown";
+   303→      const entry = map.get(key) ?? {
+   304→        code: r.courseCode ?? "Course",
+   305→        name: r.courseName ?? "",
+   306→        rows: [],
+   307→      };
+   308→      entry.rows.push(r);
+   309→      map.set(key, entry);
+   310→    }
+   311→    return Array.from(map.values());
+   312→  }, [data]);
+   313→
+   314→  /* ---- loading / error ---- */
+   315→  if (loading && !data) {
+   316→    return <PanelLoader label="Loading your dashboard…" />;
+   317→  }
+   318→
+   319→  if (error && !data) {
+   320→    return (
+   321→      <div className="flex flex-col items-center gap-4 py-6">
+   322→        <EmptyState
+   323→          icon={CloudOff}
+   324→          title="Couldn't load your dashboard"
+   325→          hint={error}
+   326→        />
+   327→        <Button onClick={() => void load()} className={GRADIENT_BTN}>
+   328→          <RefreshCw className="mr-2 h-4 w-4" aria-hidden />
+   329→          Try again
+   330→        </Button>
+   331→      </div>
+   332→    );
+   333→  }
+   334→
+   335→  const tabMotion = {
+   336→    initial: { opacity: 0, y: 10 },
+   337→    animate: { opacity: 1, y: 0 },
+   338→    transition: { duration: 0.3 },
+   339→  };
+   340→
+   341→  return (
+   342→    <div className="space-y-6">
+   343→      {/* ---------- Hero banner ---------- */}
+   344→      <motion.section
+   345→        initial={{ opacity: 0, y: 16 }}
+   346→        animate={{ opacity: 1, y: 0 }}
+   347→        transition={{ duration: 0.4 }}
+   348→        className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-600 p-5 text-white shadow-lg shadow-violet-500/25 sm:p-7"
+   349→        aria-label="Student profile summary"
+   350→      >
+   351→        <div
+   352→          aria-hidden
+   353→          className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-white/10 blur-2xl"
+   354→        />
+   355→        <div
+   356→          aria-hidden
+   357→          className="pointer-events-none absolute -bottom-24 left-1/3 h-48 w-48 rounded-full bg-fuchsia-300/20 blur-3xl"
+   358→        />
+   359→        <div className="relative flex items-center justify-between gap-4">
+   360→          <div className="min-w-0">
+   361→            <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
+   362→              Hi, {firstName} 👋
+   363→            </h1>
+   364→            <div className="mt-3 flex flex-wrap items-center gap-2">
+   365→              {rollNumber && (
+   366→                <HeroPill icon={Hash}>
+   367→                  <span className="sr-only">Roll number </span>
+   368→                  {rollNumber}
+   369→                </HeroPill>
+   370→              )}
+   371→              {studentIdNumber && (
+   372→                <HeroPill icon={CreditCard}>
+   373→                  <span className="sr-only">Student ID </span>
+   374→                  {studentIdNumber}
+   375→                </HeroPill>
+   376→              )}
+   377→            </div>
+   378→            <div className="mt-2 flex flex-wrap items-center gap-2">
+   379→              <HeroPill icon={GraduationCap}>{programLine}</HeroPill>
+   380→            </div>
+   381→            {universityName && (
+   382→              <p className="mt-3 text-xs font-medium text-white/75">{universityName}</p>
+   383→            )}
+   384→          </div>
+   385→          <div
+   386→            aria-hidden
+   387→            className="hidden h-20 w-20 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-400 to-violet-500 text-2xl font-extrabold shadow-xl ring-4 ring-white/30 md:flex"
+   388→          >
+   389→            {initials(fullName)}
+   390→          </div>
+   391→        </div>
+   392→      </motion.section>
+   393→
+   394→      {/* ---------- Stats row ---------- */}
+   395→      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+   396→        <StatCard
+   397→          icon={CalendarClock}
+   398→          label="Today's Classes"
+   399→          value={data?.todayClasses ?? 0}
+   400→          tone="amber"
+   401→          delay={0}
+   402→        />
+   403→        <StatCard
+   404→          icon={BookOpen}
+   405→          label="Total Courses"
+   406→          value={uniqueCourses}
+   407→          sub="This semester"
+   408→          tone="violet"
+   409→          delay={0.05}
+   410→        />
+   411→        <StatCard
+   412→          icon={ClipboardList}
+   413→          label="Assignments"
+   414→          value={sortedAssignments.length}
+   415→          sub={assignmentsSub ?? "Nothing assigned"}
+   416→          tone="fuchsia"
+   417→          delay={0.1}
+   418→        />
+   419→        <StatCard
+   420→          icon={Bell}
+   421→          label="Unread Alerts"
+   422→          value={data?.unreadCount ?? 0}
+   423→          sub="See the Alerts tab"
+   424→          tone="rose"
+   425→          delay={0.15}
+   426→        />
+   427→      </div>
+   428→
+   429→      {/* ---------- Tabs ---------- */}
+   430→      <Tabs defaultValue="routine">
+   431→        <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-2xl bg-muted/60 p-1.5">
+   432→          <TabsTrigger value="routine" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
+   433→            Today &amp; Routine
+   434→          </TabsTrigger>
+   435→          <TabsTrigger value="notices" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
+   436→            Notices
+   437→          </TabsTrigger>
+   438→          <TabsTrigger value="assignments" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
+   439→            Assignments
+   440→          </TabsTrigger>
+   441→          <TabsTrigger value="results" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
+   442→            Results
+   443→          </TabsTrigger>
+   444→          <TabsTrigger value="alerts" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
+   445→            Alerts
+   446→          </TabsTrigger>
+   447→        </TabsList>
+   448→
+   449→        {/* ===== Today & Routine ===== */}
+   450→        <TabsContent value="routine" className="mt-4">
+   451→          <motion.div {...tabMotion} className="space-y-6">
+   452→            {/* Today's classes — timeline */}
+   453→            <SectionCard
+   454→              title="Today's Classes"
+   455→              icon={Sunrise}
+   456→              action={
+   457→                <span className="text-xs font-medium capitalize text-muted-foreground">
+   458→                  {DAY_LABELS[today]}
+   459→                </span>
+   460→              }
+   461→            >
+   462→              {todayList.length === 0 ? (
+   463→                <EmptyState
+   464→                  icon={Coffee}
+   465→                  title={today === "friday" ? "Weekend — no classes today" : "No classes today"}
+   466→                  hint="Enjoy the break — check your weekly routine below."
+   467→                />
+   468→              ) : (
+   469→                <ol className="space-y-0">
+   470→                  {todayList.map((s, i) => (
+   471→                    <li key={s.id} className="flex gap-3 sm:gap-4">
+   472→                      <div className="w-16 shrink-0 pt-0.5 text-right sm:w-20">
+   473→                        <p className="text-sm font-bold leading-tight">{fmtTime(s.startTime)}</p>
+   474→                        <p className="text-[11px] text-muted-foreground">{fmtTime(s.endTime)}</p>
+   475→                      </div>
+   476→                      <div className="flex flex-col items-center">
+   477→                        <span
+   478→                          aria-hidden
+   479→                          className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow"
+   480→                        />
+   481→                        {i < todayList.length - 1 && (
+   482→                          <span aria-hidden className="mt-1 w-px flex-1 bg-border" />
+   483→                        )}
+   484→                      </div>
+   485→                      <div
+   486→                        className={cn(
+   487→                          "flex min-w-0 flex-1 flex-wrap items-start justify-between gap-2",
+   488→                          i < todayList.length - 1 && "pb-5"
+   489→                        )}
+   490→                      >
+   491→                        <div className="min-w-0">
+   492→                          <p className="text-sm font-bold leading-snug">
+   493→                            {s.courseCode}
+   494→                            <span className="font-medium text-muted-foreground">
+   495→                              {" "}
+   496→                              · {s.courseName}
+   497→                            </span>
+   498→                          </p>
+   499→                          <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+   500→                            <span className="inline-flex items-center gap-1">
+   501→                              <MapPin className="h-3 w-3" aria-hidden />
+   502→                              {s.roomNumber}
+   503→                            </span>
+   504→                            <span className="inline-flex items-center gap-1">
+   505→                              <User className="h-3 w-3" aria-hidden />
+   506→                              {s.teacherName}
+   507→                            </span>
+   508→                          </p>
+   509→                        </div>
+   510→                        <Badge
+   511→                          variant="secondary"
+   512→                          className={cn(
+   513→                            s.classType === "lab" &&
+   514→                              "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-950/50 dark:text-fuchsia-300"
+   515→                          )}
+   516→                        >
+   517→                          {s.classType === "lab" ? "Lab" : "Theory"}
+   518→                        </Badge>
+   519→                      </div>
+   520→                    </li>
+   521→                  ))}
+   522→                </ol>
+   523→              )}
+   524→            </SectionCard>
+   525→
+   526→            {/* Full weekly routine */}
+   527→            <SectionCard title="Full Weekly Routine" icon={CalendarDays}>
+   528→              {(data?.schedules ?? []).length === 0 || (data?.timeSlots ?? []).length === 0 ? (
+   529→                <EmptyState
+   530→                  icon={CalendarDays}
+   531→                  title="No routine published yet"
+   532→                  hint="Your weekly class routine will appear here once scheduled."
+   533→                />
+   534→              ) : (
+   535→                <TimetableGrid schedules={data?.schedules ?? []} timeSlots={data?.timeSlots ?? []} />
+   536→              )}
+   537→            </SectionCard>
+   538→
+   539→            {/* Active class changes (latest 6) */}
+   540→            <SectionCard
+   541→              title="Active Class Changes"
+   542→              icon={CalendarX2}
+   543→              action={
+   544→                sortedChanges.length > 0 ? (
+   545→                  <span className="text-xs font-medium text-muted-foreground">
+   546→                    Latest {Math.min(6, sortedChanges.length)} of {sortedChanges.length}
+   547→                  </span>
+   548→                ) : undefined
+   549→              }
+   550→            >
+   551→              {recentChanges.length === 0 ? (
+   552→                <EmptyState
+   553→                  icon={CalendarCheck}
+   554→                  title="No active class changes"
+   555→                  hint="Cancellations and reschedules will show up here."
+   556→                />
+   557→              ) : (
+   558→                <div className="space-y-3">
+   559→                  {recentChanges.map((c) => (
+   560→                    <ChangeRow key={c.id} change={c} />
+   561→                  ))}
+   562→                </div>
+   563→              )}
+   564→            </SectionCard>
+   565→          </motion.div>
+   566→        </TabsContent>
+   567→
+   568→        {/* ===== Notices ===== */}
+   569→        <TabsContent value="notices" className="mt-4">
+   570→          <motion.div {...tabMotion}>
+   571→            <SectionCard
+   572→              title="Notices"
+   573→              icon={Megaphone}
+   574→              action={
+   575→                (data?.notices ?? []).length > 0 ? (
+   576→                  <span className="text-xs font-medium text-muted-foreground">
+   577→                    {(data?.notices ?? []).length} notice
+   578→                    {(data?.notices ?? []).length === 1 ? "" : "s"}
+   579→                  </span>
+   580→                ) : undefined
+   581→              }
+   582→            >
+   583→              {(data?.notices ?? []).length === 0 ? (
+   584→                <EmptyState
+   585→                  icon={Megaphone}
+   586→                  title="No notices yet"
+   587→                  hint="Department announcements will appear here."
+   588→                />
+   589→              ) : (
+   590→                <div className="max-h-96 divide-y overflow-y-auto pr-1">
+   591→                  {(data?.notices ?? []).map((n) => {
+   592→                    const isExpanded = !!expandedNotices[n.id];
+   593→                    const showToggle =
+   594→                      n.content.length > 180 || n.content.split("\n").length > 4;
+   595→                    return (
+   596→                      <article key={n.id} className="py-4 first:pt-0 last:pb-0">
+   597→                        <div className="flex flex-wrap items-center gap-2">
+   598→                          {n.isPinned && (
+   599→                            <Pin
+   600→                              className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500"
+   601→                              aria-label="Pinned notice"
+   602→                            />
+   603→                          )}
+   604→                          <CategoryBadge category={n.category} />
+   605→                          <h4 className="min-w-0 text-sm font-bold">{n.title}</h4>
+   606→                        </div>
+   607→                        <p
+   608→                          className={cn(
+   609→                            "mt-1.5 whitespace-pre-line text-sm leading-relaxed text-muted-foreground",
+   610→                            !isExpanded && "line-clamp-4"
+   611→                          )}
+   612→                        >
+   613→                          {n.content}
+   614→                        </p>
+   615→                        {showToggle && (
+   616→                          <button
+   617→                            type="button"
+   618→                            onClick={() =>
+   619→                              setExpandedNotices((prev) => ({ ...prev, [n.id]: !prev[n.id] }))
+   620→                            }
+   621→                            className="mt-1 text-xs font-semibold text-violet-600 hover:underline dark:text-violet-400"
+   622→                          >
+   623→                            {isExpanded ? "Show less" : "Show more"}
+   624→                          </button>
+   625→                        )}
+   626→                        <p className="mt-2 text-[11px] text-muted-foreground/80">
+   627→                          Posted by {n.postedByName} · {timeAgo(n.createdAt)}
+   628→                        </p>
+   629→                      </article>
+   630→                    );
+   631→                  })}
+   632→                </div>
+   633→              )}
+   634→            </SectionCard>
+   635→          </motion.div>
+   636→        </TabsContent>
+   637→
+   638→        {/* ===== Assignments ===== */}
+   639→        <TabsContent value="assignments" className="mt-4">
+   640→          <motion.div {...tabMotion}>
+   641→            <SectionCard
+   642→              title="Assignments"
+   643→              icon={BookOpen}
+   644→              action={
+   645→                sortedAssignments.length > 0 ? (
+   646→                  <span className="text-xs font-medium text-muted-foreground">
+   647→                    {sortedAssignments.length} total
+   648→                  </span>
+   649→                ) : undefined
+   650→              }
+   651→            >
+   652→              {sortedAssignments.length === 0 ? (
+   653→                <EmptyState
+   654→                  icon={Bell}
+   655→                  title="No assignments yet"
+   656→                  hint="Assignments from your courses will appear here."
+   657→                />
+   658→              ) : (
+   659→                <div className="grid gap-4 sm:grid-cols-2">
+   660→                  {sortedAssignments.map((a) => {
+   661→                    const chip = dueChip(a.dueDate);
+   662→                    return (
+   663→                      <article
+   664→                        key={a.id}
+   665→                        className="flex flex-col rounded-2xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
+   666→                      >
+   667→                        <div className="flex items-start justify-between gap-2">
+   668→                          <h4 className="min-w-0 text-sm font-bold leading-snug">{a.title}</h4>
+   669→                          <Badge
+   670→                            variant="outline"
+   671→                            className="shrink-0 border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300"
+   672→                          >
+   673→                            {a.courseCode ?? "Course"}
+   674→                          </Badge>
+   675→                        </div>
+   676→                        {a.courseName && (
+   677→                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+   678→                            {a.courseName}
+   679→                          </p>
+   680→                        )}
+   681→                        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+   682→                          <span className="inline-flex items-center gap-1">
+   683→                            <User className="h-3 w-3" aria-hidden />
+   684→                            {a.teacherName ?? "Faculty"}
+   685→                          </span>
+   686→                          {a.maxMarks != null && (
+   687→                            <span className="inline-flex items-center gap-1">
+   688→                              <Award className="h-3 w-3" aria-hidden />
+   689→                              Max {a.maxMarks} marks
+   690→                            </span>
+   691→                          )}
+   692→                        </div>
+   693→                        <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">
+   694→                          {a.description}
+   695→                        </p>
+   696→                        <div className="mt-auto pt-3">
+   697→                          <span
+   698→                            className={cn(
+   699→                              "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+   700→                              chip.cls
+   701→                            )}
+   702→                          >
+   703→                            <CalendarClock className="h-3 w-3" aria-hidden />
+   704→                            {chip.label}
+   705→                          </span>
+   706→                        </div>
+   707→                      </article>
+   708→                    );
+   709→                  })}
+   710→                </div>
+   711→              )}
+   712→            </SectionCard>
+   713→          </motion.div>
+   714→        </TabsContent>
+   715→
+   716→        {/* ===== Results ===== */}
+   717→        <TabsContent value="results" className="mt-4">
+   718→          <motion.div {...tabMotion}>
+   719→            <SectionCard title="Exam Results" icon={Award}>
+   720→              {resultGroups.length === 0 ? (
+   721→                <EmptyState
+   722→                  icon={Award}
+   723→                  title="No results published yet"
+   724→                  hint="Your exam results will appear here once published."
+   725→                />
+   726→              ) : (
+   727→                <div className="grid gap-4 sm:grid-cols-2">
+   728→                  {resultGroups.map((g) => (
+   729→                    <div key={g.code + g.name} className="rounded-2xl border bg-background/50 p-4">
+   730→                      <div className="flex items-baseline gap-2">
+   731→                        <p className="text-sm font-bold">{g.code}</p>
+   732→                        {g.name && (
+   733→                          <p className="min-w-0 truncate text-xs text-muted-foreground">{g.name}</p>
+   734→                        )}
+   735→                      </div>
+   736→                      <div className="mt-3 space-y-2.5">
+   737→                        {g.rows.map((r) => (
+   738→                          <div
+   739→                            key={r.id}
+   740→                            className="flex flex-wrap items-center gap-2 text-sm"
+   741→                          >
+   742→                            <ExamTypeBadge examType={r.examType} />
+   743→                            <span className="font-semibold">
+   744→                              {r.marks}/{r.maxMarks}
+   745→                            </span>
+   746→                            {r.grade && (
+   747→                              <span
+   748→                                className={cn(
+   749→                                  "rounded-full px-2 py-0.5 text-[11px] font-bold",
+   750→                                  gradeBadgeCls(r.grade)
+   751→                                )}
+   752→                              >
+   753→                                {r.grade}
+   754→                              </span>
+   755→                            )}
+   756→                            {r.remarks && (
+   757→                              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+   758→                                {r.remarks}
+   759→                              </span>
+   760→                            )}
+   761→                          </div>
+   762→                        ))}
+   763→                      </div>
+   764→                    </div>
+   765→                  ))}
+   766→                </div>
+   767→              )}
+   768→            </SectionCard>
+   769→          </motion.div>
+   770→        </TabsContent>
+   771→
+   772→        {/* ===== Alerts ===== */}
+   773→        <TabsContent value="alerts" className="mt-4">
+   774→          <motion.div {...tabMotion}>
+   775→            <div className="grid gap-6 xl:grid-cols-2">
+   776→              <SectionCard
+   777→                title="Class Changes"
+   778→                icon={CalendarX2}
+   779→                action={
+   780→                  sortedChanges.length > 0 ? (
+   781→                    <span className="text-xs font-medium text-muted-foreground">
+   782→                      {sortedChanges.length} active
+   783→                    </span>
+   784→                  ) : undefined
+   785→                }
+   786→              >
+   787→                {sortedChanges.length === 0 ? (
+   788→                  <EmptyState
+   789→                    icon={CalendarCheck}
+   790→                    title="No active class changes"
+   791→                    hint="Cancellations and reschedules will show up here."
+   792→                  />
+   793→                ) : (
+   794→                  <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
+   795→                    {sortedChanges.map((c) => (
+   796→                      <ChangeRow key={c.id} change={c} />
+   797→                    ))}
+   798→                  </div>
+   799→                )}
+   800→              </SectionCard>
+   801→
+   802→              <SectionCard title="Upcoming Calendar" icon={CalendarRange}>
+   803→                {sortedCalendar.length === 0 ? (
+   804→                  <EmptyState
+   805→                    icon={CalendarRange}
+   806→                    title="No upcoming events"
+   807→                    hint="Exams, holidays and events will appear here."
+   808→                  />
+   809→                ) : (
+   810→                  <div className="max-h-96 divide-y overflow-y-auto pr-1">
+   811→                    {sortedCalendar.map((e) => {
+   812→                      const d = new Date(e.date);
+   813→                      return (
+   814→                        <div key={e.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+   815→                          <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl bg-muted text-center">
+   816→                            <span className="text-[10px] font-bold uppercase leading-none text-muted-foreground">
+   817→                              {d.toLocaleDateString("en-US", { month: "short" })}
+   818→                            </span>
+   819→                            <span className="mt-0.5 text-sm font-bold leading-none">
+   820→                              {d.getDate()}
+   821→                            </span>
+   822→                          </div>
+   823→                          <div className="min-w-0 flex-1">
+   824→                            <div className="flex flex-wrap items-center gap-2">
+   825→                              <span
+   826→                                className={cn(
+   827→                                  "rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize",
+   828→                                  EVENT_BADGE[e.eventType] ?? "bg-muted text-muted-foreground"
+   829→                                )}
+   830→                              >
+   831→                                {e.eventType}
+   832→                              </span>
+   833→                              <h4 className="min-w-0 text-sm font-bold">{e.title}</h4>
+   834→                            </div>
+   835→                            {e.description && (
+   836→                              <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+   837→                                {e.description}
+   838→                              </p>
+   839→                            )}
+   840→                          </div>
+   841→                        </div>
+   842→                      );
+   843→                    })}
+   844→                  </div>
+   845→                )}
+   846→              </SectionCard>
+   847→            </div>
+   848→          </motion.div>
+   849→        </TabsContent>
+   850→      </Tabs>
+   851→    </div>
+   852→  );
+   853→}
+   854→

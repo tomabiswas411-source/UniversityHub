@@ -1,0 +1,436 @@
+// ============================================================
+// UniversityHub — Multi-Tenant University Management System
+// Platform → Universities (tenants) → Departments → 4 Roles
+// Roles: super_admin | dept_admin | teacher | student
+// ============================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============ SUBSCRIPTION / BILLING ============
+
+// Subscription Plan — Free, Basic, Standard, Premium
+model Plan {
+  id             String   @id @default(cuid())
+  name           String // "Free" | "Basic" | "Standard" | "Premium"
+  slug           String   @unique
+  tagline        String?
+  priceMonthly   Float    @default(0)
+  priceYearly    Float    @default(0)
+  maxDepartments Int      @default(1) // -1 = unlimited
+  maxStudents    Int      @default(100) // -1 = unlimited
+  maxTeachers    Int      @default(5) // -1 = unlimited
+  features       String   @default("[]") // JSON string array
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  universities   University[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ============ TENANCY ============
+
+// University — the subscribing tenant
+model University {
+  id            String    @id @default(cuid())
+  name          String
+  slug          String    @unique // "ru" — used in URLs & login selector
+  shortName     String?
+  logoURL       String?
+  address       String?
+  contactEmail  String?
+  contactPhone  String?
+  websiteURL    String?
+  aboutText     String?
+  facebookURL   String?
+  planId        String?
+  planExpiresAt DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  plan         Plan?              @relation(fields: [planId], references: [id])
+  departments  Department[]
+  users        User[]
+  settings     SiteSettings?
+  calendars    AcademicCalendar[]
+}
+
+// Department — scoped unit inside a university
+model Department {
+  id           String   @id @default(cuid())
+  universityId String
+  name         String // "Information & Communication Engineering"
+  shortName    String // "ICE"
+  code         String // "ICE" — unique per university
+  logoURL      String?
+  description  String?
+  building     String?
+  contactEmail String?
+  contactPhone String?
+  facebookURL  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  university      University        @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  users           User[]
+  programs        Program[]
+  courses         Course[]
+  rooms           Room[]
+  timeSlots       TimeSlot[]
+  schedules       Schedule[]
+  scheduleChanges ScheduleChange[]
+  notices         Notice[]
+  assignments     Assignment[]
+  results         Result[]
+
+  @@unique([universityId, code])
+}
+
+// ============ USERS (4 ROLES) ============
+
+model User {
+  id           String   @id @default(cuid())
+  universityId String? // null → platform-level super_admin
+  departmentId String? // null for super_admin
+  role         String   @default("student") // super_admin | dept_admin | teacher | student
+
+  // Staff credentials (super_admin / dept_admin / teacher)
+  email    String?
+  password String? // bcrypt hash
+
+  // Common profile
+  fullName    String
+  designation String?
+  phone       String?
+  photoURL    String?
+  bio         String?
+  officeRoom  String?
+
+  // Student credentials & profile (login = ID number + roll number)
+  studentIdNumber String? // unique per university
+  rollNumber      String?
+  guardianPhone   String?
+  section         String?
+  programId       String? // enrolled program (students)
+  semester        Int? // current semester (students)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  university University?  @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  program    Program?    @relation(fields: [programId], references: [id], onDelete: SetNull)
+
+  taughtSchedules Schedule[]       @relation("ScheduleTeacher")
+  createdSchedules Schedule[]      @relation("ScheduleCreator")
+  notices         Notice[]
+  assignments     Assignment[]
+  resultsGiven    Result[]         @relation("ResultGiver")
+  resultsReceived Result[]         @relation("ResultStudent")
+  notifications   Notification[]
+
+  @@unique([universityId, email])
+  @@unique([universityId, studentIdNumber])
+  @@index([role])
+  @@index([departmentId])
+}
+
+// ============ ACADEMICS ============
+
+// Program (BSc / MSc / BBA ...) — controls semester count
+model Program {
+  id            String  @id @default(cuid())
+  departmentId  String
+  name          String // "Bachelor of Science"
+  shortName     String // "BSc"
+  semesterCount Int     @default(8)
+  isActive      Boolean @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  courses    Course[]
+  schedules  Schedule[]
+  students   User[]
+
+  @@unique([departmentId, shortName])
+}
+
+model Course {
+  id           String  @id @default(cuid())
+  departmentId String
+  programId    String
+  code         String // "ICE-1101" — unique per department
+  name         String
+  creditHours  Float   @default(3.0)
+  type         String  @default("theory") // theory | lab
+  semester     Int
+  isActive     Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department  Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  program     Program      @relation(fields: [programId], references: [id], onDelete: Cascade)
+  schedules   Schedule[]
+  assignments Assignment[]
+  results     Result[]
+
+  @@unique([departmentId, code])
+}
+
+model Room {
+  id           String  @id @default(cuid())
+  departmentId String
+  roomNumber   String
+  building     String?
+  type         String  @default("classroom") // classroom | lab | seminar
+  capacity     Int     @default(40)
+  isActive     Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  schedules  Schedule[]
+
+  @@unique([departmentId, roomNumber])
+}
+
+model TimeSlot {
+  id           String  @id @default(cuid())
+  departmentId String
+  label        String // "1st Period"
+  startTime    String // "08:00"
+  endTime      String // "08:50"
+  slotOrder    Int     @default(1)
+  isBreak      Boolean @default(false)
+  isActive     Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  schedules  Schedule[]
+
+  @@unique([departmentId, label])
+}
+
+// ============ SCHEDULE ============
+
+model Schedule {
+  id           String  @id @default(cuid())
+  departmentId String
+  courseId     String
+  teacherId    String
+  roomId       String
+  timeSlotId   String
+  programId    String
+  semester     Int
+
+  // Denormalized for fast reads
+  courseCode  String
+  courseName  String
+  teacherName String
+  roomNumber  String
+  startTime   String
+  endTime     String
+
+  dayOfWeek String  // saturday | sunday | monday | tuesday | wednesday | thursday
+  classType String  @default("theory") // theory | lab
+  isActive  Boolean @default(true)
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  department Department       @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  course     Course           @relation(fields: [courseId], references: [id])
+  teacher    User             @relation("ScheduleTeacher", fields: [teacherId], references: [id])
+  room       Room             @relation(fields: [roomId], references: [id])
+  timeSlot   TimeSlot         @relation(fields: [timeSlotId], references: [id])
+  program    Program          @relation(fields: [programId], references: [id])
+  creator    User?            @relation("ScheduleCreator", fields: [createdBy], references: [id])
+  changes    ScheduleChange[]
+
+  @@index([departmentId, dayOfWeek])
+  @@index([teacherId])
+}
+
+// Temporary class changes (cancel / reschedule / room change / extra class)
+model ScheduleChange {
+  id           String  @id @default(cuid())
+  departmentId String
+  scheduleId   String
+  changeType   String // cancelled | rescheduled | room_changed | time_changed | extra_class
+
+  // Original values
+  originalDay        String?
+  originalTimeSlotId String?
+  originalStartTime  String?
+  originalEndTime    String?
+  originalRoomId     String?
+  originalRoomNumber String?
+
+  // New values (null when cancelled)
+  newDay        String?
+  newTimeSlotId String?
+  newStartTime  String?
+  newEndTime    String?
+  newRoomId     String?
+  newRoomNumber String?
+
+  effectiveDate String // "2025-11-02"
+  reason        String
+  courseCode    String
+  courseName    String
+  teacherId     String
+  teacherName   String
+  programId     String?
+  semester      Int?
+  changedBy     String
+  changedByName String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  schedule   Schedule   @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([departmentId, effectiveDate])
+}
+
+// ============ NOTICES & NOTIFICATIONS ============
+
+model Notice {
+  id           String   @id @default(cuid())
+  departmentId String
+  title        String
+  content      String
+  category     String   @default("general") // academic | exam | event | general | schedule_change | assignment
+  audience     String   @default("all") // all | students | teachers
+  changeType   String?
+  scheduleChangeId String?
+  programId    String? // null = all programs
+  semester     Int? // null = all semesters
+  postedBy     String
+  postedByName String
+  isPinned     Boolean  @default(false)
+  isAutoGenerated Boolean @default(false)
+  attachmentURL String?
+  expiryDate   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  author     User       @relation(fields: [postedBy], references: [id])
+
+  @@index([departmentId, createdAt])
+}
+
+// Per-user notification (fan-out target)
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  type      String   @default("general") // general | class_cancelled | class_rescheduled | room_changed | extra_class | notice | assignment | result
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+// ============ TEACHER FEATURES: ASSIGNMENTS & RESULTS ============
+
+model Assignment {
+  id            String    @id @default(cuid())
+  departmentId  String
+  courseId      String
+  teacherId     String
+  title         String
+  description   String
+  dueDate       DateTime?
+  maxMarks      Float?
+  attachmentURL String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacher    User       @relation(fields: [teacherId], references: [id])
+
+  @@index([departmentId, courseId])
+}
+
+model Result {
+  id           String   @id @default(cuid())
+  departmentId String
+  courseId     String
+  studentId    String
+  enteredBy    String // teacher user id
+  examType     String   @default("final") // ct1 | ct2 | midterm | final | assignment
+  marks        Float
+  maxMarks     Float    @default(100)
+  grade        String?
+  remarks      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department     Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  course         Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student        User       @relation("ResultStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  enteredByUser  User       @relation("ResultGiver", fields: [enteredBy], references: [id])
+
+  @@unique([courseId, studentId, examType])
+}
+
+// ============ SETTINGS & CALENDAR ============
+
+model SiteSettings {
+  id              String   @id @default("general")
+  universityId    String   @unique
+  siteName        String?
+  heroText        String?
+  academicSession String?
+  noticeBanner    String?
+  primaryColor    String?
+  logoURL         String?
+  contactEmail    String?
+  contactPhone    String?
+  address         String?
+  aboutText       String?
+  facebookURL     String?
+  websiteURL      String?
+  developerName   String?
+  developerURL    String?
+  updatedAt       DateTime @updatedAt
+
+  university University @relation(fields: [universityId], references: [id], onDelete: Cascade)
+}
+
+model AcademicCalendar {
+  id           String    @id @default(cuid())
+  universityId String
+  departmentId String? // null = university-wide event
+  title        String
+  date         DateTime
+  endDate      DateTime?
+  eventType    String    @default("event") // class | exam | holiday | event
+  description  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  university University @relation(fields: [universityId], references: [id], onDelete: Cascade)
+
+  @@index([universityId, date])
+}
