@@ -240,6 +240,65 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  };
  }
 
+ if (action === "attendance-export") {
+ // COST GUARD: CSV is built server-side as plain text and returned as
+ // one small JSON string — client turns it into a .csv Blob download.
+ // Excel opens it directly (UTF-8 BOM added client-side for Bangla names).
+ const scheduleId = searchParams.get("scheduleId");
+ const date = searchParams.get("date") ?? todayStr();
+ if (!scheduleId) throw new ApiError(400, "scheduleId is required");
+ const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
+ if (!schedule) throw new ApiError(404, "Schedule not found");
+ if (session.role === "teacher" && schedule.teacherId !== session.userId) {
+ throw new ApiError(403, "You can only export your own classes");
+ }
+ assertDepartmentAccess(session, schedule.departmentId);
+
+ const [students, marks] = await Promise.all([
+ db.user.findMany({
+ where: {
+ departmentId: schedule.departmentId,
+ role: "student",
+ isActive: true,
+ programId: schedule.programId,
+ semester: schedule.semester,
+ },
+ select: { id: true, fullName: true, rollNumber: true, studentIdNumber: true },
+ orderBy: { rollNumber: "asc" },
+ }),
+ db.attendance.findMany({
+ where: { scheduleId, date },
+ select: { studentId: true, status: true, markedByName: true, updatedAt: true },
+ }),
+ ]);
+ const markMap = new Map(marks.map((m) => [m.studentId, m]));
+ const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+
+ const lines: string[] = [
+ ["Roll", "Student ID", "Name", "Status", "Marked By", "Marked At"].join(","),
+ ];
+ for (const st of students) {
+ const m = markMap.get(st.id);
+ lines.push(
+ [
+ st.rollNumber ?? "",
+ esc(st.studentIdNumber ?? ""),
+ esc(st.fullName),
+ m ? m.status.toUpperCase() : "NOT_MARKED",
+ m ? esc(m.markedByName ?? "") : "",
+ m ? m.updatedAt.toISOString() : "",
+ ].join(",")
+ );
+ }
+
+ return {
+ filename: `attendance-${schedule.courseCode}-${date}.csv`,
+ csv: lines.join("\n"),
+ total: students.length,
+ marked: marks.length,
+ };
+ }
+
  if (action === "notices") {
  const notices = await db.notice.findMany({
  where: { departmentId: session.departmentId!, postedBy: session.userId },
@@ -419,6 +478,96 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  late: entries.filter((e) => e.status === "late").length,
  excused: entries.filter((e) => e.status === "excused").length,
  },
+ };
+ }
+
+ // ---------- QR session finalize: mark everyone who did NOT scan as absent ----------
+ if (action === "attendance-finalize") {
+ const { sessionId } = body as { sessionId?: string };
+ if (!sessionId) throw new ApiError(400, "sessionId is required");
+
+ const qr = await db.attendanceSession.findUnique({
+ where: { id: sessionId },
+ select: {
+ id: true,
+ departmentId: true,
+ scheduleId: true,
+ courseId: true,
+ teacherId: true,
+ date: true,
+ closed: true,
+ schedule: {
+ select: {
+ courseCode: true,
+ programId: true,
+ semester: true,
+ },
+ },
+ },
+ });
+ if (!qr) throw new ApiError(404, "QR session not found");
+ if (session.role === "teacher" && qr.teacherId !== session.userId) {
+ throw new ApiError(403, "Not your QR session");
+ }
+ assertDepartmentAccess(session, qr.departmentId);
+
+ // Full roster of this class batch
+ const roster = await db.user.findMany({
+ where: {
+ departmentId: qr.departmentId,
+ role: "student",
+ isActive: true,
+ programId: qr.schedule.programId,
+ semester: qr.schedule.semester,
+ },
+ select: { id: true },
+ });
+ const alreadyMarked = await db.attendance.findMany({
+ where: { scheduleId: qr.scheduleId, date: qr.date },
+ select: { studentId: true, status: true },
+ });
+ const markedIds = new Set(alreadyMarked.map((m) => m.studentId));
+ const missing = roster.filter((st) => !markedIds.has(st.id));
+
+ if (missing.length > 0) {
+ await db.$transaction([
+ db.attendance.createMany({
+ data: missing.map((st) => ({
+ departmentId: qr.departmentId,
+ scheduleId: qr.scheduleId,
+ courseId: qr.courseId,
+ studentId: st.id,
+ date: qr.date,
+ status: "absent",
+ markedBy: session.userId,
+ markedByName: "QR auto-close",
+ courseCode: qr.schedule.courseCode,
+ })),
+ }),
+ db.notification.createMany({
+ data: missing.map((st) => ({
+ userId: st.id,
+ title: `Absent marked: ${qr.schedule.courseCode}`,
+ body: `You did not scan the QR check-in for ${qr.schedule.courseCode} on ${qr.date}, so you were marked absent. Contact your teacher if this is a mistake.`,
+ type: "attendance",
+ link: "/?view=dashboard",
+ })),
+ }),
+ ]);
+ }
+
+ await db.attendanceSession.update({
+ where: { id: qr.id },
+ data: { closed: true },
+ });
+
+ return {
+ absentMarked: missing.length,
+ absentTotal: alreadyMarked.filter((m) => m.status === "absent").length + missing.length,
+ present: alreadyMarked.filter((m) => m.status === "present").length,
+ late: alreadyMarked.filter((m) => m.status === "late").length,
+ excused: alreadyMarked.filter((m) => m.status === "excused").length,
+ total: roster.length,
  };
  }
 

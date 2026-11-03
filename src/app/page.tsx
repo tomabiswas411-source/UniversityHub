@@ -13,9 +13,10 @@ import { DepartmentView } from "@/components/views/department-view";
 import { LoginView } from "@/components/views/login-view";
 import { PricingView } from "@/components/views/pricing-view";
 import { DashboardView } from "@/components/views/dashboard-view";
+import { AttendView } from "@/components/views/attend-view";
 import { Loader2, GraduationCap } from "lucide-react";
 
-export type AppView = "home" | "department" | "login" | "pricing" | "dashboard";
+export type AppView = "home" | "department" | "login" | "pricing" | "dashboard" | "attend";
 
 function AppShell() {
  const searchParams = useSearchParams();
@@ -94,6 +95,7 @@ function AppShell() {
  {view === "login" && <LoginView navigate={navigate} />}
  {view === "pricing" && <PricingView navigate={navigate} />}
  {view === "dashboard" && <DashboardView navigate={navigate} />}
+ {view === "attend" && <AttendView token={searchParams.get("k")} />}
  </motion.div>
  </AnimatePresence>
  </Suspense>

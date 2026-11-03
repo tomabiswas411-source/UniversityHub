@@ -290,3 +290,14 @@
 | 45-47 | 2026-11-03 | Perf + a11y + PWA: code-split panels, 4 DB indexes, cache headers, skip-link, SW v4 + offline.html, safe-area | |
 | 48-50 | 2026-11-03 | Browser E2E sweep (৪ টা নতুন ট্যাব রিয়েল ডেটায় যাচাই) + logic audit (৩ ফিক্স) + Release v0.6 | Day 48/49 adapted — no test-runner code (sandbox rule); Playwright → Phase 6 |
 | Role-Loop | 2026-11-03 | Role-capability audit + Attendance module: `Attendance` model (schema+Turso), teacher attendance UI+API (roster/mark/save + absent fan-out), teacher Notices tab (publish w/ course scope + delete), assignment edit (PUT+UI), student attendance rings + per-course %, dept analytics attendance KPI/chart, dept notice edit, Add Class auto-program UX | ৪ রোল ব্রাউজার-যাচাই সম্পন্ন — zero console errors; conflict detection প্রমাণিত (409) |
+| QR-Attendance | 2026-11-03 | **QR Self Check-in + Cost Guard**: `AttendanceSession` model (token, window, presentCount), `/api/attendance/session` (create + ~100B live poll + history), `/api/attendance/scan` (student GET/POST — cohort-checked, idempotent, absent→present correction), teacher `attendance-finalize` (bulk absent + notify) + `attendance-export` (CSV/Excel w/ BOM), teacher QR card (client-side QR, countdown, 3s self-stopping poll, resume-on-reload), student `/?view=attend&k=` page (inline student login → auto-mark) | ফুল E2E ব্রাউজার-যাচাই: ২ স্টুডেন্ট স্ক্যান → লাইভ কাউন্ট → এক্সপায়ার → ফাইনালাইজ (3 present · 3 absent) → CSV; স্টাফ-ব্লক + wrong-batch 403 প্রমাণিত; টেস্ট ডেটা পরিষ্কার |
+
+### 💰 Cost Guard — প্রতিটি নতুন ফিচারে মানা হবে (Vercel ব্যান্ডউইথ/খরচ শৃঙ্খলা)
+
+1. **এক স্টুডেন্ট স্ক্যান = ২টা ছোট রিকোয়েস্ট** (GET info + POST mark) — রেসপন্স ~১০০ B–১ KB; কোনো ফ্যান-আউট/পোলিং নেই।
+2. **টিচার লাইভ-পোল**: ৩ সেকেন্ড ইন্টারভাল, শুধু উইন্ডো active থাকাকালীন; রেসপন্স <200 B (denormalized `presentCount` + শেষ ৩ স্ক্যানের নাম); এক্সপায়ার/ক্লোজ হলে নিজে থেকেই বন্ধ।
+3. **QR ইমেজ ক্লায়েন্ট-সাইডে জেনারেট** (qrcode lib, কোড-স্প্লিট চাঙ্কে) — কোনো স্টোরেজ/আপলোড/ইমেজ-রিকোয়েস্ট নেই।
+4. **এক্সপোর্ট = CSV স্ট্রিং** (JSON-এ ১টা ফিল্ড) → ব্রাউজার নিজেই .csv বানায় (UTF-8 BOM → বাংলা নাম Excel-এ ঠিক দেখায়)। ডুপ্লিকেট স্টোরেজ নেই।
+5. **বাল্ক অপারেশন server-side**: finalize একটাই POST → `createMany`; per-student চ্যাটার নেই।
+6. **তালিকা API-তে শুধু দরকারি ফিল্ড** (`select` দিয়ে); ভবিষ্যতে বড় লিস্টে pagination বাধ্যতামূলক।
+7. **পোলিং লিখলে অবশ্যই**: interval + কন্ডিশন (active window/visibility) + cleanup — যেন বন্ধ না-করা ইন্টারভাল রেখে যায় না।

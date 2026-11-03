@@ -33,6 +33,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { timeAgo } from "@/components/shared/notification-bell";
+import { QRAttendanceCard } from "@/components/dashboards/qr-attendance-card";
 import {
  ChangeTypeBadge,
  CategoryBadge,
@@ -1053,6 +1054,15 @@ export function TeacherPanel() {
  )}
  </div>
  </SectionCard>
+
+ {/* QR self check-in — students scan & mark themselves present.
+ Shares the class + date selection and the same Attendance table. */}
+ <QRAttendanceCard
+ scheduleId={attScheduleId}
+ date={attDate}
+ totalStudents={attStudents.length}
+ onRosterRefresh={() => void loadAttendance(attScheduleId, attDate)}
+ />
  </TabsContent>
 
  {/* ============ CLASS CHANGES ============ */}

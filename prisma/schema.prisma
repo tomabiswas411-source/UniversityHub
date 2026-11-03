@@ -139,6 +139,7 @@ model User {
   resultsReceived Result[]         @relation("ResultStudent")
   attendanceMarks Attendance[]     @relation("AttendanceMarker")
   attendanceRecords Attendance[]   @relation("AttendanceStudent")
+  attendanceSessions AttendanceSession[] @relation("SessionTeacher")
   notifications   Notification[]
 
   @@unique([universityId, email])
@@ -261,6 +262,7 @@ model Schedule {
   creator    User?            @relation("ScheduleCreator", fields: [createdBy], references: [id])
   changes    ScheduleChange[]
   attendance Attendance[]
+  qrSessions AttendanceSession[]
 
   @@index([departmentId, dayOfWeek])
   @@index([teacherId])
@@ -378,6 +380,33 @@ model Attendance {
   @@index([departmentId, date])
   @@index([studentId, courseId])
   @@index([courseId, date])
+}
+
+// QR self check-in session — COST GUARD design:
+// • one tiny row per QR window (no per-second logs)
+// • presentCount is denormalized → teacher live-poll reads ONE row (~100 bytes)
+// • student marks land in the shared Attendance table (single source of truth)
+// • token is a random 32-hex string embedded in the QR URL; server checks expiry
+model AttendanceSession {
+  id           String   @id @default(cuid())
+  departmentId String
+  scheduleId   String
+  courseId     String
+  teacherId    String
+  token        String   @unique
+  date         String // class date YYYY-MM-DD
+  durationSec  Int      @default(120)
+  startsAt     DateTime @default(now())
+  expiresAt    DateTime
+  closed       Boolean  @default(false)
+  presentCount Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  teacher  User     @relation("SessionTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([departmentId, createdAt])
+  @@index([scheduleId, date])
 }
 
 model Assignment {
