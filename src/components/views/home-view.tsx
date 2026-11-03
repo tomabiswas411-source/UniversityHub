@@ -23,6 +23,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Reveal, TiltCard } from "@/components/shared/motion-primitives";
 import { apiGet } from "@/lib/api-client";
+import { useAuthStore } from "@/store/auth-store";
 import type { DepartmentDTO, PlanDTO, UniversityDTO } from "@/types";
 
 // ------------------------------------------------------------------
@@ -307,6 +308,7 @@ const FEATURES: { icon: LucideIcon; title: string; desc: string }[] = [
 // Main component
 // ------------------------------------------------------------------
 export function HomeView({ navigate }: { navigate: NavigateFn }) {
+ const { user } = useAuthStore();
  const [data, setData] = useState<PortalResponse | null>(null);
  const [error, setError] = useState<string | null>(null);
  const [retryTick, setRetryTick] = useState(0);
@@ -473,11 +475,15 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  <ArrowRight className="h-4 w-4" />
  </Button>
  <Button
- onClick={() => navigate("login")}
+ onClick={() =>
+ user
+ ? navigate("dashboard")
+ : navigate("login")
+ }
  variant="outline"
  className="h-11 w-full rounded-xl border-border bg-card px-7 text-heading hover:border-[#2D4F35]/50 hover:bg-green/5 hover:text-green sm:w-auto"
  >
- Login Portal
+ {user ? "Go to Dashboard" : "Login Portal"}
  </Button>
  </motion.div>
 

@@ -2,12 +2,15 @@
 
 import { GraduationCap, Heart, ShieldCheck } from "lucide-react";
 import type { AppView } from "@/app/page";
+import { useAuthStore } from "@/store/auth-store";
+import { canSeePricing } from "@/lib/role-access";
 
 interface SiteFooterProps {
  navigate?: (v: AppView, params?: Record<string, string>) => void;
 }
 
 export function SiteFooter({ navigate }: SiteFooterProps) {
+ const { user } = useAuthStore();
  return (
  <footer className="mt-auto w-full border-t border-border bg-gradient-to-b from-secondary to-background dark:from-[#241C15] dark:to-[#1A1612] [padding-bottom:env(safe-area-inset-bottom)]">
  <div className="max-w-7xl mx-auto px-4 md:px-6 py-8">
@@ -40,18 +43,29 @@ export function SiteFooter({ navigate }: SiteFooterProps) {
  >
  Home
  </button>
+ {canSeePricing(user) && (
  <button
  className="text-left hover:text-green transition-colors w-fit"
  onClick={() => navigate?.("pricing")}
  >
- Pricing & Plans
+ Pricing &amp; Plans
  </button>
+ )}
+ {user ? (
+ <button
+ className="text-left hover:text-green transition-colors w-fit"
+ onClick={() => navigate?.("dashboard")}
+ >
+ My Dashboard
+ </button>
+ ) : (
  <button
  className="text-left hover:text-green transition-colors w-fit"
  onClick={() => navigate?.("login")}
  >
  Login Portal
  </button>
+ )}
  </nav>
  </div>
 

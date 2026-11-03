@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Check, X, Loader2, Sparkles, Building2, Users, GraduationCap } from "lucide-react";
+import { Check, X, Loader2, Sparkles, Building2, Users, GraduationCap, Lock, LayoutDashboard, ArrowLeft } from "lucide-react";
 import { apiGet } from "@/lib/api-client";
 import type { PlanDTO } from "@/types";
+import { useAuthStore } from "@/store/auth-store";
+import { canSeePricing } from "@/lib/role-access";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,6 +16,7 @@ import {
  CardFooter,
  CardHeader,
 } from "@/components/ui/card";
+import { ROLE_LABELS } from "@/lib/role-labels";
 
 interface PricingViewProps {
  navigate: (v: "home" | "department" | "login" | "pricing" | "dashboard", params?: Record<string, string>) => void;
@@ -24,14 +27,19 @@ function formatLimit(n: number): string {
 }
 
 export function PricingView({ navigate }: PricingViewProps) {
+ const { user } = useAuthStore();
  const [plans, setPlans] = useState<PlanDTO[]>([]);
  const [loading, setLoading] = useState(true);
  const [error, setError] = useState<string | null>(null);
  const [yearly, setYearly] = useState(false);
 
+ /* Students & teachers never need plans — skip the fetch entirely. */
+ const pricingAllowed = canSeePricing(user);
+
  useEffect(() => {
- let alive = true;
- apiGet<{ plans: PlanDTO[] }>("/api/portal")
+  if (!pricingAllowed) return;
+  let alive = true;
+  apiGet<{ plans: PlanDTO[] }>("/api/portal")
  .then((d) => {
  if (!alive) return;
  setPlans(d.plans);
@@ -45,7 +53,46 @@ export function PricingView({ navigate }: PricingViewProps) {
  return () => {
  alive = false;
  };
- }, []);
+ }, [pricingAllowed]);
+
+ /* Role guard — subscription is a university decision. Students and
+    teachers land here only by typing the URL; show a friendly
+    explanation instead of a price table. */
+ if (!pricingAllowed) {
+  return (
+   <div className="py-10 sm:py-16 max-w-md mx-auto">
+    <motion.div
+     initial={{ opacity: 0, y: 16 }}
+     animate={{ opacity: 1, y: 0 }}
+     className="rounded-3xl border bg-card p-8 text-center shadow-lg"
+    >
+     <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-secondary shadow-md">
+      <Lock className="h-8 w-8 text-green" />
+     </div>
+     <h1 className="text-xl font-bold">Plans are for universities</h1>
+     <p className="mt-2 text-sm text-muted-foreground">
+      Subscription plans are chosen by institutions — as{" "}
+      <span className="font-semibold text-foreground">
+       {user ? ROLE_LABELS[user.role] : "a member"}
+      </span>{" "}
+      you already have full access to everything your department has
+      subscribed to, at no cost to you.
+     </p>
+     <div className="mt-6 flex flex-col gap-2">
+      <Button
+       onClick={() => navigate("dashboard")}
+       className="h-11 rounded-xl bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25"
+      >
+       <LayoutDashboard className="w-4 h-4 mr-2" /> Go to Dashboard
+      </Button>
+      <Button variant="outline" onClick={() => navigate("home")}>
+       <ArrowLeft className="w-4 h-4 mr-2" /> Back to Home
+      </Button>
+     </div>
+    </motion.div>
+   </div>
+  );
+ }
 
  const recommendedSlug = "standard";
 

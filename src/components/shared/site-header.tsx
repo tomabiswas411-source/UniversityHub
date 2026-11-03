@@ -16,6 +16,7 @@ import {
  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ROLE_LABELS } from "@/lib/role-labels";
+import { canSeePricing } from "@/lib/role-access";
 import type { AppView } from "@/app/page";
 
 const emptySubscribe = () => () => {};
@@ -35,6 +36,12 @@ const NAV_ITEMS: { view: AppView; label: string }[] = [
  { view: "home", label: "Home" },
  { view: "pricing", label: "Pricing" },
 ];
+
+/* Role-aware nav — students/teachers never see Pricing; visitors and
+   subscription decision-makers (super_admin, dept_admin) do. */
+function navItemsFor(user: { role: string } | null) {
+ return NAV_ITEMS.filter((i) => i.view !== "pricing" || canSeePricing(user));
+}
 
 export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  const { user, logout } = useAuthStore();
@@ -99,7 +106,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
 
  {/* Desktop nav */}
  <nav className="hidden md:flex items-center gap-1 bg-secondary/60 rounded-full px-2 py-1.5 border border-border ">
- {NAV_ITEMS.map((item) => (
+ {navItemsFor(user).map((item) => (
  <button
  key={item.view}
  onClick={() => navigate(item.view)}
