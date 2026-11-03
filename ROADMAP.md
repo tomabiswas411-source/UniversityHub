@@ -41,9 +41,10 @@
 
 > লক্ষ্য: সাইট লাইভ + সুরক্ষিত + স্কেলেবল। এই ফেজ শেষে যেকোনো রিয়েল ইউনিভার্সিটি নিরাপদে ব্যবহার শুরু করতে পারবে।
 
-- [ ] **Day 1 — Production Launch** `deploy`
+- [x] **Day 1 — Production Launch** `deploy` ✅ 2026-11-03
   Turso DB তৈরি → `db:push` + seed → Vercel env vars (TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, AUTH_SECRET) → live URL smoke test (৪ রোল লগইন + ড্যাশবোর্ড)।
   *Done when:* লাইভ URL-এ ৪ রোলই লগইন করে নিজের ডেটা দেখছে।
+  > **Result:** সাইট আগে থেকেই লাইভ ছিল (user deployed) — সম্পূর্ণ smoke test পাস: homepage 200 · Turso কানেক্টেড · AUTH_SECRET কাজ করছে · ৪ রোল API লগইন পাস · student UI লগইন E2E পাস (browser যাচাইকৃত) · PWA assets (sw v3/manifest/sound) লাইভ · console error শূন্য। **Live: https://universityhub-rho.vercel.app**
 
 - [ ] **Day 2 — Security I: Login Protection** `security`
   Rate limiting (memory-based, per-IP + per-identity) on `/api/auth/login` + `student-login`; failed-attempt lockout (5 বার → 10 মিনিট); zod দিয়ে auth input validation।
@@ -266,3 +267,4 @@
 | Day | Date | What shipped | Notes |
 |---|---|---|---|
 | 0 | — | Roadmap created, project audited | Plan committed to GitHub |
+| 1 | 2026-11-03 | Production smoke test: Turso + AUTH_SECRET + 4-role logins + dashboard APIs + PWA + student E2E (browser) — সব পাস | Site was already live; verified end-to-end, zero errors |
