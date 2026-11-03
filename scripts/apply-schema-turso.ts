@@ -33,6 +33,7 @@ const ORDER = [
   "Notification",
   "Assignment",
   "Result",
+  "Attendance",
   "SiteSettings",
   "AcademicCalendar",
 ];

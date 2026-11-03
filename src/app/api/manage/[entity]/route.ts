@@ -143,8 +143,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  }
 
  case "analytics": {
- // Aggregated department insights — Day 41
- const [results, schedulesForLoad, studentsForDist, coursesInfo, recentChanges, noticesCount] =
+ // Aggregated department insights — Day 41 + attendance loop
+ const [results, schedulesForLoad, studentsForDist, coursesInfo, recentChanges, noticesCount, attendanceRows] =
  await Promise.all([
  db.result.findMany({
  where: { departmentId },
@@ -169,6 +169,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  },
  }),
  db.notice.count({ where: { departmentId } }),
+ db.attendance.findMany({
+ where: { departmentId },
+ select: { status: true, courseId: true, courseCode: true },
+ }),
  ]);
 
  const distribution = gradeDistribution(results);
@@ -241,6 +245,48 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  ? Math.round((results.reduce((a, r) => a + resultPct(r), 0) / results.length) * 10) / 10
  : 0;
 
+ // ---------- Attendance analytics ----------
+ const attCounts = { present: 0, absent: 0, late: 0, excused: 0 };
+ const attByCourse = new Map<
+ string,
+ { courseCode: string; present: number; late: number; absent: number; excused: number }
+ >();
+ for (const a of attendanceRows) {
+ if (a.status === "present") attCounts.present++;
+ else if (a.status === "absent") attCounts.absent++;
+ else if (a.status === "late") attCounts.late++;
+ else if (a.status === "excused") attCounts.excused++;
+ const cur =
+ attByCourse.get(a.courseId) ??
+ { courseCode: a.courseCode, present: 0, late: 0, absent: 0, excused: 0 };
+ if (a.status === "present") cur.present++;
+ else if (a.status === "absent") cur.absent++;
+ else if (a.status === "late") cur.late++;
+ else if (a.status === "excused") cur.excused++;
+ attByCourse.set(a.courseId, cur);
+ }
+ const attCounted = attCounts.present + attCounts.late + attCounts.absent;
+ const attendanceAnalytics = {
+ hasData: attendanceRows.length > 0,
+ rate: attCounted === 0 ? 0 : Math.round(((attCounts.present + attCounts.late) / attCounted) * 100),
+ totalMarked: attendanceRows.length,
+ present: attCounts.present,
+ absent: attCounts.absent,
+ late: attCounts.late,
+ excused: attCounts.excused,
+ perCourse: [...attByCourse.entries()]
+ .map(([courseId, c]) => {
+ const counted = c.present + c.late + c.absent;
+ return {
+ courseId,
+ label: c.courseCode,
+ value: counted === 0 ? 0 : Math.round(((c.present + c.late) / counted) * 100),
+ };
+ })
+ .sort((a, b) => a.value - b.value)
+ .slice(0, 8),
+ };
+
  return {
  hasData: results.length > 0,
  totalResults: results.length,
@@ -255,6 +301,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  studentsPerProgram,
  studentsPerSemester,
  coursesPerSemester,
+ attendance: attendanceAnalytics,
  };
  }
 

@@ -8,13 +8,26 @@ import { percentToGrade, resultPct } from "@/lib/grades";
 /**
  * Teacher actions API.
  * GET /api/teacher/overview → own schedules + courses + stats
+ * GET /api/teacher/attendance?scheduleId=&date= → roster + existing marks
+ * POST /api/teacher/attendance → bulk save (upsert per student)
+ * GET /api/teacher/notices → own posted notices
+ * POST /api/teacher/notices → publish (optional course scope + fan-out)
+ * DELETE /api/teacher/notices?id=
  * GET /api/teacher/assignments?courseId= → list
  * POST /api/teacher/assignments → create
+ * PUT /api/teacher/assignments?id= → update
  * DELETE /api/teacher/assignments?id=
  * GET /api/teacher/results?courseId=&examType= → results for a course
  * POST /api/teacher/results → bulk save
  * POST /api/teacher/class-change → cancel/reschedule/room/extra + auto notice + fan-out
  */
+
+const ATT_STATUSES = ["present", "absent", "late", "excused"] as const;
+type AttStatus = (typeof ATT_STATUSES)[number];
+
+function isAttStatus(v: unknown): v is AttStatus {
+  return typeof v === "string" && (ATT_STATUSES as readonly string[]).includes(v);
+}
 type Ctx = { params: Promise<{ action: string }> };
 
 const DAYS = ["saturday", "sunday", "monday", "tuesday", "wednesday", "thursday"];
@@ -171,6 +184,71 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  };
  }
 
+ if (action === "attendance") {
+ const scheduleId = searchParams.get("scheduleId");
+ const date = searchParams.get("date") ?? todayStr();
+ if (!scheduleId) throw new ApiError(400, "scheduleId is required");
+ const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
+ if (!schedule) throw new ApiError(404, "Schedule not found");
+ if (session.role === "teacher" && schedule.teacherId !== session.userId) {
+ throw new ApiError(403, "You can only take attendance for your own classes");
+ }
+ assertDepartmentAccess(session, schedule.departmentId);
+
+ const [students, existing, history] = await Promise.all([
+ db.user.findMany({
+ where: {
+ departmentId: schedule.departmentId,
+ role: "student",
+ isActive: true,
+ programId: schedule.programId,
+ semester: schedule.semester,
+ },
+ select: { id: true, fullName: true, rollNumber: true, studentIdNumber: true },
+ orderBy: { rollNumber: "asc" },
+ }),
+ db.attendance.findMany({
+ where: { scheduleId, date },
+ select: { studentId: true, status: true },
+ }),
+ db.attendance.findMany({
+ where: { scheduleId, date: { not: date } },
+ select: { date: true },
+ distinct: ["date"],
+ orderBy: { date: "desc" },
+ take: 5,
+ }),
+ ]);
+ const existingMap: Record<string, string> = {};
+ for (const e of existing) existingMap[e.studentId] = e.status;
+ return {
+ schedule: {
+ id: schedule.id,
+ courseId: schedule.courseId,
+ courseCode: schedule.courseCode,
+ courseName: schedule.courseName,
+ startTime: schedule.startTime,
+ endTime: schedule.endTime,
+ dayOfWeek: schedule.dayOfWeek,
+ programId: schedule.programId,
+ semester: schedule.semester,
+ },
+ students,
+ existing: existingMap,
+ markedCount: existing.length,
+ recentDates: history.map((h) => h.date),
+ };
+ }
+
+ if (action === "notices") {
+ const notices = await db.notice.findMany({
+ where: { departmentId: session.departmentId!, postedBy: session.userId },
+ orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
+ take: 50,
+ });
+ return { notices };
+ }
+
  if (action === "overview") {
  const [schedules, courses, changes] = await Promise.all([
  db.schedule.findMany({
@@ -267,6 +345,160 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  throw new ApiError(403, "Teacher access required");
  }
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+
+ // ---------- Attendance (bulk save) ----------
+ if (action === "attendance") {
+ const { scheduleId, date, entries } = body as {
+ scheduleId?: string;
+ date?: string;
+ entries?: { studentId: string; status: string }[];
+ };
+ if (!scheduleId || !entries?.length) {
+ throw new ApiError(400, "Schedule and at least one entry are required");
+ }
+ const classDate = date || todayStr();
+ if (!/^\d{4}-\d{2}-\d{2}$/.test(classDate)) {
+ throw new ApiError(400, "Date must be YYYY-MM-DD");
+ }
+ const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
+ if (!schedule) throw new ApiError(404, "Schedule not found");
+ if (session.role === "teacher" && schedule.teacherId !== session.userId) {
+ throw new ApiError(403, "You can only take attendance for your own classes");
+ }
+ assertDepartmentAccess(session, schedule.departmentId);
+
+ let saved = 0;
+ const absentees: string[] = [];
+ for (const e of entries) {
+ if (!e.studentId || !isAttStatus(e.status)) continue;
+ await db.attendance.upsert({
+ where: {
+ scheduleId_studentId_date: {
+ scheduleId,
+ studentId: e.studentId,
+ date: classDate,
+ },
+ },
+ create: {
+ departmentId: schedule.departmentId,
+ scheduleId,
+ courseId: schedule.courseId,
+ studentId: e.studentId,
+ date: classDate,
+ status: e.status,
+ markedBy: session.userId,
+ markedByName: session.name,
+ courseCode: schedule.courseCode,
+ },
+ update: { status: e.status, markedBy: session.userId, markedByName: session.name },
+ });
+ saved++;
+ if (e.status === "absent") absentees.push(e.studentId);
+ }
+
+ // Notify absent students (skip when re-saving an already-marked day is fine —
+ // upsert keeps one notification per save, which acts as a gentle reminder)
+ if (absentees.length > 0) {
+ await db.notification.createMany({
+ data: absentees.map((studentId) => ({
+ userId: studentId,
+ title: `Absent marked: ${schedule.courseCode}`,
+ body: `You were marked absent for ${schedule.courseCode} on ${classDate}. Contact your teacher if this is a mistake.`,
+ type: "attendance",
+ link: "/?view=dashboard",
+ })),
+ });
+ }
+
+ return {
+ saved,
+ absentNotified: absentees.length,
+ summary: {
+ present: entries.filter((e) => e.status === "present").length,
+ absent: absentees.length,
+ late: entries.filter((e) => e.status === "late").length,
+ excused: entries.filter((e) => e.status === "excused").length,
+ },
+ };
+ }
+
+ // ---------- Notices (teacher publishes to their department) ----------
+ if (action === "notices") {
+ const { title, content, category, audience, courseId, isPinned } = body as {
+ title?: string;
+ content?: string;
+ category?: string;
+ audience?: string;
+ courseId?: string;
+ isPinned?: boolean;
+ };
+ if (!title?.trim() || !content?.trim()) {
+ throw new ApiError(400, "Title and content are required");
+ }
+ const audienceVal = ["all", "students", "teachers"].includes(String(audience))
+ ? String(audience)
+ : "all";
+
+ // Optional course scope → target that batch
+ let scopeProgramId: string | null = null;
+ let scopeSemester: number | null = null;
+ let scopeCode: string | null = null;
+ if (courseId) {
+ const course = await db.course.findUnique({ where: { id: String(courseId) } });
+ if (!course) throw new ApiError(404, "Course not found");
+ assertDepartmentAccess(session, course.departmentId);
+ scopeProgramId = course.programId;
+ scopeSemester = course.semester;
+ scopeCode = course.code;
+ }
+
+ const notice = await db.notice.create({
+ data: {
+ departmentId: session.departmentId!,
+ title: title.trim(),
+ content: content.trim(),
+ category: String(category) || "general",
+ audience: audienceVal,
+ programId: scopeProgramId,
+ semester: scopeSemester,
+ isPinned: Boolean(isPinned),
+ postedBy: session.userId,
+ postedByName: session.name,
+ },
+ });
+
+ // Fan-out notifications
+ const fanout: { userId: string; title: string; body: string; type: string; link: string }[] = [];
+ const nTitle = `Notice: ${title.trim().slice(0, 60)}`;
+ const nBody = `${scopeCode ? `[${scopeCode}] ` : ""}${content.trim().slice(0, 140)}`;
+ if (audienceVal !== "teachers") {
+ const students = await db.user.findMany({
+ where: {
+ departmentId: session.departmentId!,
+ role: "student",
+ isActive: true,
+ ...(scopeProgramId ? { programId: scopeProgramId } : {}),
+ ...(scopeSemester ? { semester: scopeSemester } : {}),
+ },
+ select: { id: true },
+ });
+ for (const s of students) {
+ fanout.push({ userId: s.id, title: nTitle, body: nBody, type: "notice", link: "/?view=dashboard" });
+ }
+ }
+ if (audienceVal !== "students") {
+ const teachers = await db.user.findMany({
+ where: { departmentId: session.departmentId!, role: "teacher", isActive: true },
+ select: { id: true },
+ });
+ for (const t of teachers) {
+ fanout.push({ userId: t.id, title: nTitle, body: nBody, type: "notice", link: "/?view=dashboard" });
+ }
+ }
+ if (fanout.length) await db.notification.createMany({ data: fanout });
+
+ return { notice, notified: fanout.length };
+ }
 
  // ---------- Class change (cancel / reschedule / room change / extra) ----------
  if (action === "class-change") {
@@ -511,6 +743,67 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  });
 }
 
+export async function PUT(req: NextRequest, ctx: Ctx) {
+ const { action } = await ctx.params;
+ return handle(async () => {
+ const session = await requireSession();
+ if (!["teacher", "dept_admin"].includes(session.role)) {
+ throw new ApiError(403, "Teacher access required");
+ }
+ const { searchParams } = new URL(req.url);
+ const id = searchParams.get("id");
+ const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+
+ // ---------- Update assignment ----------
+ if (action === "assignments") {
+ if (!id) throw new ApiError(400, "id query param is required");
+ const a = await db.assignment.findUnique({ where: { id } });
+ if (!a) throw new ApiError(404, "Assignment not found");
+ if (a.teacherId !== session.userId && session.role !== "dept_admin") {
+ throw new ApiError(403, "Not your assignment");
+ }
+ const data: Record<string, unknown> = {};
+ if (typeof body.title === "string" && body.title.trim()) data.title = body.title.trim();
+ if (typeof body.description === "string") data.description = body.description.trim();
+ if (body.dueDate !== undefined) {
+ data.dueDate = body.dueDate ? new Date(String(body.dueDate)) : null;
+ }
+ if (body.maxMarks !== undefined) {
+ data.maxMarks = body.maxMarks === null || body.maxMarks === "" ? null : Number(body.maxMarks);
+ }
+ const updated = await db.assignment.update({ where: { id }, data });
+
+ // Notify the batch about the update
+ const course = await db.course.findUnique({ where: { id: a.courseId } });
+ if (course) {
+ const students = await db.user.findMany({
+ where: {
+ departmentId: course.departmentId,
+ role: "student",
+ isActive: true,
+ programId: course.programId,
+ semester: course.semester,
+ },
+ select: { id: true },
+ });
+ if (students.length) {
+ await db.notification.createMany({
+ data: students.map((s) => ({
+ userId: s.id,
+ title: `Assignment Updated: ${course.code}`,
+ body: `${updated.title}${updated.dueDate ? ` — due ${updated.dueDate.toLocaleDateString()}` : ""}`,
+ type: "assignment",
+ })),
+ });
+ }
+ }
+ return { assignment: updated };
+ }
+
+ throw new ApiError(404, "Unknown action");
+ });
+}
+
 export async function DELETE(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
  return handle(async () => {
@@ -529,6 +822,17 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  throw new ApiError(403, "Not your assignment");
  }
  await db.assignment.delete({ where: { id } });
+ return { deleted: true };
+ }
+
+ if (action === "notices") {
+ if (!id) throw new ApiError(400, "id is required");
+ const n = await db.notice.findUnique({ where: { id } });
+ if (!n) throw new ApiError(404, "Notice not found");
+ if (n.postedBy !== session.userId && session.role !== "dept_admin") {
+ throw new ApiError(403, "You can only delete your own notices");
+ }
+ await db.notice.delete({ where: { id } });
  return { deleted: true };
  }
  throw new ApiError(404, "Unknown action");

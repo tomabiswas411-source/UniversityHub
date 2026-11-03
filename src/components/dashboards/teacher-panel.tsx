@@ -9,6 +9,7 @@ import {
  Building2,
  CalendarClock,
  CalendarDays,
+ CheckCheck,
  ClipboardCheck,
  ClipboardList,
  Clock,
@@ -16,21 +17,25 @@ import {
  History,
  Loader2,
  MapPin,
+ Megaphone,
+ Pencil,
+ Pin,
  Plus,
  Save,
  Send,
  Trash2,
- Trophy,
  TrendingUp,
+ UserCheck,
  Users,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { apiDelete, apiGet, apiPost } from "@/lib/api-client";
+import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { timeAgo } from "@/components/shared/notification-bell";
 import {
  ChangeTypeBadge,
+ CategoryBadge,
  EmptyState,
  ExamTypeBadge,
  GRADIENT_BTN,
@@ -86,9 +91,11 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import type {
  AssignmentDTO,
  CourseDTO,
+ NoticeDTO,
  ResultDTO,
  ScheduleChangeDTO,
  ScheduleDTO,
@@ -98,8 +105,9 @@ import { DAYS_OF_WEEK, DAY_LABELS } from "@/types";
 
 /* ============================================================
  TeacherPanel — "Aurora Royale" teacher cockpit
- Tabs: My Schedule · Class Changes · Assignments · Results
- ============================================================ */
+ Tabs: My Schedule · Attendance · Class Changes · Assignments ·
+ Results · Notices · Insights
+============================================================ */
 
 type ResultRow = ResultDTO & {
  student: { fullName: string; rollNumber: string | null; studentIdNumber: string };
@@ -109,6 +117,14 @@ type AssignmentRow = AssignmentDTO & { course?: { code: string; name: string } }
 type ChangeFormType = "cancelled" | "rescheduled" | "extra_class";
 
 const EXAM_LABELS: Record<string, string> = { ct1: "CT-1", ct2: "CT-2", midterm: "Midterm", final: "Final" };
+
+/* Attendance status options — compact segmented control */
+const ATT_OPTIONS = [
+ { value: "present", label: "Present", active: "bg-emerald-600 text-white", idle: "text-emerald-700 dark:text-emerald-300" },
+ { value: "absent", label: "Absent", active: "bg-rose-600 text-white", idle: "text-rose-700 dark:text-rose-300" },
+ { value: "late", label: "Late", active: "bg-amber-500 text-white", idle: "text-amber-700 dark:text-amber-300" },
+ { value: "excused", label: "Excused", active: "bg-slate-600 text-white", idle: "text-slate-600 dark:text-slate-300" },
+] as const;
 
 /* Subtle framer-motion entrance: fade + 12px slide, staggered */
 function FadeIn({ index = 0, className, children }: { index?: number; className?: string; children: ReactNode }) {
@@ -234,12 +250,186 @@ export function TeacherPanel() {
  }
  }, []);
 
+ /* ---------------- attendance (role capability loop) ---------------- */
+ interface AttScheduleInfo {
+ id: string;
+ courseCode: string;
+ courseName: string;
+ startTime: string;
+ endTime: string;
+ dayOfWeek: string;
+ }
+ const [attScheduleId, setAttScheduleId] = useState("");
+ const [attDate, setAttDate] = useState(todayISO());
+ const [attSchedule, setAttSchedule] = useState<AttScheduleInfo | null>(null);
+ const [attStudents, setAttStudents] = useState<StudentRow[]>([]);
+ const [attStatuses, setAttStatuses] = useState<Record<string, string>>({});
+ const [attRecentDates, setAttRecentDates] = useState<string[]>([]);
+ const [attLoading, setAttLoading] = useState(false);
+ const [attSaving, setAttSaving] = useState(false);
+
+ const loadAttendance = useCallback(async (scheduleId: string, date: string) => {
+ if (!scheduleId) {
+ setAttStudents([]);
+ setAttStatuses({});
+ setAttSchedule(null);
+ setAttRecentDates([]);
+ return;
+ }
+ setAttLoading(true);
+ try {
+ const data = await apiGet<{
+ schedule: AttScheduleInfo;
+ students: StudentRow[];
+ existing: Record<string, string>;
+ markedCount: number;
+ recentDates: string[];
+ }>(`/api/teacher/attendance?scheduleId=${encodeURIComponent(scheduleId)}&date=${encodeURIComponent(date)}`);
+ setAttSchedule(data.schedule);
+ setAttStudents(data.students);
+ setAttStatuses({ ...data.existing });
+ setAttRecentDates(data.recentDates ?? []);
+ } catch (err) {
+ toast({ title: "Failed to load roster", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setAttLoading(false);
+ }
+ }, []);
+
+ useEffect(() => {
+ void loadAttendance(attScheduleId, attDate);
+ }, [attScheduleId, attDate, loadAttendance]);
+
+ const attSummary = useMemo(() => {
+ const counts = { present: 0, absent: 0, late: 0, excused: 0 };
+ let unmarked = 0;
+ for (const st of attStudents) {
+ const s = attStatuses[st.id];
+ if (!s) unmarked++;
+ else if (s in counts) counts[s as keyof typeof counts]++;
+ }
+ return { ...counts, unmarked };
+ }, [attStudents, attStatuses]);
+
+ function setAllStatus(status: string) {
+ const next: Record<string, string> = {};
+ for (const st of attStudents) next[st.id] = status;
+ setAttStatuses(next);
+ }
+
+ async function saveAttendance() {
+ if (!attScheduleId) return;
+ const entries = attStudents
+ .map((st) => ({ studentId: st.id, status: attStatuses[st.id] ?? "" }))
+ .filter((e) => e.status !== "");
+ if (entries.length === 0) {
+ toast({
+ title: "Nothing to save",
+ description: "Mark at least one student present, absent, late or excused.",
+ variant: "destructive",
+ });
+ return;
+ }
+ setAttSaving(true);
+ try {
+ const data = await apiPost<{ saved: number; absentNotified: number }>("/api/teacher/attendance", {
+ scheduleId: attScheduleId,
+ date: attDate,
+ entries,
+ });
+ toast({
+ title: "Attendance saved",
+ description: `${data.saved ?? entries.length} students marked${data.absentNotified ? ` · ${data.absentNotified} absent alert${data.absentNotified === 1 ? "" : "s"} sent` : ""}.`,
+ });
+ void loadAttendance(attScheduleId, attDate);
+ } catch (err) {
+ toast({ title: "Failed to save attendance", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setAttSaving(false);
+ }
+ }
+
+ /* ---------------- my notices (teacher publishes) ---------------- */
+ const [myNotices, setMyNotices] = useState<NoticeDTO[] | null>(null);
+ const [myNoticesLoading, setMyNoticesLoading] = useState(false);
+ const [noticeOpen, setNoticeOpen] = useState(false);
+ const [nTitle, setNTitle] = useState("");
+ const [nContent, setNContent] = useState("");
+ const [nCategory, setNCategory] = useState("general");
+ const [nAudience, setNAudience] = useState("all");
+ const [nCourseId, setNCourseId] = useState("none");
+ const [nPinned, setNPinned] = useState(false);
+ const [nSubmitting, setNSubmitting] = useState(false);
+ const [noticeDeleteId, setNoticeDeleteId] = useState<string | null>(null);
+ const [noticeDeleting, setNoticeDeleting] = useState(false);
+
+ const loadMyNotices = useCallback(async () => {
+ setMyNoticesLoading(true);
+ try {
+ const data = await apiGet<{ notices: NoticeDTO[] }>("/api/teacher/notices");
+ setMyNotices(data.notices);
+ } catch (err) {
+ toast({ title: "Failed to load your notices", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setMyNoticesLoading(false);
+ }
+ }, []);
+
+ async function submitNotice(e: FormEvent<HTMLFormElement>) {
+ e.preventDefault();
+ if (!nTitle.trim() || !nContent.trim()) {
+ toast({ title: "Missing information", description: "Title and content are required.", variant: "destructive" });
+ return;
+ }
+ setNSubmitting(true);
+ try {
+ const body: Record<string, unknown> = {
+ title: nTitle.trim(),
+ content: nContent.trim(),
+ category: nCategory,
+ audience: nAudience,
+ isPinned: nPinned,
+ };
+ if (nCourseId !== "none") body.courseId = nCourseId;
+ const data = await apiPost<{ notified: number }>("/api/teacher/notices", body);
+ toast({ title: "Notice published", description: `Notified ${data.notified ?? 0} people.` });
+ setNTitle("");
+ setNContent("");
+ setNCategory("general");
+ setNAudience("all");
+ setNCourseId("none");
+ setNPinned(false);
+ setMyNotices(null); // force reload on next visit
+ void loadMyNotices();
+ } catch (err) {
+ toast({ title: "Couldn't publish notice", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setNSubmitting(false);
+ }
+ }
+
+ async function confirmNoticeDelete() {
+ if (!noticeDeleteId) return;
+ setNoticeDeleting(true);
+ try {
+ await apiDelete<{ deleted: boolean }>(`/api/teacher/notices?id=${encodeURIComponent(noticeDeleteId)}`);
+ setMyNotices((prev) => prev?.filter((n) => n.id !== noticeDeleteId) ?? null);
+ toast({ title: "Notice deleted", description: "The notice has been removed." });
+ setNoticeDeleteId(null);
+ } catch (err) {
+ toast({ title: "Failed to delete notice", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setNoticeDeleting(false);
+ }
+ }
+
  const handleTabChange = useCallback(
  (v: string) => {
  setActiveTab(v);
  if (v === "insights" && !insights && !insightsLoading) void loadInsights();
+ if (v === "notices" && myNotices === null && !myNoticesLoading) void loadMyNotices();
  },
- [insights, insightsLoading, loadInsights]
+ [insights, insightsLoading, loadInsights, myNotices, myNoticesLoading, loadMyNotices]
  );
 
  const loadOverview = useCallback(async () => {
@@ -363,6 +553,7 @@ export function TeacherPanel() {
  const [assignmentsLoading, setAssignmentsLoading] = useState(false);
  const [assignmentFilter, setAssignmentFilter] = useState("all");
  const [dialogOpen, setDialogOpen] = useState(false);
+ const [editingId, setEditingId] = useState<string | null>(null);
  const [aCourseId, setACourseId] = useState("");
  const [aTitle, setATitle] = useState("");
  const [aDesc, setADesc] = useState("");
@@ -390,12 +581,22 @@ export function TeacherPanel() {
  void loadAssignments();
  }, [activeTab, assignmentFilter, loadAssignments]);
 
- function openAssignmentDialog() {
+ function openAssignmentDialog(a?: AssignmentRow) {
+ if (a) {
+ setEditingId(a.id);
+ setACourseId(a.courseId);
+ setATitle(a.title);
+ setADesc(a.description ?? "");
+ setADue(a.dueDate ? a.dueDate.slice(0, 10) : "");
+ setAMax(a.maxMarks != null ? String(a.maxMarks) : "");
+ } else {
+ setEditingId(null);
  setACourseId(assignmentFilter !== "all" ? assignmentFilter : (courses[0]?.id ?? ""));
  setATitle("");
  setADesc("");
  setADue("");
  setAMax("");
+ }
  setDialogOpen(true);
  }
 
@@ -422,12 +623,18 @@ export function TeacherPanel() {
  const body: Record<string, unknown> = { courseId: aCourseId, title: aTitle.trim(), description: aDesc.trim() };
  if (aDue) body.dueDate = aDue;
  if (maxTrim !== "") body.maxMarks = Number(maxTrim);
+ if (editingId) {
+ const { courseId: _ignored, ...updateBody } = body;
+ await apiPut<{ assignment: AssignmentDTO }>(`/api/teacher/assignments?id=${encodeURIComponent(editingId)}`, updateBody);
+ toast({ title: "Assignment updated", description: "Students were notified of the change." });
+ } else {
  const data = await apiPost<{ assignment: AssignmentDTO; notified: number }>("/api/teacher/assignments", body);
  toast({ title: "Assignment published", description: `Assignment published to ${data.notified ?? 0} students.` });
+ }
  setDialogOpen(false);
  void loadAssignments();
  } catch (err) {
- toast({ title: "Couldn't publish assignment", description: errMsg(err), variant: "destructive" });
+ toast({ title: editingId ? "Couldn't update assignment" : "Couldn't publish assignment", description: errMsg(err), variant: "destructive" });
  } finally {
  setASubmitting(false);
  }
@@ -592,11 +799,13 @@ export function TeacherPanel() {
 
  {/* ---------- tabs ---------- */}
  <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
- <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-5">
+ <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
  <TabsTrigger value="schedule" className="py-1.5">My Schedule</TabsTrigger>
+ <TabsTrigger value="attendance" className="py-1.5">Attendance</TabsTrigger>
  <TabsTrigger value="changes" className="py-1.5">Class Changes</TabsTrigger>
  <TabsTrigger value="assignments" className="py-1.5">Assignments</TabsTrigger>
  <TabsTrigger value="results" className="py-1.5">Results</TabsTrigger>
+ <TabsTrigger value="notices" className="py-1.5">Notices</TabsTrigger>
  <TabsTrigger value="insights" className="py-1.5">Insights</TabsTrigger>
  </TabsList>
 
@@ -654,6 +863,195 @@ export function TeacherPanel() {
  ))}
  </div>
  )}
+ </SectionCard>
+ </TabsContent>
+
+ {/* ============ ATTENDANCE ============ */}
+ <TabsContent value="attendance" className="mt-4">
+ <SectionCard
+ title="Take Attendance"
+ icon={UserCheck}
+ action={
+ attSchedule ? (
+ <Badge variant="outline" className="border-border text-green ">
+ {attSchedule.courseCode} · {attSchedule.startTime}
+ </Badge>
+ ) : undefined
+ }
+ >
+ <div className="space-y-4">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+ <div className="space-y-1.5">
+ <Label htmlFor="att-class">Class</Label>
+ <Select value={attScheduleId} onValueChange={setAttScheduleId}>
+ <SelectTrigger id="att-class">
+ <SelectValue placeholder="Select a class" />
+ </SelectTrigger>
+ <SelectContent>
+ {schedules.length === 0 && (
+ <SelectItem value="__none" disabled>
+ No classes assigned to you
+ </SelectItem>
+ )}
+ {schedules.map((s) => (
+ <SelectItem key={s.id} value={s.id}>
+ {s.courseCode} · {dayLabel(s.dayOfWeek)} · {s.startTime}
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="att-date">Date</Label>
+ <Input
+ id="att-date"
+ type="date"
+ value={attDate}
+ max={todayISO()}
+ onChange={(e) => setAttDate(e.target.value)}
+ />
+ </div>
+ </div>
+
+ {attRecentDates.length > 0 && (
+ <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+ <History className="h-3 w-3" />
+ Recent dates:
+ {attRecentDates.map((d) => (
+ <button
+ key={d}
+ type="button"
+ className="rounded-full border px-2 py-0.5 font-semibold text-[#2D4F35] transition-colors hover:bg-green/10 dark:text-[#7FB08F]"
+ onClick={() => setAttDate(d)}
+ >
+ {fmtDate(d)}
+ </button>
+ ))}
+ </div>
+ )}
+
+ {!attScheduleId ? (
+ <EmptyState
+ icon={UserCheck}
+ title="Select a class"
+ hint="Pick one of your classes and take daily attendance — absent students are notified automatically."
+ />
+ ) : attLoading ? (
+ <PanelLoader label="Loading roster…" />
+ ) : attStudents.length === 0 ? (
+ <EmptyState
+ icon={Users}
+ title="No students enrolled"
+ hint="No active students match this class batch (program + semester)."
+ />
+ ) : (
+ <>
+ <div className="flex flex-wrap items-center gap-2">
+ <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-300">
+ Present {attSummary.present}
+ </Badge>
+ <Badge className="bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/50 dark:text-rose-300">
+ Absent {attSummary.absent}
+ </Badge>
+ <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-300">
+ Late {attSummary.late}
+ </Badge>
+ {attSummary.excused > 0 && (
+ <Badge className="bg-slate-200 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">
+ Excused {attSummary.excused}
+ </Badge>
+ )}
+ {attSummary.unmarked > 0 && (
+ <Badge variant="outline">Unmarked {attSummary.unmarked}</Badge>
+ )}
+ <span className="ml-auto flex gap-2">
+ <Button
+ type="button"
+ variant="outline"
+ size="sm"
+ className="h-8"
+ onClick={() => setAllStatus("present")}
+ >
+ <CheckCheck className="mr-1 h-3.5 w-3.5" />
+ All present
+ </Button>
+ <Button
+ type="button"
+ variant="outline"
+ size="sm"
+ className="h-8"
+ onClick={() => setAllStatus("")}
+ disabled={Object.keys(attStatuses).length === 0}
+ >
+ Clear
+ </Button>
+ </span>
+ </div>
+
+ <div className="overflow-x-auto rounded-xl border">
+ <Table>
+ <TableHeader>
+ <TableRow className="bg-muted/60">
+ <TableHead className="min-w-[160px]">Student</TableHead>
+ <TableHead className="w-[70px]">Roll</TableHead>
+ <TableHead className="min-w-[260px] text-right">Status</TableHead>
+ </TableRow>
+ </TableHeader>
+ <TableBody>
+ {attStudents.map((st) => {
+ const current = attStatuses[st.id] ?? "";
+ return (
+ <TableRow key={st.id}>
+ <TableCell>
+ <p className="text-sm font-medium">{st.fullName}</p>
+ <p className="text-[11px] text-muted-foreground">{st.studentIdNumber}</p>
+ </TableCell>
+ <TableCell className="text-xs text-muted-foreground">{st.rollNumber || "—"}</TableCell>
+ <TableCell>
+ <div
+ role="group"
+ aria-label={`Attendance status for ${st.fullName}`}
+ className="flex flex-wrap justify-end gap-1"
+ >
+ {ATT_OPTIONS.map((opt) => {
+ const isActive = current === opt.value;
+ return (
+ <button
+ key={opt.value}
+ type="button"
+ aria-pressed={isActive}
+ className={cn(
+ "rounded-md border px-2.5 py-1 text-[11px] font-semibold transition-all",
+ isActive
+ ? `${opt.active} border-transparent shadow-sm`
+ : `bg-background ${opt.idle} hover:bg-muted`
+ )}
+ onClick={() =>
+ setAttStatuses((m) => ({ ...m, [st.id]: isActive ? "" : opt.value }))
+ }
+ >
+ {opt.label}
+ </button>
+ );
+ })}
+ </div>
+ </TableCell>
+ </TableRow>
+ );
+ })}
+ </TableBody>
+ </Table>
+ </div>
+
+ <div className="flex justify-end">
+ <Button className={GRADIENT_BTN} onClick={() => void saveAttendance()} disabled={attSaving}>
+ {attSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+ {attSaving ? "Saving…" : `Save Attendance (${attSummary.present + attSummary.absent + attSummary.late + attSummary.excused})`}
+ </Button>
+ </div>
+ </>
+ )}
+ </div>
  </SectionCard>
  </TabsContent>
 
@@ -806,7 +1204,7 @@ export function TeacherPanel() {
  ))}
  </SelectContent>
  </Select>
- <Button size="sm" className={cn("h-9", GRADIENT_BTN)} onClick={openAssignmentDialog}>
+ <Button size="sm" className={cn("h-9", GRADIENT_BTN)} onClick={() => openAssignmentDialog()}>
  <Plus className="h-4 w-4" /> New Assignment
  </Button>
  </div>
@@ -845,6 +1243,16 @@ export function TeacherPanel() {
  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{a.description}</p>
  )}
  </div>
+ <div className="flex shrink-0 items-center gap-1">
+ <Button
+ variant="ghost"
+ size="icon"
+ className="h-8 w-8 text-[#2D4F35] hover:bg-green/10 dark:text-[#7FB08F]"
+ onClick={() => openAssignmentDialog(a)}
+ aria-label={`Edit assignment ${a.title}`}
+ >
+ <Pencil className="h-4 w-4" />
+ </Button>
  <Button
  variant="ghost"
  size="icon"
@@ -854,6 +1262,7 @@ export function TeacherPanel() {
  >
  <Trash2 className="h-4 w-4" />
  </Button>
+ </div>
  </div>
  <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px]">
  <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold", due.cls)}>
@@ -879,8 +1288,12 @@ export function TeacherPanel() {
  <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
  <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
  <DialogHeader>
- <DialogTitle>New Assignment</DialogTitle>
- <DialogDescription>Enrolled students of the selected course are notified instantly.</DialogDescription>
+ <DialogTitle>{editingId ? "Edit Assignment" : "New Assignment"}</DialogTitle>
+ <DialogDescription>
+ {editingId
+ ? "Update the details — enrolled students are notified of the change."
+ : "Enrolled students of the selected course are notified instantly."}
+ </DialogDescription>
  </DialogHeader>
  <form onSubmit={submitAssignment} className="space-y-4">
  <div className="space-y-1.5">
@@ -940,8 +1353,8 @@ export function TeacherPanel() {
  Cancel
  </Button>
  <Button type="submit" className={GRADIENT_BTN} disabled={aSubmitting}>
- {aSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
- {aSubmitting ? "Publishing…" : "Publish Assignment"}
+ {aSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : editingId ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+ {aSubmitting ? "Saving…" : editingId ? "Save Changes" : "Publish Assignment"}
  </Button>
  </DialogFooter>
  </form>
@@ -1150,6 +1563,174 @@ export function TeacherPanel() {
  )}
  </div>
  </SectionCard>
+ </TabsContent>
+
+ {/* ============ NOTICES (teacher publishes) ============ */}
+ <TabsContent value="notices" className="mt-4 grid gap-6 lg:grid-cols-5">
+ <FadeIn className="lg:col-span-2">
+ <SectionCard title="Publish a Notice" icon={Megaphone}>
+ <form onSubmit={submitNotice} className="space-y-4">
+ <div className="space-y-1.5">
+ <Label htmlFor="n-title">Title *</Label>
+ <Input
+ id="n-title"
+ placeholder="e.g. Tomorrow's class starts 15 minutes late"
+ value={nTitle}
+ onChange={(e) => setNTitle(e.target.value)}
+ required
+ />
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="n-content">Content *</Label>
+ <Textarea
+ id="n-content"
+ rows={4}
+ placeholder="Write the full notice here…"
+ value={nContent}
+ onChange={(e) => setNContent(e.target.value)}
+ required
+ />
+ </div>
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+ <div className="space-y-1.5">
+ <Label htmlFor="n-category">Category</Label>
+ <Select value={nCategory} onValueChange={setNCategory}>
+ <SelectTrigger id="n-category">
+ <SelectValue />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="general">General</SelectItem>
+ <SelectItem value="academic">Academic</SelectItem>
+ <SelectItem value="exam">Exam</SelectItem>
+ <SelectItem value="event">Event</SelectItem>
+ <SelectItem value="assignment">Assignment</SelectItem>
+ </SelectContent>
+ </Select>
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="n-audience">Notify</Label>
+ <Select value={nAudience} onValueChange={setNAudience}>
+ <SelectTrigger id="n-audience">
+ <SelectValue />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="all">Students + Teachers</SelectItem>
+ <SelectItem value="students">Students only</SelectItem>
+ <SelectItem value="teachers">Teachers only</SelectItem>
+ </SelectContent>
+ </Select>
+ </div>
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="n-course">Scope (optional)</Label>
+ <Select value={nCourseId} onValueChange={setNCourseId}>
+ <SelectTrigger id="n-course">
+ <SelectValue />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="none">Whole department</SelectItem>
+ {courses.map((c) => (
+ <SelectItem key={c.id} value={c.id}>
+ {c.code} · {c.name} (batch only)
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ <p className="text-xs text-muted-foreground">
+ Picking a course limits the notice to that batch (program + semester).
+ </p>
+ </div>
+ <div className="flex items-center justify-between rounded-xl border p-3">
+ <div>
+ <p className="text-sm font-medium">Pinned</p>
+ <p className="text-xs text-muted-foreground">Pinned notices stay on top of the feed.</p>
+ </div>
+ <Switch checked={nPinned} onCheckedChange={setNPinned} aria-label="Pin notice" />
+ </div>
+ <Button type="submit" disabled={nSubmitting} className={cn("w-full", GRADIENT_BTN)}>
+ {nSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+ {nSubmitting ? "Publishing…" : "Publish Notice"}
+ </Button>
+ </form>
+ </SectionCard>
+ </FadeIn>
+
+ <FadeIn index={1} className="lg:col-span-3">
+ <SectionCard
+ title="My Notices"
+ icon={Megaphone}
+ action={
+ myNotices ? <Badge variant="secondary">{myNotices.length} published</Badge> : undefined
+ }
+ >
+ {myNoticesLoading && !myNotices ? (
+ <PanelLoader label="Loading your notices…" />
+ ) : !myNotices || myNotices.length === 0 ? (
+ <EmptyState
+ icon={Megaphone}
+ title="No notices yet"
+ hint="Publish your first notice — students and teachers are notified instantly."
+ />
+ ) : (
+ <div className={SCROLL}>
+ <div className="space-y-3">
+ {myNotices.map((n, i) => (
+ <FadeIn key={n.id} index={i} className="rounded-xl border p-3">
+ <div className="flex items-start justify-between gap-2">
+ <div className="min-w-0">
+ <div className="flex items-center gap-1.5">
+ {n.isPinned && <Pin className="h-3.5 w-3.5 shrink-0 text-amber-500" />}
+ <p className="truncate text-sm font-semibold">{n.title}</p>
+ </div>
+ <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{n.content}</p>
+ </div>
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label={`Delete notice ${n.title}`}
+ className="h-8 w-8 shrink-0 text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+ onClick={() => setNoticeDeleteId(n.id)}
+ >
+ <Trash2 className="h-4 w-4" />
+ </Button>
+ </div>
+ <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+ <CategoryBadge category={n.category} />
+ <span className="ml-auto">{timeAgo(n.createdAt)}</span>
+ </div>
+ </FadeIn>
+ ))}
+ </div>
+ </div>
+ )}
+ </SectionCard>
+ </FadeIn>
+
+ {/* notice delete confirm */}
+ <AlertDialog open={noticeDeleteId !== null} onOpenChange={(o) => { if (!o) setNoticeDeleteId(null); }}>
+ <AlertDialogContent>
+ <AlertDialogHeader>
+ <AlertDialogTitle>Delete this notice?</AlertDialogTitle>
+ <AlertDialogDescription>
+ This removes the notice for everyone in the department. This action cannot be undone.
+ </AlertDialogDescription>
+ </AlertDialogHeader>
+ <AlertDialogFooter>
+ <AlertDialogCancel disabled={noticeDeleting}>Cancel</AlertDialogCancel>
+ <AlertDialogAction
+ className="bg-rose-600 text-white hover:bg-rose-700"
+ disabled={noticeDeleting}
+ onClick={(e) => {
+ e.preventDefault();
+ void confirmNoticeDelete();
+ }}
+ >
+ {noticeDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+ Delete
+ </AlertDialogAction>
+ </AlertDialogFooter>
+ </AlertDialogContent>
+ </AlertDialog>
  </TabsContent>
 
  {/* ============ INSIGHTS (Day 42) ============ */}

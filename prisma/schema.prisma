@@ -137,6 +137,8 @@ model User {
   assignments     Assignment[]
   resultsGiven    Result[]         @relation("ResultGiver")
   resultsReceived Result[]         @relation("ResultStudent")
+  attendanceMarks Attendance[]     @relation("AttendanceMarker")
+  attendanceRecords Attendance[]   @relation("AttendanceStudent")
   notifications   Notification[]
 
   @@unique([universityId, email])
@@ -258,6 +260,7 @@ model Schedule {
   program    Program          @relation(fields: [programId], references: [id])
   creator    User?            @relation("ScheduleCreator", fields: [createdBy], references: [id])
   changes    ScheduleChange[]
+  attendance Attendance[]
 
   @@index([departmentId, dayOfWeek])
   @@index([teacherId])
@@ -349,7 +352,33 @@ model Notification {
   @@index([userId, isRead])
 }
 
-// ============ TEACHER FEATURES: ASSIGNMENTS & RESULTS ============
+// ============ TEACHER FEATURES: ATTENDANCE, ASSIGNMENTS & RESULTS ============
+
+// Daily class attendance — one row per student per schedule per date.
+// status: present | absent | late | excused
+model Attendance {
+  id           String   @id @default(cuid())
+  departmentId String
+  scheduleId   String
+  courseId     String
+  studentId    String
+  date         String // "2025-11-20" — the class date (YYYY-MM-DD)
+  status       String   @default("present") // present | absent | late | excused
+  markedBy     String // teacher user id
+  markedByName String?
+  courseCode   String // denormalized for fast lists
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  student  User     @relation("AttendanceStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  marker   User     @relation("AttendanceMarker", fields: [markedBy], references: [id])
+
+  @@unique([scheduleId, studentId, date])
+  @@index([departmentId, date])
+  @@index([studentId, courseId])
+  @@index([courseId, date])
+}
 
 model Assignment {
   id            String    @id @default(cuid())

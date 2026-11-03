@@ -11,6 +11,13 @@ import type {
  AcademicCalendarDTO,
 } from "@/types";
 
+/** Attendance rate: present + late count as attended; excused excluded. */
+function attendanceRate(present: number, late: number, absent: number, excused: number): number {
+ const counted = present + late + absent;
+ if (counted === 0) return 0;
+ return Math.round(((present + late) / counted) * 100);
+}
+
 /**
  * GET /api/student/dashboard
  * Everything the student dashboard needs in one call.
@@ -36,7 +43,7 @@ export async function GET() {
  },
  });
 
- const [schedules, changes, notices, assignments, results, unreadCount, timeSlots, calendar] =
+ const [schedules, changes, notices, assignments, results, unreadCount, timeSlots, calendar, attendance] =
  await Promise.all([
  programId
  ? db.schedule.findMany({
@@ -103,6 +110,10 @@ export async function GET() {
  },
  orderBy: { date: "asc" },
  take: 6,
+ }),
+ db.attendance.findMany({
+ where: { departmentId, studentId: user.id },
+ select: { courseId: true, status: true, courseCode: true },
  }),
  ]);
 
@@ -251,6 +262,45 @@ export async function GET() {
  .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime())
  .slice(0, 5);
 
+ /* ---------- Attendance analytics ---------- */
+ const attCounts = { present: 0, absent: 0, late: 0, excused: 0 };
+ const attByCourse = new Map<
+ string,
+ { courseCode: string; present: number; late: number; absent: number; excused: number }
+ >();
+ for (const a of attendance) {
+ if (a.status === "present") attCounts.present++;
+ else if (a.status === "absent") attCounts.absent++;
+ else if (a.status === "late") attCounts.late++;
+ else if (a.status === "excused") attCounts.excused++;
+ const cur =
+ attByCourse.get(a.courseId) ??
+ { courseCode: a.courseCode, present: 0, late: 0, absent: 0, excused: 0 };
+ if (a.status === "present") cur.present++;
+ else if (a.status === "absent") cur.absent++;
+ else if (a.status === "late") cur.late++;
+ else if (a.status === "excused") cur.excused++;
+ attByCourse.set(a.courseId, cur);
+ }
+ const attTotal = attendance.length;
+ const attendanceAnalytics = {
+ hasData: attTotal > 0,
+ rate: attendanceRate(attCounts.present, attCounts.late, attCounts.absent, attCounts.excused),
+ attended: attCounts.present + attCounts.late,
+ total: attCounts.present + attCounts.late + attCounts.absent,
+ absent: attCounts.absent,
+ excused: attCounts.excused,
+ perCourse: [...attByCourse.entries()]
+ .map(([courseId, c]) => ({
+ courseId,
+ courseCode: c.courseCode,
+ attended: c.present + c.late,
+ total: c.present + c.late + c.absent,
+ pct: attendanceRate(c.present, c.late, c.absent, c.excused),
+ }))
+ .sort((a, b) => a.pct - b.pct),
+ };
+
  const analytics = {
  hasData: results.length > 0,
  estimatedGPA,
@@ -293,6 +343,7 @@ export async function GET() {
  calendar: calendarDTOs,
  unreadCount,
  todayClasses,
+ attendance: attendanceAnalytics,
  analytics,
  };
  });

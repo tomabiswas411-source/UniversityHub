@@ -140,6 +140,16 @@ interface DeptAnalytics {
  studentsPerProgram: { label: string; value: number }[];
  studentsPerSemester: { label: string; value: number }[];
  coursesPerSemester: { label: string; value: number }[];
+ attendance: {
+ hasData: boolean;
+ rate: number;
+ totalMarked: number;
+ present: number;
+ absent: number;
+ late: number;
+ excused: number;
+ perCourse: { courseId: string; label: string; value: number }[];
+ };
 }
 
 type ManageEntity =
@@ -480,6 +490,7 @@ export function DeptAdminPanel() {
  const [slotOpen, setSlotOpen] = useState(false);
  const [editingSlot, setEditingSlot] = useState<TimeSlotDTO | null>(null);
  const [noticeOpen, setNoticeOpen] = useState(false);
+ const [editingNotice, setEditingNotice] = useState<NoticeDTO | null>(null);
  const [addClassOpen, setAddClassOpen] = useState(false);
  const [editClassOpen, setEditClassOpen] = useState(false);
  const [editingSchedule, setEditingSchedule] = useState<ScheduleDTO | null>(null);
@@ -900,8 +911,37 @@ export function DeptAdminPanel() {
  value={`${analytics.passRate}%`}
  tone={analytics.passRate >= 70 ? "green" : "gold"}
  />
+ {analytics.attendance?.hasData ? (
+ <StatPill
+ label="Attendance Rate"
+ value={`${analytics.attendance.rate}%`}
+ tone={analytics.attendance.rate >= 75 ? "green" : analytics.attendance.rate >= 60 ? "gold" : "rust"}
+ />
+ ) : (
  <StatPill label="Schedule Changes (30d)" value={analytics.recentChanges} tone="gold" />
+ )}
  </div>
+
+ {analytics.attendance?.hasData && (
+ <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+ <ChartCard title="Attendance Rate by Course (lowest first)" icon={Users} height={280}>
+ <VBarChart
+ data={analytics.attendance.perCourse.map((c) => ({ label: c.label, value: c.value }))}
+ color={CHART_COLORS.green}
+ valueLabel="Attendance %"
+ hint="Teachers mark attendance daily from their dashboard."
+ />
+ </ChartCard>
+ <ChartCard title="Attendance Summary" icon={Users} height={280}>
+ <div className="grid h-full grid-cols-2 gap-3">
+ <StatPill label="Entries Marked" value={analytics.attendance.totalMarked} tone="navy" />
+ <StatPill label="Present" value={analytics.attendance.present} tone="green" />
+ <StatPill label="Absent" value={analytics.attendance.absent} tone="rust" />
+ <StatPill label="Late" value={analytics.attendance.late} tone="gold" />
+ </div>
+ </ChartCard>
+ </div>
+ )}
 
  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
  <ChartCard title="Grade Distribution" icon={BarChart3} height={280}>
@@ -953,7 +993,8 @@ export function DeptAdminPanel() {
  <p>
  Performance is the average of all entered marks as a percentage, graded on the
  Bangladesh UGC 4.00 scale (A+ ≥ 80%, A ≥ 75% … D ≥ 40%). Pass rate counts entries
- at D or above. Attendance analytics will join this page once the attendance module ships.
+ at D or above. Attendance is counted from teachers&apos; daily marks — present and
+ late both count as attended; excused entries are excluded.
  </p>
  </SectionCard>
  </>
@@ -1590,7 +1631,10 @@ export function DeptAdminPanel() {
  <Button
  size="sm"
  className={cn("h-10 sm:h-9", GRADIENT_BTN)}
- onClick={() => setNoticeOpen(true)}
+ onClick={() => {
+ setEditingNotice(null);
+ setNoticeOpen(true);
+ }}
  >
  <Plus className="h-4 w-4" />
  Add Notice
@@ -1621,6 +1665,19 @@ export function DeptAdminPanel() {
  {n.content}
  </p>
  </div>
+ <div className="flex shrink-0 items-center gap-1">
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label={`Edit notice ${n.title}`}
+ className="h-10 w-10 shrink-0 text-[#2D4F35] hover:bg-green/10 sm:h-8 sm:w-8 dark:text-[#7FB08F]"
+ onClick={() => {
+ setEditingNotice(n);
+ setNoticeOpen(true);
+ }}
+ >
+ <Pencil className="h-4 w-4" />
+ </Button>
  <Button
  variant="ghost"
  size="icon"
@@ -1632,6 +1689,7 @@ export function DeptAdminPanel() {
  >
  <Trash2 className="h-4 w-4" />
  </Button>
+ </div>
  </div>
  <div className="mt-2 flex flex-wrap items-center gap-1.5">
  <NoticeCategoryBadge category={n.category} />
@@ -1767,13 +1825,17 @@ export function DeptAdminPanel() {
  {/* ---------- notice dialog ---------- */}
  <NoticeDialog
  open={noticeOpen}
- onOpenChange={setNoticeOpen}
+ onOpenChange={(open) => {
+ setNoticeOpen(open);
+ if (!open) setEditingNotice(null);
+ }}
+ notice={editingNotice}
  programs={programs}
  onSubmit={(payload) =>
- saveEntity("notices", payload, null, {
+ saveEntity("notices", payload, editingNotice?.id ?? null, {
  add: "Notice published",
- update: "Notice published",
- fail: "Could not publish notice",
+ update: "Notice updated",
+ fail: "Could not save notice",
  })
  }
  />
@@ -2698,11 +2760,13 @@ const EMPTY_NOTICE_FORM: NoticeFormState = {
 function NoticeDialog({
  open,
  onOpenChange,
+ notice,
  programs,
  onSubmit,
 }: {
  open: boolean;
  onOpenChange: (v: boolean) => void;
+ notice: NoticeDTO | null;
  programs: ProgramDTO[];
  onSubmit: (payload: NoticePayload) => Promise<boolean>;
 }) {
@@ -2710,8 +2774,21 @@ function NoticeDialog({
  const [saving, setSaving] = useState(false);
 
  useEffect(() => {
- if (open) setForm(EMPTY_NOTICE_FORM);
- }, [open]);
+ if (!open) return;
+ if (notice) {
+ setForm({
+ title: notice.title,
+ content: notice.content,
+ category: notice.category,
+ audience: notice.audience,
+ programId: notice.programId ?? "",
+ semester: notice.semester != null ? String(notice.semester) : "",
+ isPinned: notice.isPinned,
+ });
+ } else {
+ setForm(EMPTY_NOTICE_FORM);
+ }
+ }, [open, notice]);
 
  async function handleSave() {
  if (!form.title.trim() || !form.content.trim()) {
@@ -2741,9 +2818,11 @@ function NoticeDialog({
  <Dialog open={open} onOpenChange={onOpenChange}>
  <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
  <DialogHeader>
- <DialogTitle>Add Notice</DialogTitle>
+ <DialogTitle>{notice ? "Edit Notice" : "Add Notice"}</DialogTitle>
  <DialogDescription>
- Pinned notices appear first for students and teachers.
+ {notice
+ ? "Update the notice — changes are visible to students and teachers immediately."
+ : "Pinned notices appear first for students and teachers."}
  </DialogDescription>
  </DialogHeader>
  <div className="grid grid-cols-1 gap-3">
@@ -2853,7 +2932,7 @@ function NoticeDialog({
  </Button>
  <Button className={cn("h-10", GRADIENT_BTN)} onClick={() => void handleSave()} disabled={saving}>
  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
- Publish notice
+ {notice ? "Save changes" : "Publish notice"}
  </Button>
  </DialogFooter>
  </DialogContent>
@@ -2906,8 +2985,13 @@ function AddScheduleDialog({
  const [saving, setSaving] = useState(false);
 
  useEffect(() => {
- if (open) setForm(EMPTY_SCHEDULE_FORM);
- }, [open]);
+ if (!open) return;
+ // Auto-select the program when only one exists (smoother flow),
+ // otherwise start blank.
+ setForm(
+ programs.length === 1 ? { ...EMPTY_SCHEDULE_FORM, programId: programs[0].id } : EMPTY_SCHEDULE_FORM
+ );
+ }, [open, programs]);
 
  const courseOptions = courses.filter(
  (c) =>

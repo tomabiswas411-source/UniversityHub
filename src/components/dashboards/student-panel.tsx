@@ -91,7 +91,24 @@ interface StudentDashboardData {
  calendar: AcademicCalendarDTO[];
  unreadCount: number;
  todayClasses: number;
+ attendance?: StudentAttendance;
  analytics?: StudentAnalytics;
+}
+
+interface StudentAttendance {
+ hasData: boolean;
+ rate: number;
+ attended: number;
+ total: number;
+ absent: number;
+ excused: number;
+ perCourse: {
+ courseId: string;
+ courseCode: string;
+ attended: number;
+ total: number;
+ pct: number;
+ }[];
 }
 
 interface StudentAnalytics {
@@ -813,8 +830,80 @@ export function StudentPanel() {
  </motion.div>
  </TabsContent>
 
- {/* ===== Performance (Day 44) ===== */}
+ {/* ===== Performance (Day 44 + attendance) ===== */}
  <TabsContent value="performance" className="mt-4">
+ {/* Attendance — visible even before any results are published */}
+ {data?.attendance?.hasData ? (
+ <div className="mb-4 space-y-4">
+ <div className="flex flex-wrap items-center justify-around gap-4 rounded-xl border bg-card p-5 shadow-sm">
+ <MetricRing
+ pct={data.attendance.rate}
+ label={`Attendance · ${data.attendance.attended}/${data.attendance.total} classes`}
+ color={CHART_COLORS.green}
+ delay={0}
+ />
+ <MetricRing
+ pct={data.attendance.total > 0
+ ? Math.round(((data.attendance.total - data.attendance.absent) / data.attendance.total) * 100)
+ : 0}
+ label={`Classes missed · ${data.attendance.absent}`}
+ color={data.attendance.absent === 0 ? CHART_COLORS.green : CHART_COLORS.rust}
+ delay={0.1}
+ />
+ </div>
+ <SectionCard title="Course-wise attendance" icon={CalendarCheck}>
+ <div className="space-y-2.5">
+ {data.attendance.perCourse.map((c, i) => (
+ <motion.div
+ key={c.courseId}
+ initial={{ opacity: 0, x: -12 }}
+ animate={{ opacity: 1, x: 0 }}
+ transition={{ delay: i * 0.06 }}
+ className="rounded-xl border p-3"
+ >
+ <div className="flex items-center justify-between gap-3">
+ <div className="min-w-0">
+ <p className="truncate text-sm font-semibold">{c.courseCode}</p>
+ <p className="text-[11px] text-muted-foreground">
+ {c.attended}/{c.total} classes attended
+ </p>
+ </div>
+ <div className="flex shrink-0 items-center gap-2">
+ <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted sm:w-28">
+ <div
+ className={cn(
+ "h-full rounded-full bg-gradient-to-r",
+ c.pct >= 75
+ ? "from-[#2D4F35] to-[#4A7C58]"
+ : "from-[#C8442E] to-[#E55A3F]"
+ )}
+ style={{ width: `${Math.min(100, c.pct)}%` }}
+ />
+ </div>
+ <Badge
+ variant="outline"
+ className={cn(
+ "w-12 justify-center text-xs font-bold",
+ c.pct >= 75
+ ? "text-green"
+ : "border-[#C8442E]/40 text-[#C8442E]"
+ )}
+ >
+ {c.pct}%
+ </Badge>
+ </div>
+ </div>
+ </motion.div>
+ ))}
+ </div>
+ <p className="text-[11px] text-muted-foreground">
+ Present and late both count as attended. Excused absences are excluded.
+ 75% attendance is usually required to sit for exams.
+ </p>
+ </SectionCard>
+ </div>
+ ) : null}
+
  {!data?.analytics?.hasData ? (
  <EmptyState
  icon={TrendingUp}

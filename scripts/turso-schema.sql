@@ -381,3 +381,34 @@ CREATE UNIQUE INDEX "SiteSettings_universityId_key" ON "SiteSettings"("universit
 -- CreateIndex
 CREATE INDEX "AcademicCalendar_universityId_date_idx" ON "AcademicCalendar"("universityId", "date");
 
+
+-- CreateTable
+CREATE TABLE "Attendance" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "departmentId" TEXT NOT NULL,
+    "scheduleId" TEXT NOT NULL,
+    "courseId" TEXT NOT NULL,
+    "studentId" TEXT NOT NULL,
+    "date" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'present',
+    "markedBy" TEXT NOT NULL,
+    "markedByName" TEXT,
+    "courseCode" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "Attendance_scheduleId_fkey" FOREIGN KEY ("scheduleId") REFERENCES "Schedule" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "Attendance_studentId_fkey" FOREIGN KEY ("studentId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "Attendance_markedBy_fkey" FOREIGN KEY ("markedBy") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Attendance_scheduleId_studentId_date_key" ON "Attendance"("scheduleId", "studentId", "date");
+
+-- CreateIndex
+CREATE INDEX "Attendance_departmentId_date_idx" ON "Attendance"("departmentId", "date");
+
+-- CreateIndex
+CREATE INDEX "Attendance_studentId_courseId_idx" ON "Attendance"("studentId", "courseId");
+
+-- CreateIndex
+CREATE INDEX "Attendance_courseId_date_idx" ON "Attendance"("courseId", "date");
