@@ -1,5 +1,5 @@
 /* UniversityHub Service Worker — PWA offline shell + notification routing */
-const CACHE = "universityhub-v1";
+const CACHE = "universityhub-v2";
 const OFFLINE_ASSETS = ["/", "/manifest.json", "/icons/icon-192x192.png", "/icons/icon-512x512.png", "/notification.mp3"];
 
 self.addEventListener("install", (event) => {

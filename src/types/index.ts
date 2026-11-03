@@ -5,308 +5,308 @@
 export type UserRole = "super_admin" | "dept_admin" | "teacher" | "student";
 
 export const DAYS_OF_WEEK = [
-  "saturday",
-  "sunday",
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
+ "saturday",
+ "sunday",
+ "monday",
+ "tuesday",
+ "wednesday",
+ "thursday",
 ] as const;
 export type DayOfWeek = (typeof DAYS_OF_WEEK)[number];
 
 export const DAY_LABELS: Record<DayOfWeek, string> = {
-  saturday: "Saturday",
-  sunday: "Sunday",
-  monday: "Monday",
-  tuesday: "Tuesday",
-  wednesday: "Wednesday",
-  thursday: "Thursday",
+ saturday: "Saturday",
+ sunday: "Sunday",
+ monday: "Monday",
+ tuesday: "Tuesday",
+ wednesday: "Wednesday",
+ thursday: "Thursday",
 };
 
 // ---- API envelope ----
 export interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
+ success: boolean;
+ data?: T;
+ error?: string;
 }
 
 // ---- Session user (client shape) ----
 export interface SessionUser {
-  id: string;
-  role: UserRole;
-  universityId: string | null;
-  departmentId: string | null;
-  fullName: string;
-  email: string | null;
-  designation: string | null;
-  photoURL: string | null;
-  studentIdNumber: string | null;
-  rollNumber: string | null;
-  semester: number | null;
-  section: string | null;
-  programId: string | null;
-  universityName: string | null;
-  universitySlug: string | null;
-  departmentName: string | null;
+ id: string;
+ role: UserRole;
+ universityId: string | null;
+ departmentId: string | null;
+ fullName: string;
+ email: string | null;
+ designation: string | null;
+ photoURL: string | null;
+ studentIdNumber: string | null;
+ rollNumber: string | null;
+ semester: number | null;
+ section: string | null;
+ programId: string | null;
+ universityName: string | null;
+ universitySlug: string | null;
+ departmentName: string | null;
 }
 
 // ---- Entities ----
 export interface PlanDTO {
-  id: string;
-  name: string;
-  slug: string;
-  tagline: string | null;
-  priceMonthly: number;
-  priceYearly: number;
-  maxDepartments: number;
-  maxStudents: number;
-  maxTeachers: number;
-  features: string[];
-  isActive: boolean;
-  sortOrder: number;
+ id: string;
+ name: string;
+ slug: string;
+ tagline: string | null;
+ priceMonthly: number;
+ priceYearly: number;
+ maxDepartments: number;
+ maxStudents: number;
+ maxTeachers: number;
+ features: string[];
+ isActive: boolean;
+ sortOrder: number;
 }
 
 export interface UniversityDTO {
-  id: string;
-  name: string;
-  slug: string;
-  shortName: string | null;
-  logoURL: string | null;
-  address: string | null;
-  contactEmail: string | null;
-  contactPhone: string | null;
-  websiteURL: string | null;
-  aboutText: string | null;
-  facebookURL: string | null;
-  planId: string | null;
-  planName?: string | null;
-  isActive: boolean;
-  _count?: {
-    departments: number;
-    users: number;
-  };
+ id: string;
+ name: string;
+ slug: string;
+ shortName: string | null;
+ logoURL: string | null;
+ address: string | null;
+ contactEmail: string | null;
+ contactPhone: string | null;
+ websiteURL: string | null;
+ aboutText: string | null;
+ facebookURL: string | null;
+ planId: string | null;
+ planName?: string | null;
+ isActive: boolean;
+ _count?: {
+ departments: number;
+ users: number;
+ };
 }
 
 export interface DepartmentDTO {
-  id: string;
-  universityId: string;
-  name: string;
-  shortName: string;
-  code: string;
-  logoURL: string | null;
-  description: string | null;
-  building: string | null;
-  contactEmail: string | null;
-  contactPhone: string | null;
-  facebookURL: string | null;
-  isActive: boolean;
-  _count?: {
-    teachers: number;
-    students: number;
-    courses: number;
-    schedules: number;
-  };
+ id: string;
+ universityId: string;
+ name: string;
+ shortName: string;
+ code: string;
+ logoURL: string | null;
+ description: string | null;
+ building: string | null;
+ contactEmail: string | null;
+ contactPhone: string | null;
+ facebookURL: string | null;
+ isActive: boolean;
+ _count?: {
+ teachers: number;
+ students: number;
+ courses: number;
+ schedules: number;
+ };
 }
 
 export interface ProgramDTO {
-  id: string;
-  departmentId: string;
-  name: string;
-  shortName: string;
-  semesterCount: number;
-  isActive: boolean;
+ id: string;
+ departmentId: string;
+ name: string;
+ shortName: string;
+ semesterCount: number;
+ isActive: boolean;
 }
 
 export interface CourseDTO {
-  id: string;
-  departmentId: string;
-  programId: string;
-  code: string;
-  name: string;
-  creditHours: number;
-  type: "theory" | "lab";
-  semester: number;
-  isActive: boolean;
+ id: string;
+ departmentId: string;
+ programId: string;
+ code: string;
+ name: string;
+ creditHours: number;
+ type: "theory" | "lab";
+ semester: number;
+ isActive: boolean;
 }
 
 export interface RoomDTO {
-  id: string;
-  departmentId: string;
-  roomNumber: string;
-  building: string | null;
-  type: "classroom" | "lab" | "seminar";
-  capacity: number;
-  isActive: boolean;
+ id: string;
+ departmentId: string;
+ roomNumber: string;
+ building: string | null;
+ type: "classroom" | "lab" | "seminar";
+ capacity: number;
+ isActive: boolean;
 }
 
 export interface TimeSlotDTO {
-  id: string;
-  departmentId: string;
-  label: string;
-  startTime: string;
-  endTime: string;
-  slotOrder: number;
-  isBreak: boolean;
-  isActive: boolean;
+ id: string;
+ departmentId: string;
+ label: string;
+ startTime: string;
+ endTime: string;
+ slotOrder: number;
+ isBreak: boolean;
+ isActive: boolean;
 }
 
 export interface ScheduleDTO {
-  id: string;
-  departmentId: string;
-  courseId: string;
-  teacherId: string;
-  roomId: string;
-  timeSlotId: string;
-  programId: string;
-  semester: number;
-  courseCode: string;
-  courseName: string;
-  teacherName: string;
-  roomNumber: string;
-  startTime: string;
-  endTime: string;
-  dayOfWeek: DayOfWeek;
-  classType: "theory" | "lab";
-  isActive: boolean;
+ id: string;
+ departmentId: string;
+ courseId: string;
+ teacherId: string;
+ roomId: string;
+ timeSlotId: string;
+ programId: string;
+ semester: number;
+ courseCode: string;
+ courseName: string;
+ teacherName: string;
+ roomNumber: string;
+ startTime: string;
+ endTime: string;
+ dayOfWeek: DayOfWeek;
+ classType: "theory" | "lab";
+ isActive: boolean;
 }
 
 export interface ScheduleChangeDTO {
-  id: string;
-  departmentId: string;
-  scheduleId: string;
-  changeType:
-    | "cancelled"
-    | "rescheduled"
-    | "room_changed"
-    | "time_changed"
-    | "extra_class";
-  originalDay: string | null;
-  originalStartTime: string | null;
-  originalEndTime: string | null;
-  originalRoomNumber: string | null;
-  newDay: string | null;
-  newStartTime: string | null;
-  newEndTime: string | null;
-  newRoomNumber: string | null;
-  effectiveDate: string;
-  reason: string;
-  courseCode: string;
-  courseName: string;
-  teacherName: string;
-  semester: number | null;
-  changedByName: string;
-  createdAt: string;
+ id: string;
+ departmentId: string;
+ scheduleId: string;
+ changeType:
+ | "cancelled"
+ | "rescheduled"
+ | "room_changed"
+ | "time_changed"
+ | "extra_class";
+ originalDay: string | null;
+ originalStartTime: string | null;
+ originalEndTime: string | null;
+ originalRoomNumber: string | null;
+ newDay: string | null;
+ newStartTime: string | null;
+ newEndTime: string | null;
+ newRoomNumber: string | null;
+ effectiveDate: string;
+ reason: string;
+ courseCode: string;
+ courseName: string;
+ teacherName: string;
+ semester: number | null;
+ changedByName: string;
+ createdAt: string;
 }
 
 export interface NoticeDTO {
-  id: string;
-  departmentId: string;
-  title: string;
-  content: string;
-  category:
-    | "academic"
-    | "exam"
-    | "event"
-    | "general"
-    | "schedule_change"
-    | "assignment";
-  audience: "all" | "students" | "teachers";
-  programId: string | null;
-  semester: number | null;
-  postedByName: string;
-  isPinned: boolean;
-  isAutoGenerated: boolean;
-  createdAt: string;
+ id: string;
+ departmentId: string;
+ title: string;
+ content: string;
+ category:
+ | "academic"
+ | "exam"
+ | "event"
+ | "general"
+ | "schedule_change"
+ | "assignment";
+ audience: "all" | "students" | "teachers";
+ programId: string | null;
+ semester: number | null;
+ postedByName: string;
+ isPinned: boolean;
+ isAutoGenerated: boolean;
+ createdAt: string;
 }
 
 export interface NotificationDTO {
-  id: string;
-  title: string;
-  body: string;
-  type: string;
-  link: string | null;
-  isRead: boolean;
-  createdAt: string;
+ id: string;
+ title: string;
+ body: string;
+ type: string;
+ link: string | null;
+ isRead: boolean;
+ createdAt: string;
 }
 
 export interface UserDTO {
-  id: string;
-  universityId: string | null;
-  departmentId: string | null;
-  role: UserRole;
-  fullName: string;
-  email: string | null;
-  designation: string | null;
-  phone: string | null;
-  photoURL: string | null;
-  bio: string | null;
-  officeRoom: string | null;
-  studentIdNumber: string | null;
-  rollNumber: string | null;
-  section: string | null;
-  semester: number | null;
-  programId: string | null;
-  programName?: string | null;
-  isActive: boolean;
+ id: string;
+ universityId: string | null;
+ departmentId: string | null;
+ role: UserRole;
+ fullName: string;
+ email: string | null;
+ designation: string | null;
+ phone: string | null;
+ photoURL: string | null;
+ bio: string | null;
+ officeRoom: string | null;
+ studentIdNumber: string | null;
+ rollNumber: string | null;
+ section: string | null;
+ semester: number | null;
+ programId: string | null;
+ programName?: string | null;
+ isActive: boolean;
 }
 
 export interface AssignmentDTO {
-  id: string;
-  departmentId: string;
-  courseId: string;
-  courseCode?: string;
-  courseName?: string;
-  teacherId: string;
-  teacherName?: string;
-  title: string;
-  description: string;
-  dueDate: string | null;
-  maxMarks: number | null;
-  createdAt: string;
+ id: string;
+ departmentId: string;
+ courseId: string;
+ courseCode?: string;
+ courseName?: string;
+ teacherId: string;
+ teacherName?: string;
+ title: string;
+ description: string;
+ dueDate: string | null;
+ maxMarks: number | null;
+ createdAt: string;
 }
 
 export interface ResultDTO {
-  id: string;
-  courseId: string;
-  courseCode?: string;
-  courseName?: string;
-  studentId: string;
-  studentName?: string;
-  rollNumber?: string | null;
-  examType: string;
-  marks: number;
-  maxMarks: number;
-  grade: string | null;
-  remarks: string | null;
-  createdAt: string;
+ id: string;
+ courseId: string;
+ courseCode?: string;
+ courseName?: string;
+ studentId: string;
+ studentName?: string;
+ rollNumber?: string | null;
+ examType: string;
+ marks: number;
+ maxMarks: number;
+ grade: string | null;
+ remarks: string | null;
+ createdAt: string;
 }
 
 export interface AcademicCalendarDTO {
-  id: string;
-  universityId: string;
-  departmentId: string | null;
-  title: string;
-  date: string;
-  endDate: string | null;
-  eventType: "class" | "exam" | "holiday" | "event";
-  description: string | null;
+ id: string;
+ universityId: string;
+ departmentId: string | null;
+ title: string;
+ date: string;
+ endDate: string | null;
+ eventType: "class" | "exam" | "holiday" | "event";
+ description: string | null;
 }
 
 // ---- Stats ----
 export interface DeptStatsDTO {
-  totalTeachers: number;
-  totalStudents: number;
-  totalCourses: number;
-  totalRooms: number;
-  totalSchedules: number;
-  todayClasses: number;
+ totalTeachers: number;
+ totalStudents: number;
+ totalCourses: number;
+ totalRooms: number;
+ totalSchedules: number;
+ todayClasses: number;
 }
 
 export interface PlatformStatsDTO {
-  totalUniversities: number;
-  activeUniversities: number;
-  totalDepartments: number;
-  totalTeachers: number;
-  totalStudents: number;
-  totalSchedules: number;
+ totalUniversities: number;
+ activeUniversities: number;
+ totalDepartments: number;
+ totalTeachers: number;
+ totalStudents: number;
+ totalSchedules: number;
 }

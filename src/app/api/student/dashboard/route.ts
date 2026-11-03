@@ -2,12 +2,12 @@ import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import type {
-  AssignmentDTO,
-  NoticeDTO,
-  ScheduleChangeDTO,
-  ScheduleDTO,
-  ResultDTO,
-  AcademicCalendarDTO,
+ AssignmentDTO,
+ NoticeDTO,
+ ScheduleChangeDTO,
+ ScheduleDTO,
+ ResultDTO,
+ AcademicCalendarDTO,
 } from "@/types";
 
 /**
@@ -15,232 +15,232 @@ import type {
  * Everything the student dashboard needs in one call.
  */
 export async function GET() {
-  return handle(async () => {
-    const session = await requireSession();
-    if (session.role !== "student") {
-      throw new ApiError(403, "Student access required");
-    }
-    const user = await db.user.findUnique({ where: { id: session.userId } });
-    if (!user || !user.departmentId || !user.universityId) {
-      throw new ApiError(404, "Student profile incomplete");
-    }
-    const departmentId = user.departmentId;
-    const programId = user.programId;
-    const semester = user.semester;
+ return handle(async () => {
+ const session = await requireSession();
+ if (session.role !== "student") {
+ throw new ApiError(403, "Student access required");
+ }
+ const user = await db.user.findUnique({ where: { id: session.userId } });
+ if (!user || !user.departmentId || !user.universityId) {
+ throw new ApiError(404, "Student profile incomplete");
+ }
+ const departmentId = user.departmentId;
+ const programId = user.programId;
+ const semester = user.semester;
 
-    const department = await db.department.findUnique({
-      where: { id: departmentId },
-      include: {
-        university: { select: { name: true, shortName: true, slug: true } },
-      },
-    });
+ const department = await db.department.findUnique({
+ where: { id: departmentId },
+ include: {
+ university: { select: { name: true, shortName: true, slug: true } },
+ },
+ });
 
-    const [schedules, changes, notices, assignments, results, unreadCount, timeSlots, calendar] =
-      await Promise.all([
-        programId
-          ? db.schedule.findMany({
-              where: {
-                departmentId,
-                programId,
-                semester: semester ?? 1,
-                isActive: true,
-              },
-              orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
-            })
-          : Promise.resolve([] as Awaited<ReturnType<typeof db.schedule.findMany>>),
-        db.scheduleChange.findMany({
-          where: {
-            departmentId,
-            isActive: true,
-            ...(programId ? { programId } : {}),
-            ...(semester ? { semester } : {}),
-          },
-          orderBy: { effectiveDate: "desc" },
-          take: 30,
-        }),
-        db.notice.findMany({
-          where: {
-            departmentId,
-            audience: { in: ["all", "students"] },
-            OR: [{ programId: null }, { programId: programId ?? "none" }],
-          },
-          orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
-          take: 30,
-        }),
-        db.assignment.findMany({
-          where: {
-            departmentId,
-            isActive: true,
-            course: {
-              ...(programId ? { programId } : {}),
-              ...(semester ? { semester } : {}),
-            },
-          },
-          include: {
-            course: { select: { code: true, name: true } },
-            teacher: { select: { fullName: true } },
-          },
-          orderBy: { createdAt: "desc" },
-          take: 20,
-        }),
-        db.result.findMany({
-          where: { departmentId, studentId: user.id },
-          include: { course: { select: { code: true, name: true } } },
-          orderBy: { createdAt: "desc" },
-        }),
-        db.notification.count({
-          where: { userId: user.id, isRead: false },
-        }),
-        db.timeSlot.findMany({
-          where: { departmentId, isActive: true },
-          orderBy: { slotOrder: "asc" },
-        }),
-        db.academicCalendar.findMany({
-          where: {
-            universityId: user.universityId,
-            date: { gte: new Date() },
-          },
-          orderBy: { date: "asc" },
-          take: 6,
-        }),
-      ]);
+ const [schedules, changes, notices, assignments, results, unreadCount, timeSlots, calendar] =
+ await Promise.all([
+ programId
+ ? db.schedule.findMany({
+ where: {
+ departmentId,
+ programId,
+ semester: semester ?? 1,
+ isActive: true,
+ },
+ orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+ })
+ : Promise.resolve([] as Awaited<ReturnType<typeof db.schedule.findMany>>),
+ db.scheduleChange.findMany({
+ where: {
+ departmentId,
+ isActive: true,
+ ...(programId ? { programId } : {}),
+ ...(semester ? { semester } : {}),
+ },
+ orderBy: { effectiveDate: "desc" },
+ take: 30,
+ }),
+ db.notice.findMany({
+ where: {
+ departmentId,
+ audience: { in: ["all", "students"] },
+ OR: [{ programId: null }, { programId: programId ?? "none" }],
+ },
+ orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
+ take: 30,
+ }),
+ db.assignment.findMany({
+ where: {
+ departmentId,
+ isActive: true,
+ course: {
+ ...(programId ? { programId } : {}),
+ ...(semester ? { semester } : {}),
+ },
+ },
+ include: {
+ course: { select: { code: true, name: true } },
+ teacher: { select: { fullName: true } },
+ },
+ orderBy: { createdAt: "desc" },
+ take: 20,
+ }),
+ db.result.findMany({
+ where: { departmentId, studentId: user.id },
+ include: { course: { select: { code: true, name: true } } },
+ orderBy: { createdAt: "desc" },
+ }),
+ db.notification.count({
+ where: { userId: user.id, isRead: false },
+ }),
+ db.timeSlot.findMany({
+ where: { departmentId, isActive: true },
+ orderBy: { slotOrder: "asc" },
+ }),
+ db.academicCalendar.findMany({
+ where: {
+ universityId: user.universityId,
+ date: { gte: new Date() },
+ },
+ orderBy: { date: "asc" },
+ take: 6,
+ }),
+ ]);
 
-    const scheduleDTOs: ScheduleDTO[] = schedules.map((s) => ({
-      id: s.id,
-      departmentId: s.departmentId,
-      courseId: s.courseId,
-      teacherId: s.teacherId,
-      roomId: s.roomId,
-      timeSlotId: s.timeSlotId,
-      programId: s.programId,
-      semester: s.semester,
-      courseCode: s.courseCode,
-      courseName: s.courseName,
-      teacherName: s.teacherName,
-      roomNumber: s.roomNumber,
-      startTime: s.startTime,
-      endTime: s.endTime,
-      dayOfWeek: s.dayOfWeek as ScheduleDTO["dayOfWeek"],
-      classType: s.classType as "theory" | "lab",
-      isActive: s.isActive,
-    }));
+ const scheduleDTOs: ScheduleDTO[] = schedules.map((s) => ({
+ id: s.id,
+ departmentId: s.departmentId,
+ courseId: s.courseId,
+ teacherId: s.teacherId,
+ roomId: s.roomId,
+ timeSlotId: s.timeSlotId,
+ programId: s.programId,
+ semester: s.semester,
+ courseCode: s.courseCode,
+ courseName: s.courseName,
+ teacherName: s.teacherName,
+ roomNumber: s.roomNumber,
+ startTime: s.startTime,
+ endTime: s.endTime,
+ dayOfWeek: s.dayOfWeek as ScheduleDTO["dayOfWeek"],
+ classType: s.classType as "theory" | "lab",
+ isActive: s.isActive,
+ }));
 
-    const changeDTOs: ScheduleChangeDTO[] = changes.map((c) => ({
-      id: c.id,
-      departmentId: c.departmentId,
-      scheduleId: c.scheduleId,
-      changeType: c.changeType as ScheduleChangeDTO["changeType"],
-      originalDay: c.originalDay,
-      originalStartTime: c.originalStartTime,
-      originalEndTime: c.originalEndTime,
-      originalRoomNumber: c.originalRoomNumber,
-      newDay: c.newDay,
-      newStartTime: c.newStartTime,
-      newEndTime: c.newEndTime,
-      newRoomNumber: c.newRoomNumber,
-      effectiveDate: c.effectiveDate,
-      reason: c.reason,
-      courseCode: c.courseCode,
-      courseName: c.courseName,
-      teacherName: c.teacherName,
-      semester: c.semester,
-      changedByName: c.changedByName,
-      createdAt: c.createdAt.toISOString(),
-    }));
+ const changeDTOs: ScheduleChangeDTO[] = changes.map((c) => ({
+ id: c.id,
+ departmentId: c.departmentId,
+ scheduleId: c.scheduleId,
+ changeType: c.changeType as ScheduleChangeDTO["changeType"],
+ originalDay: c.originalDay,
+ originalStartTime: c.originalStartTime,
+ originalEndTime: c.originalEndTime,
+ originalRoomNumber: c.originalRoomNumber,
+ newDay: c.newDay,
+ newStartTime: c.newStartTime,
+ newEndTime: c.newEndTime,
+ newRoomNumber: c.newRoomNumber,
+ effectiveDate: c.effectiveDate,
+ reason: c.reason,
+ courseCode: c.courseCode,
+ courseName: c.courseName,
+ teacherName: c.teacherName,
+ semester: c.semester,
+ changedByName: c.changedByName,
+ createdAt: c.createdAt.toISOString(),
+ }));
 
-    const noticeDTOs: NoticeDTO[] = notices.map((n) => ({
-      id: n.id,
-      departmentId: n.departmentId,
-      title: n.title,
-      content: n.content,
-      category: n.category as NoticeDTO["category"],
-      audience: n.audience as NoticeDTO["audience"],
-      programId: n.programId,
-      semester: n.semester,
-      postedByName: n.postedByName,
-      isPinned: n.isPinned,
-      isAutoGenerated: n.isAutoGenerated,
-      createdAt: n.createdAt.toISOString(),
-    }));
+ const noticeDTOs: NoticeDTO[] = notices.map((n) => ({
+ id: n.id,
+ departmentId: n.departmentId,
+ title: n.title,
+ content: n.content,
+ category: n.category as NoticeDTO["category"],
+ audience: n.audience as NoticeDTO["audience"],
+ programId: n.programId,
+ semester: n.semester,
+ postedByName: n.postedByName,
+ isPinned: n.isPinned,
+ isAutoGenerated: n.isAutoGenerated,
+ createdAt: n.createdAt.toISOString(),
+ }));
 
-    const assignmentDTOs: AssignmentDTO[] = assignments.map((a) => ({
-      id: a.id,
-      departmentId: a.departmentId,
-      courseId: a.courseId,
-      courseCode: a.course?.code,
-      courseName: a.course?.name,
-      teacherId: a.teacherId,
-      teacherName: a.teacher?.fullName,
-      title: a.title,
-      description: a.description,
-      dueDate: a.dueDate?.toISOString() ?? null,
-      maxMarks: a.maxMarks,
-      createdAt: a.createdAt.toISOString(),
-    }));
+ const assignmentDTOs: AssignmentDTO[] = assignments.map((a) => ({
+ id: a.id,
+ departmentId: a.departmentId,
+ courseId: a.courseId,
+ courseCode: a.course?.code,
+ courseName: a.course?.name,
+ teacherId: a.teacherId,
+ teacherName: a.teacher?.fullName,
+ title: a.title,
+ description: a.description,
+ dueDate: a.dueDate?.toISOString() ?? null,
+ maxMarks: a.maxMarks,
+ createdAt: a.createdAt.toISOString(),
+ }));
 
-    const resultDTOs: ResultDTO[] = results.map((r) => ({
-      id: r.id,
-      courseId: r.courseId,
-      courseCode: r.course?.code,
-      courseName: r.course?.name,
-      studentId: r.studentId,
-      examType: r.examType,
-      marks: r.marks,
-      maxMarks: r.maxMarks,
-      grade: r.grade,
-      remarks: r.remarks,
-      createdAt: r.createdAt.toISOString(),
-    }));
+ const resultDTOs: ResultDTO[] = results.map((r) => ({
+ id: r.id,
+ courseId: r.courseId,
+ courseCode: r.course?.code,
+ courseName: r.course?.name,
+ studentId: r.studentId,
+ examType: r.examType,
+ marks: r.marks,
+ maxMarks: r.maxMarks,
+ grade: r.grade,
+ remarks: r.remarks,
+ createdAt: r.createdAt.toISOString(),
+ }));
 
-    const calendarDTOs: AcademicCalendarDTO[] = calendar.map((c) => ({
-      id: c.id,
-      universityId: c.universityId,
-      departmentId: c.departmentId,
-      title: c.title,
-      date: c.date.toISOString(),
-      endDate: c.endDate?.toISOString() ?? null,
-      eventType: c.eventType as AcademicCalendarDTO["eventType"],
-      description: c.description,
-    }));
+ const calendarDTOs: AcademicCalendarDTO[] = calendar.map((c) => ({
+ id: c.id,
+ universityId: c.universityId,
+ departmentId: c.departmentId,
+ title: c.title,
+ date: c.date.toISOString(),
+ endDate: c.endDate?.toISOString() ?? null,
+ eventType: c.eventType as AcademicCalendarDTO["eventType"],
+ description: c.description,
+ }));
 
-    const today = new Date()
-      .toLocaleDateString("en-US", { weekday: "long" })
-      .toLowerCase();
-    const todayClasses = scheduleDTOs.filter(
-      (s) => s.dayOfWeek === today
-    ).length;
+ const today = new Date()
+ .toLocaleDateString("en-US", { weekday: "long" })
+ .toLowerCase();
+ const todayClasses = scheduleDTOs.filter(
+ (s) => s.dayOfWeek === today
+ ).length;
 
-    return {
-      profile: {
-        fullName: user.fullName,
-        rollNumber: user.rollNumber,
-        studentIdNumber: user.studentIdNumber,
-        semester: user.semester,
-        section: user.section,
-        departmentName: department?.name ?? null,
-        departmentShortName: department?.shortName ?? null,
-        departmentId: department?.id ?? null,
-        universityName: department?.university?.name ?? null,
-        programId: user.programId,
-      },
-      schedules: scheduleDTOs,
-      changes: changeDTOs,
-      notices: noticeDTOs,
-      assignments: assignmentDTOs,
-      results: resultDTOs,
-      timeSlots: timeSlots.map((t) => ({
-        id: t.id,
-        departmentId: t.departmentId,
-        label: t.label,
-        startTime: t.startTime,
-        endTime: t.endTime,
-        slotOrder: t.slotOrder,
-        isBreak: t.isBreak,
-        isActive: t.isActive,
-      })),
-      calendar: calendarDTOs,
-      unreadCount,
-      todayClasses,
-    };
-  });
+ return {
+ profile: {
+ fullName: user.fullName,
+ rollNumber: user.rollNumber,
+ studentIdNumber: user.studentIdNumber,
+ semester: user.semester,
+ section: user.section,
+ departmentName: department?.name ?? null,
+ departmentShortName: department?.shortName ?? null,
+ departmentId: department?.id ?? null,
+ universityName: department?.university?.name ?? null,
+ programId: user.programId,
+ },
+ schedules: scheduleDTOs,
+ changes: changeDTOs,
+ notices: noticeDTOs,
+ assignments: assignmentDTOs,
+ results: resultDTOs,
+ timeSlots: timeSlots.map((t) => ({
+ id: t.id,
+ departmentId: t.departmentId,
+ label: t.label,
+ startTime: t.startTime,
+ endTime: t.endTime,
+ slotOrder: t.slotOrder,
+ isBreak: t.isBreak,
+ isActive: t.isActive,
+ })),
+ calendar: calendarDTOs,
+ unreadCount,
+ todayClasses,
+ };
+ });
 }

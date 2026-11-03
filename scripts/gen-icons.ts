@@ -14,13 +14,14 @@ const sizes = [
 for (const { file, size } of sizes) {
   let img = sharp(svg, { density: 300 }).resize(size, size);
   if (file.startsWith("maskable")) {
-    // maskable needs safe zone — icon content within 80% circle, full bleed bg
-    img = sharp(
-      Buffer.from(
-        svg.toString().replace('viewBox="0 0 512 512"', 'viewBox="-52 -52 616 616"')
-      ),
-      { density: 300 }
-    ).resize(size, size);
+    // maskable needs full-bleed background + safe zone: paint expanded bg behind icon
+    const padded = svg
+      .toString()
+      .replace(
+        /(<svg[^>]*>)/,
+        '$1<rect x="-60" y="-60" width="632" height="632" fill="#241C15"/>'
+      );
+    img = sharp(Buffer.from(padded), { density: 300 }).resize(size, size);
   }
   await img.png().toFile(`/home/z/my-project/public/icons/${file}`);
   console.log("✓", file);

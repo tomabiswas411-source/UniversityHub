@@ -6,9 +6,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter);
-  --font-mono: var(--font-geist-mono);
-  --font-display: var(--font-sora);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -38,6 +38,24 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* Brand tokens — Cavendish Yellow + Peppercorn + accents */
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-gold-deep: var(--gold-deep);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --color-green-light: var(--green-light);
+  --color-peach: var(--peach);
+  --color-peach-soft: var(--peach-soft);
+  --color-navy: var(--navy);
+  --color-rust: var(--rust);
+  /* Text category tokens */
+  --color-heading: var(--text-heading);
+  --color-body: var(--text-body);
+  --color-label: var(--text-label);
+  /* Semantic tokens */
   --color-success: var(--success);
   --color-warning: var(--warning);
   --radius-sm: calc(var(--radius) - 4px);
@@ -46,92 +64,137 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ============================================================
-   ROYAL VIOLET — DESIGN SYSTEM
-   ------------------------------------------------------------
-   · Brand gradient  : violet-600 → fuchsia-600 (ONLY combo)
-   · Primary         : violet-600
-   · Semantic colors : emerald = success · amber  = warning/lab
-                       rose = danger — never used in brand art
-   · Light canvas    : soft lavender-white, airy & clean
-   · Dark canvas     : rich violet-tinted graphite ("Nebula")
-   · Type            : Sora (display) + Inter (body)
-   ============================================================ */
-
+/* ===== UniversityHub — Mailchimp-inspired Design System =====
+   Cavendish Yellow (#FFE01B) bold accent, Peppercorn (#241C15) warm ink,
+   cream canvas (#EFEDE9), white cards. Fraunces serif display headings,
+   Inter body. 10px radius. Restrained motion. Generous whitespace.
+   Forest green (#2D4F35) for primary actions, gold for accent moments.
+*/
 :root {
-  --radius: 0.75rem;
-  --background: oklch(0.984 0.005 295);
-  --foreground: oklch(0.216 0.045 290);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.216 0.045 290);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.216 0.045 290);
-  --primary: oklch(0.541 0.281 293.009);
-  --primary-foreground: #ffffff;
-  --secondary: oklch(0.959 0.012 294);
-  --secondary-foreground: oklch(0.33 0.06 291);
-  --muted: oklch(0.962 0.008 294);
-  --muted-foreground: oklch(0.528 0.026 289);
-  --accent: oklch(0.951 0.031 293.5);
-  --accent-foreground: oklch(0.4 0.17 292);
-  --destructive: oklch(0.637 0.237 25.331);
-  --border: oklch(0.915 0.014 293);
-  --input: oklch(0.915 0.014 293);
-  --ring: oklch(0.606 0.25 292.7);
-  --success: #10b981;
-  --warning: #f59e0b;
-  --chart-1: oklch(0.541 0.281 293.009);
-  --chart-2: oklch(0.667 0.295 322.15);
-  --chart-3: oklch(0.7 0.15 162);
-  --chart-4: oklch(0.75 0.18 85);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.216 0.045 290);
-  --sidebar-primary: oklch(0.541 0.281 293.009);
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: oklch(0.951 0.031 293.5);
-  --sidebar-accent-foreground: oklch(0.4 0.17 292);
-  --sidebar-border: oklch(0.915 0.014 293);
-  --sidebar-ring: oklch(0.606 0.25 292.7);
+  --radius: 0.625rem;               /* 10px — moderate rounding per spec */
+
+  /* Light theme — warm cream canvas */
+  --background: #EFEDE9;            /* cream canvas — warm, not pure white */
+  --foreground: #241C15;            /* Peppercorn ink — body text */
+  --card: #FFFFFF;                  /* white cards on cream */
+  --card-foreground: #241C15;
+  --popover: #FFFFFF;
+  --popover-foreground: #241C15;
+
+  --primary: #241C15;               /* Peppercorn — primary buttons */
+  --primary-foreground: #EFEDE9;    /* cream text on dark */
+  --secondary: #F4F2EE;             /* subtle warm gray surface */
+  --secondary-foreground: #241C15;
+  --muted: #F4F2EE;
+  --muted-foreground: #6B6760;      /* warm medium gray */
+  --accent: #FFE01B;                /* Cavendish Yellow — bold accent */
+  --accent-foreground: #241C15;     /* Peppercorn text on yellow */
+  --destructive: #C8442E;           /* accent red */
+  --destructive-foreground: #FFFFFF;
+  --border: #E5E1DA;                /* warm hairline border */
+  --input: #E5E1DA;
+  --ring: #241C15;
+  --success: #2D7A4A;               /* green — success states */
+  --warning: #B8860B;               /* deep gold — warning states */
+
+  /* Text category tokens */
+  --text-heading: #241C15;          /* Peppercorn — headings */
+  --text-body: #3D332B;             /* warm dark brown-gray — body */
+  --text-label: #6B6760;            /* warm gray — labels/captions */
+  --text-muted: #9C968E;            /* warm light gray — de-emphasized */
+
+  /* Brand tokens — Mailchimp palette */
+  --gold: #FFE01B;                  /* Cavendish Yellow — bold accent */
+  --gold-soft: #FFE94F;             /* lighter yellow hover */
+  --gold-deep: #E6C800;             /* deeper yellow */
+  --ink: #241C15;                   /* Peppercorn — warm near-black */
+  --ink-soft: #3D332B;              /* lighter peppercorn */
+  --green: #2D4F35;                 /* dark forest green — primary actions */
+  --green-soft: #3A6B47;
+  --green-light: #4A7C58;
+  --peach: #F4C9A4;                 /* warm peach accent */
+  --peach-soft: #F8D8BC;
+  --navy: #1B3358;                  /* deep navy accent */
+  --rust: #C8442E;                  /* warm red accent */
+  --cream: #EFEDE9;                 /* warm cream */
+  --cream-soft: #F4F2EE;
+
+  --chart-1: #241C15;
+  --chart-2: #FFE01B;
+  --chart-3: #2D4F35;
+  --chart-4: #F4C9A4;
+  --chart-5: #1B3358;
+
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #241C15;
+  --sidebar-primary: #241C15;
+  --sidebar-primary-foreground: #EFEDE9;
+  --sidebar-accent: #FFE01B;
+  --sidebar-accent-foreground: #241C15;
+  --sidebar-border: #E5E1DA;
+  --sidebar-ring: #241C15;
+
+  --shadow-color: 36 28 21;
 }
 
-/* ============================================================
-   ROYAL VIOLET — Dark ("Nebula")
-   ============================================================ */
 .dark {
-  --background: oklch(0.168 0.019 291);
-  --foreground: oklch(0.968 0.007 293);
-  --card: oklch(0.226 0.024 291);
-  --card-foreground: oklch(0.968 0.007 293);
-  --popover: oklch(0.24 0.026 291);
-  --popover-foreground: oklch(0.968 0.007 293);
-  --primary: oklch(0.606 0.25 292.717);
-  --primary-foreground: #ffffff;
-  --secondary: oklch(0.282 0.028 292);
-  --secondary-foreground: oklch(0.955 0.01 293);
-  --muted: oklch(0.272 0.024 292);
-  --muted-foreground: oklch(0.716 0.026 291);
-  --accent: oklch(0.31 0.055 293);
-  --accent-foreground: oklch(0.92 0.05 293);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.32 0.028 292);
-  --input: oklch(0.33 0.03 292);
-  --ring: oklch(0.606 0.25 292.717);
-  --success: #34d399;
-  --warning: #fbbf24;
-  --chart-1: oklch(0.606 0.25 292.717);
-  --chart-2: oklch(0.702 0.27 322.5);
-  --chart-3: oklch(0.7 0.15 162);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.712 0.194 13.428);
-  --sidebar: oklch(0.226 0.024 291);
-  --sidebar-foreground: oklch(0.968 0.007 293);
-  --sidebar-primary: oklch(0.606 0.25 292.717);
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: oklch(0.31 0.055 293);
-  --sidebar-accent-foreground: oklch(0.92 0.05 293);
-  --sidebar-border: oklch(0.32 0.028 292);
-  --sidebar-ring: oklch(0.606 0.25 292.717);
+  --background: #1A1612;            /* warm near-black canvas */
+  --foreground: #EFEDE9;            /* cream text */
+  --card: #241C15;                  /* Peppercorn card */
+  --card-foreground: #EFEDE9;
+  --popover: #241C15;
+  --popover-foreground: #EFEDE9;
+
+  --primary: #EFEDE9;               /* cream primary on dark */
+  --primary-foreground: #241C15;
+  --secondary: #2D2620;
+  --secondary-foreground: #EFEDE9;
+  --muted: #2D2620;
+  --muted-foreground: #9C968E;
+  --accent: #FFE01B;                /* yellow stays bright */
+  --accent-foreground: #241C15;
+  --destructive: #E55A3F;
+  --destructive-foreground: #FFFFFF;
+  --border: #3D332B;
+  --input: #3D332B;
+  --ring: #FFE01B;
+  --success: #5ABF83;
+  --warning: #F0C808;
+
+  --text-heading: #EFEDE9;
+  --text-body: #D4CFC8;
+  --text-label: #9C968E;
+  --text-muted: #6B6760;
+
+  --gold: #FFE01B;
+  --gold-soft: #FFE94F;
+  --gold-deep: #E6C800;
+  --ink: #EFEDE9;
+  --ink-soft: #D4CFC8;
+  --green: #7FB08F;                 /* readable forest green on dark */
+  --green-soft: #6A9C78;
+  --green-light: #8FC29E;
+  --peach: #F4C9A4;
+  --peach-soft: #F8D8BC;
+  --navy: #9DB4D6;                  /* readable navy on dark */
+  --rust: #E5795F;
+  --cream: #1A1612;
+  --cream-soft: #241C15;
+
+  --chart-1: #EFEDE9;
+  --chart-2: #FFE01B;
+  --chart-3: #8FC29E;
+  --chart-4: #F4C9A4;
+  --chart-5: #9DB4D6;
+
+  --sidebar: #1A1612;
+  --sidebar-foreground: #EFEDE9;
+  --sidebar-primary: #FFE01B;
+  --sidebar-primary-foreground: #241C15;
+  --sidebar-accent: #2D2620;
+  --sidebar-accent-foreground: #FFE01B;
+  --sidebar-border: #2D2620;
+  --sidebar-ring: #FFE01B;
 }
 
 @layer base {
@@ -139,43 +202,49 @@
     @apply border-border outline-ring/50;
   }
   html {
+    -webkit-tap-highlight-color: transparent;
     scroll-behavior: smooth;
+    font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "cv11", "ss01";
-    text-rendering: optimizeLegibility;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    color: var(--text-body);
+    font-weight: 400;
+    letter-spacing: -0.005em;
+    line-height: 1.6;
   }
-
-  /* ---- Display typography for headings ---- */
-  h1,
-  h2,
-  h3 {
-    font-family: var(--font-sora), var(--font-inter), ui-sans-serif, system-ui,
-      sans-serif;
-    letter-spacing: -0.021em;
+  /* Display headings — Fraunces serif, light weight, generous spacing */
+  h1, h2, h3 {
+    font-family: var(--font-fraunces), Georgia, serif;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    line-height: 1.15;
     text-wrap: balance;
   }
-  h4,
-  h5,
-  h6 {
-    letter-spacing: -0.012em;
-    text-wrap: balance;
+  h4, h5, h6 {
+    font-family: var(--font-inter), sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
+  }
+  strong, b {
+    color: var(--text-heading);
+    font-weight: 600;
+  }
+  label {
+    color: var(--text-label);
+    font-weight: 500;
+  }
+  p {
+    line-height: 1.6;
+  }
+  ::selection {
+    background: var(--gold);
+    color: var(--ink);
   }
 
-  /* Smooth theme transitions */
-  html,
-  html *,
-  html *::before,
-  html *::after {
-    transition:
-      background-color 260ms ease,
-      color 260ms ease,
-      border-color 260ms ease,
-      box-shadow 260ms ease;
-  }
-
-  /* Thin subtle scrollbar */
+  /* Thin subtle scrollbar — warm */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -184,123 +253,450 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: oklch(0.78 0.02 293);
+    background: #D6D1C8;
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.62 0.04 293);
+    background: #B8B2A6;
   }
   .dark ::-webkit-scrollbar-thumb {
-    background: oklch(0.42 0.03 292);
+    background: #3D332B;
   }
   .dark ::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.52 0.05 292);
+    background: #55483C;
   }
-
-  /* Firefox scrollbar */
   * {
     scrollbar-width: thin;
-    scrollbar-color: oklch(0.78 0.02 293) transparent;
+    scrollbar-color: #D6D1C8 transparent;
   }
   .dark * {
-    scrollbar-color: oklch(0.42 0.03 292) transparent;
+    scrollbar-color: #3D332B transparent;
   }
 }
 
+/* ===== Scrollbar (premium 8px variant) ===== */
+.scrollbar-premium::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-premium::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-premium::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+.scrollbar-premium::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* ===== Card — white on cream, soft shadow, generous padding, 10px radius ===== */
+.card-3d {
+  position: relative;
+  background: var(--card);
+  border-radius: 10px;
+  border: none;
+  box-shadow:
+    0 1px 2px rgba(36, 28, 21, 0.04),
+    0 4px 12px rgba(36, 28, 21, 0.05);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.card-3d:hover {
+  transform: translateY(-3px) scale(1.01);
+  box-shadow:
+    0 4px 8px rgba(36, 28, 21, 0.06),
+    0 12px 28px rgba(36, 28, 21, 0.08);
+}
+
+/* Top accent bar — colored strip on top edge of a card */
+.card-accent {
+  position: relative;
+  overflow: hidden;
+}
+.card-accent::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--green) 0%, var(--green-light) 100%);
+  pointer-events: none;
+}
+.card-accent-gold::before {
+  background: linear-gradient(90deg, var(--gold-deep) 0%, var(--gold) 100%);
+}
+.card-accent-navy::before {
+  background: linear-gradient(90deg, #1B3358 0%, #3B5578 100%);
+}
+.card-accent-rust::before {
+  background: linear-gradient(90deg, #C8442E 0%, #E55A3F 100%);
+}
+
+/* Inner glow overlay — subtle yellow tint on hover */
+.card-inner-glow {
+  position: relative;
+  overflow: hidden;
+}
+.card-inner-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--gold) 6%, transparent) 0%,
+    transparent 50%
+  );
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+.card-inner-glow:hover::before {
+  opacity: 1;
+}
+
+/* ===== Glassmorphism — minimal frosted, warm tint ===== */
+.glass {
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  border: 1px solid var(--border);
+}
+.glass-card {
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 0 color-mix(in srgb, white 15%, transparent) inset;
+}
+
+/* ===== Gradient text — Peppercorn ink + warm tones ===== */
+.text-gradient-primary {
+  background: linear-gradient(120deg, var(--ink) 0%, #4A3F36 60%, var(--ink) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.text-gradient-amber {
+  background: linear-gradient(120deg, var(--gold-deep), var(--gold));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.text-gradient-hero {
+  background: linear-gradient(120deg, var(--ink) 0%, #5A4A3D 45%, var(--gold-deep) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ===== Buttons — Peppercorn primary, Yellow secondary, 150-250ms hover ===== */
+.btn-3d {
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, white 10%, transparent) inset,
+    0 -1px 0 color-mix(in srgb, black 12%, transparent) inset,
+    0 2px 6px rgba(36, 28, 21, 0.10);
+  font-weight: 500;
+  letter-spacing: 0;
+  border-radius: 10px;
+}
+.btn-3d:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, white 10%, transparent) inset,
+    0 -1px 0 color-mix(in srgb, black 12%, transparent) inset,
+    0 4px 12px rgba(36, 28, 21, 0.16);
+}
+.btn-3d:active {
+  transform: translateY(0) scale(1);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, white 8%, transparent) inset,
+    0 2px 4px rgba(36, 28, 21, 0.08);
+}
+
+/* Peppercorn primary button */
+.btn-ink {
+  background: var(--ink);
+  color: #EFEDE9;
+}
+.btn-ink:hover {
+  background: #3D332B;
+}
+.dark .btn-ink {
+  background: var(--ink);
+  color: #241C15;
+}
+.dark .btn-ink:hover {
+  background: #D4CFC8;
+}
+
+/* Cavendish Yellow secondary button */
+.btn-gold {
+  background: var(--gold);
+  color: var(--ink);
+}
+.btn-gold:hover {
+  background: var(--gold-deep);
+}
+
+/* Green primary action button */
+.btn-green {
+  background: var(--green);
+  color: #FFFFFF;
+}
+.btn-green:hover {
+  background: var(--green-soft);
+}
+
+/* ===== Stat card — subtle yellow corner glow ===== */
+.stat-card-premium {
+  position: relative;
+  overflow: hidden;
+}
+.stat-card-premium::after {
+  content: "";
+  position: absolute;
+  top: -30%;
+  right: -20%;
+  width: 50%;
+  height: 70%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--gold) 16%, transparent) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+  filter: blur(28px);
+}
+
+/* ===== Hero background — bold yellow field, quiet elsewhere ===== */
+.hero-bg {
+  position: relative;
+  background:
+    radial-gradient(50% 45% at 50% 0%, color-mix(in srgb, var(--gold) 14%, transparent), transparent 70%),
+    radial-gradient(30% 30% at 90% 20%, color-mix(in srgb, var(--gold) 8%, transparent), transparent 70%);
+}
+
+/* Dark ink hero — for dashboard banners (white text on top) */
+.hero-gradient {
+  background: linear-gradient(135deg, #241C15 0%, #22301F 55%, #2D4F35 100%);
+}
+.dark .hero-gradient {
+  background: linear-gradient(135deg, #241C15 0%, #1E241C 55%, #243622 100%);
+}
+
+/* Decorative corner glow — yellow */
+.corner-glow {
+  position: relative;
+}
+.corner-glow::before {
+  content: "";
+  position: absolute;
+  top: -60px;
+  right: -60px;
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--gold) 26%, transparent), transparent 70%);
+  filter: blur(40px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ===== Badge glow — yellow pulse ===== */
+.badge-glow {
+  animation: badge-pulse 2.4s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--gold) 40%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--gold) 0%, transparent); }
+}
+
+/* ===== Gradient borders ===== */
+.border-gradient-ink {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    linear-gradient(135deg, var(--ink), #4A3F36, var(--ink)) border-box;
+}
+.border-gradient-gold {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    linear-gradient(135deg, var(--gold), var(--gold-deep)) border-box;
+}
+
+/* ===== Colored shadows — warm, soft ===== */
+.shadow-ink-glow { box-shadow: 0 4px 16px -4px rgba(36, 28, 21, 0.14); }
+.shadow-gold-glow { box-shadow: 0 4px 16px -4px color-mix(in srgb, var(--gold) 42%, transparent); }
+.shadow-green-glow { box-shadow: 0 4px 16px -4px color-mix(in srgb, #2D4F35 38%, transparent); }
+
+/* Timetable cell tints — theory (soft green) vs lab (soft gold) */
+.cell-theory {
+  background: color-mix(in srgb, var(--green) 8%, var(--card));
+  color: var(--text-heading);
+}
+.dark .cell-theory {
+  background: color-mix(in srgb, var(--green-light) 16%, var(--card));
+}
+.cell-lab {
+  background: color-mix(in srgb, var(--gold) 30%, var(--card));
+  color: var(--text-heading);
+}
+.dark .cell-lab {
+  background: color-mix(in srgb, var(--gold) 14%, var(--card));
+}
+
+/* Theory / Lab solid fills (badges, chips) */
+.bg-theory { background: var(--ink); }
+.bg-lab { background: var(--gold); }
+
+/* Theory badge — Peppercorn bg cream text; Lab badge — Yellow bg ink text */
+.badge-theory {
+  background: var(--ink);
+  color: #EFEDE9;
+}
+.dark .badge-theory {
+  background: var(--ink-soft);
+  color: #241C15;
+}
+.badge-lab {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+/* Badge utilities */
+.badge-gold {
+  background: var(--gold);
+  color: var(--ink);
+}
+.badge-green {
+  background: var(--green);
+  color: #FFFFFF;
+}
+.badge-ink {
+  background: var(--ink);
+  color: #EFEDE9;
+}
+.badge-peach {
+  background: var(--peach);
+  color: var(--ink);
+}
+.badge-navy {
+  background: #1B3358;
+  color: #FFFFFF;
+}
+
+/* ===== Animations — restrained, 150-250ms, fade/slide-up ===== */
+@keyframes float-subtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.animate-float-subtle { animation: float-subtle 5s ease-in-out infinite; }
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.animate-pulse-soft { animation: pulse-soft 2.6s ease-in-out infinite; }
+
+@keyframes shimmer-soft {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--gold) 20%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-soft 2.2s ease-in-out infinite;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-scale-in { animation: scale-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes blob-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -20px) scale(1.06); }
+  66% { transform: translate(-20px, 20px) scale(0.96); }
+}
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+.animate-spin-slow { animation: spin-slow 12s linear infinite; }
+
+/* ============================================================
+   Legacy utility aliases — remapped to the new palette so any
+   markup that still references the old names stays on-brand.
+   ============================================================ */
 @layer utilities {
-  /* ---- Brand gradient text (violet → fuchsia, no gold) ---- */
-  .gradient-text {
-    background: linear-gradient(
-      120deg,
-      oklch(0.541 0.281 293.009) 0%,
-      oklch(0.606 0.25 292.717) 45%,
-      oklch(0.667 0.295 322.15) 100%
-    );
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  .dark .gradient-text {
-    background: linear-gradient(
-      120deg,
-      oklch(0.702 0.19 292.4) 0%,
-      oklch(0.72 0.21 305) 55%,
-      oklch(0.75 0.24 322) 100%
-    );
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  /* legacy alias kept for older markup */
+  /* Brand gradient text (ink → forest green) */
+  .gradient-text,
   .aurora-text {
     background: linear-gradient(
       120deg,
-      oklch(0.541 0.281 293.009),
-      oklch(0.667 0.295 322.15)
+      #241C15 0%,
+      #2D4F35 55%,
+      #4A7C58 100%
     );
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
+  .dark .gradient-text,
   .dark .aurora-text {
     background: linear-gradient(
       120deg,
-      oklch(0.702 0.19 292.4),
-      oklch(0.75 0.24 322)
+      #EFEDE9 0%,
+      #9DB4A4 55%,
+      #FFE01B 100%
     );
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
 
-  /* ---- Hero gradient background (violet depths) ---- */
-  .hero-gradient {
-    background: linear-gradient(
-      135deg,
-      oklch(0.541 0.281 293.009) 0%,
-      oklch(0.42 0.22 295) 45%,
-      oklch(0.27 0.12 296) 100%
-    );
-  }
-  .dark .hero-gradient {
-    background: linear-gradient(
-      135deg,
-      oklch(0.42 0.2 294) 0%,
-      oklch(0.28 0.09 294) 50%,
-      oklch(0.19 0.03 292) 100%
-    );
-  }
-
-  /* ---- Animated brand gradient strip (violet ↔ fuchsia) ---- */
+  /* Animated brand gradient strip (forest green ↔ lighter green) */
   .aurora-gradient {
     background: linear-gradient(
       100deg,
-      oklch(0.541 0.281 293.009),
-      oklch(0.667 0.295 322.15),
-      oklch(0.606 0.25 292.717),
-      oklch(0.667 0.295 322.15)
+      #2D4F35,
+      #4A7C58,
+      #FFE01B,
+      #4A7C58,
+      #2D4F35
     );
     background-size: 220% 220%;
     animation: aurora-shift 9s ease infinite;
   }
   @keyframes aurora-shift {
-    0%,
-    100% {
-      background-position: 0% 50%;
-    }
-    50% {
-      background-position: 100% 50%;
-    }
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
   }
 
-  /* ---- Soft glow ring (violet only) ---- */
+  /* Soft glow ring — gold + green */
   .glow-aurora {
     box-shadow:
-      0 0 24px oklch(0.541 0.281 293.009 / 0.35),
-      0 0 56px oklch(0.667 0.295 322.15 / 0.18);
+      0 0 24px color-mix(in srgb, var(--gold) 35%, transparent),
+      0 0 56px color-mix(in srgb, #2D4F35 18%, transparent);
   }
 
-  /* ---- Animated background blobs ---- */
+  /* Animated background blobs — warm gold */
   .aurora-blob {
     position: absolute;
     border-radius: 9999px;
@@ -312,81 +708,38 @@
   .dark .aurora-blob {
     opacity: 0.22;
   }
-  @keyframes blob-float {
-    0%,
-    100% {
-      transform: translate(0, 0) scale(1);
-    }
-    33% {
-      transform: translate(30px, -40px) scale(1.08);
-    }
-    66% {
-      transform: translate(-25px, 25px) scale(0.94);
-    }
-  }
 
-  /* ---- Glass surfaces ---- */
-  .glass {
-    background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border: 1px solid oklch(0.541 0.281 293.009 / 0.09);
-  }
-  .dark .glass {
-    background: oklch(0.2 0.02 291 / 0.72);
-    border-color: oklch(0.606 0.25 292.717 / 0.12);
-  }
-
-  .glass-card {
-    background: rgba(255, 255, 255, 0.78);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border: 1px solid oklch(0.541 0.281 293.009 / 0.1);
-  }
-  .dark .glass-card {
-    background: oklch(0.22 0.024 291 / 0.7);
-    border: 1px solid oklch(0.606 0.25 292.717 / 0.14);
-  }
-
-  /* ---- Shimmer line ---- */
+  /* Shimmer line — gold */
   .shimmer-line {
     background: linear-gradient(
       90deg,
       transparent,
-      oklch(0.606 0.25 292.717 / 0.75),
-      oklch(0.667 0.295 322.15 / 0.75),
+      color-mix(in srgb, var(--gold) 75%, transparent),
+      color-mix(in srgb, var(--gold-deep) 75%, transparent),
       transparent
     );
     background-size: 200% 100%;
     animation: shimmer-move 3s linear infinite;
   }
   @keyframes shimmer-move {
-    0% {
-      background-position: 200% 0;
-    }
-    100% {
-      background-position: -200% 0;
-    }
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 
-  /* ---- Grid pattern backdrop ---- */
+  /* Grid pattern backdrop — warm hairline */
   .grid-pattern {
     background-image:
-      linear-gradient(oklch(0.541 0.281 293.009 / 0.055) 1px, transparent 1px),
-      linear-gradient(
-        90deg,
-        oklch(0.541 0.281 293.009 / 0.055) 1px,
-        transparent 1px
-      );
+      linear-gradient(rgba(36, 28, 21, 0.055) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(36, 28, 21, 0.055) 1px, transparent 1px);
     background-size: 44px 44px;
   }
   .dark .grid-pattern {
     background-image:
-      linear-gradient(oklch(0.606 0.25 292.717 / 0.07) 1px, transparent 1px),
-      linear-gradient(90deg, oklch(0.606 0.25 292.717 / 0.07) 1px, transparent 1px);
+      linear-gradient(rgba(239, 237, 233, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(239, 237, 233, 0.05) 1px, transparent 1px);
   }
 
-  /* ---- Hide scrollbar but keep scrollability ---- */
+  /* Hide scrollbar but keep scrollability */
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -394,4 +747,13 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+}
+
+/* Safe area padding for mobile */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+
+/* Display heading utility — apply Fraunces serif */
+.font-display {
+  font-family: var(--font-fraunces), Georgia, serif;
 }

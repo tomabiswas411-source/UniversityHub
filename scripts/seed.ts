@@ -12,12 +12,12 @@ import bcrypt from "bcryptjs";
 // ---------- DB client (same logic as src/lib/db.ts) ----------
 const url = process.env.TURSO_DATABASE_URL;
 const authToken = process.env.TURSO_AUTH_TOKEN;
-if (!url || !authToken) {
-  console.error("Missing TURSO env vars");
-  process.exit(1);
-}
-const libsql = new PrismaLibSQL({ url, authToken });
-const db = new PrismaClient({ adapter: libsql });
+const db = url && authToken
+  ? new PrismaClient({ adapter: new PrismaLibSQL({ url, authToken }) })
+  : (() => {
+      console.warn("[seed] TURSO env vars not set — seeding local SQLite file.");
+      return new PrismaClient();
+    })();
 
 const PW_STAFF = await bcrypt.hash("Admin@2025", 10); // super admin
 const PW_HEAD = await bcrypt.hash("Head@2025", 10);
