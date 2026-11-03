@@ -1214,7 +1214,7 @@ export function DepartmentView({
  </Badge>
  ) : null}
  </div>
- <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+ <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
  {items.map((sched) => (
  <DayClassCard
  key={sched.id}
@@ -1292,7 +1292,7 @@ export function DepartmentView({
  hint="Department announcements will appear here — check back later."
  />
  ) : (
- <div className="grid gap-4 lg:grid-cols-2">
+ <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
  {notices.map((n) => {
  const cat = NOTICE_CATEGORIES[n.category] ?? NOTICE_CATEGORIES.general;
  const long = n.content.length > 180;
@@ -1384,7 +1384,7 @@ export function DepartmentView({
  hint="Teachers of this department will be listed here."
  />
  ) : (
- <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
  {teachers.map((t) => (
  <motion.div key={t.id} whileHover={{ y: -3 }}>
  <Card className="h-full gap-0 rounded-2xl border-border py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-[#2D4F35]/10 ">

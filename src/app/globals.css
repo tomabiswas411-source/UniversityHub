@@ -203,6 +203,8 @@
   }
   html {
     -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
     scroll-behavior: smooth;
     font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -213,6 +215,18 @@
     font-weight: 400;
     letter-spacing: -0.005em;
     line-height: 1.6;
+    /* Prevent stray elements from causing horizontal page scroll on
+       small screens. "clip" (unlike hidden) keeps position:sticky working. */
+    overflow-x: clip;
+  }
+  /* Comfortable tap targets + no double-tap zoom delay on mobile */
+  button, a, [role="button"], input[type="checkbox"], input[type="radio"] {
+    touch-action: manipulation;
+  }
+  /* Long emails / student IDs / URLs should wrap instead of blowing
+     out their container on narrow phones. */
+  td, th, p, span:not(.truncate):not([class*="whitespace-"]) {
+    overflow-wrap: break-word;
   }
   /* Display headings — Fraunces serif, light weight, generous spacing */
   h1, h2, h3 {
@@ -752,6 +766,122 @@
 /* Safe area padding for mobile */
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
 .pt-safe { padding-top: env(safe-area-inset-top); }
+
+/* ============================================================
+   TEXT & COLOR SYSTEM v2 — refined typographic voices on top of
+   the Cavendish/Peppercorn palette. Use these instead of raw
+   text-* utilities for headings, eyebrows and data numerals.
+   ============================================================ */
+@layer utilities {
+  /* Eyebrow — small-caps green section label */
+  .text-eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--green);
+  }
+  .dark .text-eyebrow {
+    color: var(--green-light);
+  }
+
+  /* Lead paragraph — larger, softer intro copy */
+  .text-lead {
+    font-size: 1.0625rem;
+    line-height: 1.65;
+    color: var(--text-body);
+  }
+  @media (min-width: 640px) {
+    .text-lead { font-size: 1.125rem; }
+  }
+
+  /* Caption — de-emphasized fine print */
+  .text-caption {
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: var(--text-label);
+  }
+
+  /* Tabular numerals — stable width for counts & stats */
+  .tnums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* Animated underline for inline links */
+  .link-underline {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-size: 0% 1.5px;
+    background-repeat: no-repeat;
+    background-position: left bottom;
+    transition: background-size 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .link-underline:hover {
+    background-size: 100% 1.5px;
+  }
+
+  /* Light-sweep shine for primary buttons on hover */
+  .btn-shine {
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-shine::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-130%) skewX(-18deg);
+    background: linear-gradient(
+      105deg,
+      transparent 32%,
+      rgba(255, 255, 255, 0.32) 50%,
+      transparent 68%
+    );
+    transition: transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+  }
+  .btn-shine:hover::after {
+    transform: translateX(130%) skewX(-18deg);
+  }
+}
+
+/* ============================================================
+   MOTION v2 — marquee strip, soft float, reduced-motion guard
+   ============================================================ */
+@keyframes marquee-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee-scroll 30s linear infinite;
+}
+.marquee-mask {
+  mask-image: linear-gradient(90deg, transparent, black 10%, black 90%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, black 10%, black 90%, transparent);
+}
+
+@keyframes drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(0, -10px, 0) scale(1.03); }
+}
+.animate-drift { animation: drift 7s ease-in-out infinite; }
+
+/* Respect users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee,
+  .animate-drift,
+  .shimmer,
+  .shimmer-line,
+  .animate-float-subtle,
+  .animate-pulse-soft,
+  .badge-glow,
+  .aurora-gradient,
+  .animate-spin-slow {
+    animation: none !important;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
 
 /* Display heading utility — apply Fraunces serif */
 .font-display {

@@ -2,10 +2,12 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import { useAuthStore } from "@/store/auth-store";
 import { SiteHeader } from "@/components/shared/site-header";
 import { SiteFooter } from "@/components/shared/site-footer";
 import { MobileNav } from "@/components/shared/mobile-nav";
+import { ScrollProgress } from "@/components/shared/motion-primitives";
 import { HomeView } from "@/components/views/home-view";
 import { DepartmentView } from "@/components/views/department-view";
 import { LoginView } from "@/components/views/login-view";
@@ -62,6 +64,7 @@ function AppShell() {
  return (
  <div className="min-h-screen flex flex-col bg-gradient-to-b from-gold/20 via-background to-background ">
  <SiteHeader view={view} navigate={navigate} />
+ <ScrollProgress />
 
  <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 pb-24 md:pb-8">
  <Suspense
@@ -71,6 +74,15 @@ function AppShell() {
  </div>
  }
  >
+ {/* Smooth cross-fade + rise between app views */}
+ <AnimatePresence mode="wait" initial={false}>
+ <motion.div
+ key={`${view}-${deptId ?? ""}`}
+ initial={{ opacity: 0, y: 14 }}
+ animate={{ opacity: 1, y: 0 }}
+ exit={{ opacity: 0, y: -10 }}
+ transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+ >
  {view === "home" && <HomeView navigate={navigate} />}
  {view === "department" && (
  <DepartmentView departmentId={deptId} navigate={navigate} />
@@ -78,6 +90,8 @@ function AppShell() {
  {view === "login" && <LoginView navigate={navigate} />}
  {view === "pricing" && <PricingView navigate={navigate} />}
  {view === "dashboard" && <DashboardView navigate={navigate} />}
+ </motion.div>
+ </AnimatePresence>
  </Suspense>
  </main>
 

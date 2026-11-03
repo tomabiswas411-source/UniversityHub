@@ -497,6 +497,7 @@ export function TeacherPanel() {
  transition={{ duration: 0.35 }}
  className="relative overflow-hidden rounded-2xl hero-gradient p-5 text-white shadow-lg shadow-[#241C15]/25 sm:p-6"
  >
+ <div aria-hidden className="shimmer-line absolute inset-x-0 bottom-0 h-px" />
  <div className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
  <div className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-amber-300/20 blur-2xl" />
  <div className="relative flex flex-wrap items-center justify-between gap-4">
@@ -861,7 +862,7 @@ export function TeacherPanel() {
  onChange={(e) => setADesc(e.target.value)}
  />
  </div>
- <div className="grid gap-4 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
  <div className="space-y-1.5">
  <Label htmlFor="a-due">Due date</Label>
  <Input id="a-due" type="date" value={aDue} onChange={(e) => setADue(e.target.value)} />
@@ -932,7 +933,7 @@ export function TeacherPanel() {
  }
  >
  <div className="space-y-5">
- <div className="grid gap-4 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
  <div className="space-y-1.5">
  <Label htmlFor="r-course">Course</Label>
  <Select value={rCourseId} onValueChange={setRCourseId}>

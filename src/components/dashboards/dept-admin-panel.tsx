@@ -760,7 +760,7 @@ export function DeptAdminPanel() {
 
  {/* ---------- tabs ---------- */}
  <Tabs defaultValue="overview" className="gap-4">
- <TabsList className="h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:h-9">
+ <TabsList className="no-scrollbar h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:h-9">
  {TABS.map((t) => (
  <TabsTrigger key={t.value} value={t.value} className="shrink-0 gap-1.5 px-3">
  <t.icon className="h-3.5 w-3.5" />
@@ -771,7 +771,7 @@ export function DeptAdminPanel() {
 
  {/* ===== Overview ===== */}
  <TabsContent value="overview" className="space-y-4">
- <div className="grid gap-4 xl:grid-cols-3">
+ <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
  <SectionCard
  title="Weekly Timetable"
  icon={CalendarDays}
@@ -1182,7 +1182,7 @@ export function DeptAdminPanel() {
  hint="Create courses per program and semester before scheduling classes."
  />
  ) : (
- <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
  {courses.map((c, i) => (
  <motion.div
  key={c.id}
@@ -1273,7 +1273,7 @@ export function DeptAdminPanel() {
  hint="Programs (e.g. BSc CSE) organise students, courses and routines."
  />
  ) : (
- <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
  {programs.map((p, i) => (
  <motion.div
  key={p.id}
@@ -1326,7 +1326,7 @@ export function DeptAdminPanel() {
 
  {/* ===== Rooms & Slots ===== */}
  <TabsContent value="rooms" className="space-y-4">
- <div className="grid gap-4 lg:grid-cols-2">
+ <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
  <SectionCard
  title={`Rooms (${rooms.length})`}
  icon={DoorOpen}
@@ -1806,11 +1806,11 @@ function TeacherDialog({
  : "The teacher will sign in with email + password."}
  </DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
+ <div className="grid grid-cols-1 gap-3">
  <Field label="Full name" required>
  <Input value={form.fullName} onChange={upd("fullName")} placeholder="Dr. Ayesha Rahman" />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Email" required>
  <Input type="email" value={form.email} onChange={upd("email")} placeholder="ayesha@university.edu" />
  </Field>
@@ -1823,7 +1823,7 @@ function TeacherDialog({
  />
  </Field>
  </div>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Designation">
  <Input value={form.designation} onChange={upd("designation")} placeholder="Associate Professor" />
  </Field>
@@ -1952,11 +1952,11 @@ function StudentDialog({
  Students sign in with their ID number + roll — no password needed.
  </DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
+ <div className="grid grid-cols-1 gap-3">
  <Field label="Full name" required>
  <Input value={form.fullName} onChange={upd("fullName")} placeholder="Nafis Ahmed" />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="ID number" required>
  <Input value={form.studentIdNumber} onChange={upd("studentIdNumber")} placeholder="223015068" />
  </Field>
@@ -1964,7 +1964,7 @@ function StudentDialog({
  <Input value={form.rollNumber} onChange={upd("rollNumber")} placeholder="68" />
  </Field>
  </div>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Program">
  <Select
  value={form.programId || "none"}
@@ -1987,7 +1987,7 @@ function StudentDialog({
  <Input type="number" min={1} value={form.semester} onChange={upd("semester")} placeholder="3" />
  </Field>
  </div>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Section">
  <Input value={form.section} onChange={upd("section")} placeholder="A" />
  </Field>
@@ -2094,8 +2094,8 @@ function CourseDialog({
  <DialogTitle>{isEdit ? "Edit Course" : "Add Course"}</DialogTitle>
  <DialogDescription>Courses feed directly into the weekly routine.</DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Course code" required>
  <Input
  value={form.code}
@@ -2121,7 +2121,7 @@ function CourseDialog({
  placeholder="Data Structures & Algorithms"
  />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Program" required>
  <Select
  value={form.programId || undefined}
@@ -2249,7 +2249,7 @@ function ProgramDialog({
  <DialogTitle>{isEdit ? "Edit Program" : "Add Program"}</DialogTitle>
  <DialogDescription>Programs group students and courses into degrees.</DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
+ <div className="grid grid-cols-1 gap-3">
  <Field label="Program name" required>
  <Input
  value={form.name}
@@ -2257,7 +2257,7 @@ function ProgramDialog({
  placeholder="BSc in Computer Science & Engineering"
  />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Short name" required>
  <Input
  value={form.shortName}
@@ -2363,8 +2363,8 @@ function RoomDialog({
  <DialogTitle>{isEdit ? "Edit Room" : "Add Room"}</DialogTitle>
  <DialogDescription>Rooms are where scheduled classes take place.</DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Room number" required>
  <Input
  value={form.roomNumber}
@@ -2505,7 +2505,7 @@ function SlotDialog({
  The daily period structure — classes are scheduled into these slots.
  </DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
+ <div className="grid grid-cols-1 gap-3">
  <Field label="Label" required>
  <Input
  value={form.label}
@@ -2513,7 +2513,7 @@ function SlotDialog({
  placeholder="Period 1 / Lunch break"
  />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Start time" required>
  <Input
  type="time"
@@ -2638,7 +2638,7 @@ function NoticeDialog({
  Pinned notices appear first for students and teachers.
  </DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
+ <div className="grid grid-cols-1 gap-3">
  <Field label="Title" required>
  <Input
  value={form.title}
@@ -2654,7 +2654,7 @@ function NoticeDialog({
  placeholder="Write the full notice here…"
  />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Category">
  <Select
  value={form.category}
@@ -2694,7 +2694,7 @@ function NoticeDialog({
  </Select>
  </Field>
  </div>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Program (optional)">
  <Select
  value={form.programId || "none"}
@@ -2848,8 +2848,8 @@ function AddScheduleDialog({
  The server checks room / teacher conflicts and rejects overlaps.
  </DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Program" required>
  <Select
  value={form.programId || undefined}
@@ -2938,7 +2938,7 @@ function AddScheduleDialog({
  </SelectContent>
  </Select>
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Day" required>
  <Select
  value={form.dayOfWeek || undefined}
@@ -3060,7 +3060,7 @@ function EditScheduleDialog({
  : "Move this class to another day or time slot."}
  </DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
+ <div className="grid grid-cols-1 gap-3">
  <Field label="Day" required>
  <Select value={day || undefined} onValueChange={setDay}>
  <SelectTrigger className="w-full">

@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Reveal, TiltCard } from "@/components/shared/motion-primitives";
 import { apiGet } from "@/lib/api-client";
 import type { DepartmentDTO, PlanDTO, UniversityDTO } from "@/types";
 
@@ -115,11 +116,9 @@ function SectionHeading({
  subtitle?: string;
 }) {
  return (
- <div className="mx-auto mb-6 max-w-2xl text-center sm:mb-8">
- <span className="text-[11px] font-bold uppercase tracking-[0.22em] text-green">
- {eyebrow}
- </span>
- <h2 className="mt-1.5 text-2xl font-extrabold tracking-tight sm:text-3xl">
+ <Reveal className="mx-auto mb-6 max-w-2xl text-center sm:mb-8">
+ <span className="text-eyebrow">{eyebrow}</span>
+ <h2 className="mt-1.5 text-2xl font-semibold tracking-tight sm:text-3xl">
  {title}
  </h2>
  {subtitle ? (
@@ -127,6 +126,47 @@ function SectionHeading({
  {subtitle}
  </p>
  ) : null}
+ </Reveal>
+ );
+}
+
+/* Infinite capability ticker — quiet editorial strip under the hero */
+const TICKER_ITEMS = [
+ "Class Routines",
+ "Live Notices",
+ "Assignments",
+ "Results",
+ "Push Alerts + Sound",
+ "Installable PWA",
+ "Multi-University",
+ "4-Role Access",
+ "Department Control",
+ "Real-time Sync",
+];
+
+function TickerRow({ hidden }: { hidden?: boolean }) {
+ return (
+ <div aria-hidden={hidden} className="flex shrink-0 items-center">
+ {TICKER_ITEMS.map((t) => (
+ <span
+ key={t}
+ className="inline-flex items-center gap-3 whitespace-nowrap pr-3 text-sm font-semibold text-muted-foreground"
+ >
+ {t}
+ <span className="text-[10px] text-gold-deep dark:text-gold">✦</span>
+ </span>
+ ))}
+ </div>
+ );
+}
+
+function CapabilityTicker() {
+ return (
+ <div className="marquee-mask overflow-hidden border-y border-border bg-card/60 py-3.5">
+ <div className="animate-marquee flex w-max">
+ <TickerRow />
+ <TickerRow hidden />
+ </div>
  </div>
  );
 }
@@ -206,13 +246,13 @@ function HomeSkeleton() {
  {/* University grid skeleton */}
  <div>
  <Skeleton className="mx-auto mb-6 h-8 w-56" />
- <div className="grid gap-4 md:grid-cols-2">
+ <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
  <Skeleton className="h-52 rounded-2xl" />
  <Skeleton className="h-52 rounded-2xl" />
  </div>
  </div>
  {/* Features skeleton */}
- <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
  {Array.from({ length: 6 }).map((_, i) => (
  <Skeleton key={i} className="h-40 rounded-2xl" />
  ))}
@@ -458,6 +498,9 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  </motion.div>
  </section>
 
+ {/* ======================= CAPABILITY TICKER ======================== */}
+ <CapabilityTicker />
+
  {/* ========================== STATS STRIP =========================== */}
  <section>
  <motion.div
@@ -520,7 +563,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  initial="hidden"
  whileInView="show"
  viewport={{ once: true, margin: "-60px" }}
- className="grid gap-4 md:grid-cols-2"
+ className="grid grid-cols-1 gap-4 md:grid-cols-2"
  >
  {universities.map((u) => {
  const selected = u.slug === selectedSlug;
@@ -626,7 +669,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  </div>
 
  {deptLoading ? (
- <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
  {Array.from({ length: 3 }).map((_, i) => (
  <Skeleton key={i} className="h-56 rounded-2xl" />
  ))}
@@ -647,7 +690,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  variants={stagger}
  initial="hidden"
  animate="show"
- className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
+ className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
  >
  {deptData.departments.map((dept) => (
  <motion.div
@@ -716,14 +759,15 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  initial="hidden"
  whileInView="show"
  viewport={{ once: true, margin: "-60px" }}
- className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+ className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
  >
  {FEATURES.map((f) => (
  <motion.div
  key={f.title}
  variants={riseIn}
- whileHover={{ y: -4, scale: 1.01 }}
+ className="h-full"
  >
+ <TiltCard className="h-full">
  <Card className="group h-full gap-0 rounded-2xl border-border py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-[#2D4F35]/10 ">
  <CardContent className="p-5">
  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#241C15] shadow-md shadow-[#241C15]/25 transition-transform group-hover:scale-110">
@@ -735,6 +779,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  </p>
  </CardContent>
  </Card>
+ </TiltCard>
  </motion.div>
  ))}
  </motion.div>

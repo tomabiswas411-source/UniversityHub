@@ -1,5 +1,5 @@
 /* UniversityHub Service Worker — PWA offline shell + notification routing */
-const CACHE = "universityhub-v2";
+const CACHE = "universityhub-v3";
 const OFFLINE_ASSETS = ["/", "/manifest.json", "/icons/icon-192x192.png", "/icons/icon-512x512.png", "/notification.mp3"];
 
 self.addEventListener("install", (event) => {
@@ -23,14 +23,17 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-/* Network-first for API + pages, cache fallback for offline */
+/* Strategies:
+   - API ............ network-first (offline → JSON 503)
+   - Navigations .... network-first (offline → cached shell)
+   - Static assets .. cache-first (immutable _next/static, icons, fonts) */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // API: network-first, no cache fallback for authed calls (avoid stale data)
+  // API: network-first — never serve stale data
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(req).catch(
@@ -44,10 +47,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static & pages: stale-while-revalidate
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      const network = fetch(req)
+  // Page navigations: network-first so users always get the newest UI,
+  // cached shell only when actually offline.
+  if (req.mode === "navigate") {
+    event.respondWith(
+      fetch(req)
         .then((res) => {
           if (res && res.status === 200 && res.type === "basic") {
             const copy = res.clone();
@@ -55,9 +59,24 @@ self.addEventListener("fetch", (event) => {
           }
           return res;
         })
-        .catch(() => cached || caches.match("/"));
-      return cached || network;
-    })
+        .catch(() => caches.match(req).then((c) => c || caches.match("/")))
+    );
+    return;
+  }
+
+  // Static assets: cache-first (hashed/immutable)
+  event.respondWith(
+    caches.match(req).then(
+      (cached) =>
+        cached ||
+        fetch(req).then((res) => {
+          if (res && res.status === 200 && res.type === "basic") {
+            const copy = res.clone();
+            caches.open(CACHE).then((cache) => cache.put(req, copy));
+          }
+          return res;
+        })
+    )
   );
 });
 

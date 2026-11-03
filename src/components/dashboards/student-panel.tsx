@@ -352,6 +352,7 @@ export function StudentPanel() {
  className="relative overflow-hidden rounded-2xl hero-gradient p-5 text-white shadow-lg shadow-[#241C15]/25 sm:p-7"
  aria-label="Student profile summary"
  >
+ <div aria-hidden className="shimmer-line absolute inset-x-0 bottom-0 h-px" />
  <div
  aria-hidden
  className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-white/10 blur-2xl"
@@ -396,7 +397,7 @@ export function StudentPanel() {
  </motion.section>
 
  {/* ---------- Stats row ---------- */}
- <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
  <StatCard
  icon={CalendarClock}
  label="Today's Classes"
@@ -660,7 +661,7 @@ export function StudentPanel() {
  hint="Assignments from your courses will appear here."
  />
  ) : (
- <div className="grid gap-4 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
  {sortedAssignments.map((a) => {
  const chip = dueChip(a.dueDate);
  return (
@@ -728,7 +729,7 @@ export function StudentPanel() {
  hint="Your exam results will appear here once published."
  />
  ) : (
- <div className="grid gap-4 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
  {resultGroups.map((g) => (
  <div key={g.key} className="rounded-2xl border bg-background/50 p-4">
  <div className="flex items-baseline gap-2">
@@ -776,7 +777,7 @@ export function StudentPanel() {
  {/* ===== Alerts ===== */}
  <TabsContent value="alerts" className="mt-4">
  <motion.div {...tabMotion}>
- <div className="grid gap-6 xl:grid-cols-2">
+ <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
  <SectionCard
  title="Class Changes"
  icon={CalendarX2}

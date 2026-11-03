@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CountUp } from "@/components/shared/motion-primitives";
 import type { ScheduleDTO, TimeSlotDTO } from "@/types";
 import { DAY_LABELS, DAYS_OF_WEEK } from "@/types";
 
@@ -15,7 +16,7 @@ import { DAY_LABELS, DAYS_OF_WEEK } from "@/types";
    ============================================================ */
 
 export const GRADIENT_BTN =
-  "bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25";
+  "btn-shine bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25";
 export const GRADIENT_ICON =
   "bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-white shadow-md shadow-[#2D4F35]/30";
 
@@ -38,32 +39,59 @@ export function StatCard({
   tone?: "violet" | "fuchsia" | "amber" | "emerald" | "rose";
   delay?: number;
 }) {
-  const tones: Record<string, string> = {
-    violet: "from-[#2D4F35] to-[#4A7C58] text-white shadow-[#2D4F35]/30", // forest green
-    fuchsia: "from-[#1B3358] to-[#3B5578] text-white shadow-[#1B3358]/30", // deep navy
-    amber: "from-[#FFD60A] to-[#E6C800] text-[#241C15] shadow-[#E6C800]/40", // cavendish gold
-    emerald: "from-[#E8A87C] to-[#F4C9A4] text-[#241C15] shadow-[#C8442E]/20", // warm peach
-    rose: "from-[#C8442E] to-[#E55A3F] text-white shadow-[#C8442E]/30", // rust red
+  const tones: Record<string, { chip: string; bar: string }> = {
+    violet: {
+      chip: "from-[#2D4F35] to-[#4A7C58] text-white shadow-[#2D4F35]/30",
+      bar: "from-[#2D4F35] to-[#4A7C58]",
+    }, // forest green
+    fuchsia: {
+      chip: "from-[#1B3358] to-[#3B5578] text-white shadow-[#1B3358]/30",
+      bar: "from-[#1B3358] to-[#3B5578]",
+    }, // deep navy
+    amber: {
+      chip: "from-[#FFD60A] to-[#E6C800] text-[#241C15] shadow-[#E6C800]/40",
+      bar: "from-[#FFD60A] to-[#E6C800]",
+    }, // cavendish gold
+    emerald: {
+      chip: "from-[#E8A87C] to-[#F4C9A4] text-[#241C15] shadow-[#C8442E]/20",
+      bar: "from-[#E8A87C] to-[#F4C9A4]",
+    }, // warm peach
+    rose: {
+      chip: "from-[#C8442E] to-[#E55A3F] text-white shadow-[#C8442E]/30",
+      bar: "from-[#C8442E] to-[#E55A3F]",
+    }, // rust red
   };
+  const t = tones[tone];
   return (
     <motion.div
       initial={{ opacity: 0, y: 14 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.35 }}
-      className="rounded-xl border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+      whileHover={{ y: -3 }}
+      className="relative overflow-hidden rounded-xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
     >
+      {/* tone hairline on top edge */}
+      <span
+        aria-hidden
+        className={cn(
+          "absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r opacity-80",
+          t.bar
+        )}
+      />
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
             {label}
           </p>
-          <p className="font-display text-3xl leading-tight text-heading">{value}</p>
+          <p className="font-display text-3xl leading-tight text-heading">
+            {typeof value === "number" ? <CountUp value={value} /> : value}
+          </p>
           {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
         </div>
         <div
           className={cn(
             "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg",
-            tones[tone]
+            t.chip
           )}
         >
           <Icon className="h-5 w-5" />
@@ -151,17 +179,19 @@ export function TimetableGrid({
 
   return (
     <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
-      <table className="w-full min-w-[720px] border-collapse text-xs sm:text-sm">
+      {/* min-w shrinks on phones so the grid stays readable without
+          excessive horizontal scrolling; the time column stays sticky. */}
+      <table className="w-full min-w-[560px] border-collapse text-xs sm:min-w-[720px] sm:text-sm">
         <thead>
           <tr>
-            <th className="sticky left-0 z-10 w-24 bg-muted/80 px-2 py-2.5 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground backdrop-blur sm:w-28 sm:px-3">
+            <th className="sticky left-0 z-10 w-[74px] bg-muted/95 px-1.5 py-2 text-left text-[10px] font-bold uppercase tracking-wide text-muted-foreground backdrop-blur sm:w-28 sm:px-3 sm:text-[11px]">
               Time
             </th>
             {DAYS_OF_WEEK.map((d) => (
               <th
                 key={d}
                 className={cn(
-                  "px-2 py-2.5 text-center font-bold",
+                  "px-1 py-2 text-center text-[11px] font-bold sm:px-2 sm:py-2.5 sm:text-xs",
                   isToday(d)
                     ? "bg-gold/30 text-[#241C15] dark:bg-gold/15 dark:text-gold"
                     : "bg-muted/60 text-muted-foreground"
@@ -180,14 +210,12 @@ export function TimetableGrid({
             <tr key={slot.id} className="border-t">
               <td
                 className={cn(
-                  "sticky left-0 z-10 bg-card px-2 py-2 align-middle backdrop-blur sm:px-3",
+                  "sticky left-0 z-10 bg-card px-1.5 py-1.5 align-middle backdrop-blur sm:px-3 sm:py-2",
                   slot.isBreak && "bg-amber-50/70 dark:bg-amber-950/20"
                 )}
               >
-                <p className="text-[11px] font-semibold leading-tight sm:text-xs">
-                  {slot.startTime}
-                </p>
-                <p className="text-[10px] text-muted-foreground sm:text-[11px]">
+                <p className="text-[10px] font-semibold leading-tight sm:text-xs">{slot.startTime}</p>
+                <p className="text-[9px] text-muted-foreground sm:text-[11px]">
                   {slot.isBreak ? "Break" : slot.label}
                 </p>
               </td>
@@ -199,7 +227,7 @@ export function TimetableGrid({
                   <td
                     key={`${day}-${slot.id}`}
                     className={cn(
-                      "border-l border-border/50 p-1 align-top",
+                      "border-l border-border/50 p-0.5 align-top sm:p-1",
                       slot.isBreak && "bg-amber-50/50 dark:bg-amber-950/10",
                       isToday(day) && "bg-gold/10"
                     )}
@@ -208,12 +236,12 @@ export function TimetableGrid({
                       <div
                         key={s.id}
                         className={cn(
-                          "mb-1 rounded-lg px-2 py-1.5 text-[11px] leading-tight last:mb-0 sm:text-xs",
+                          "mb-1 rounded-md px-1.5 py-1 text-[10px] leading-tight last:mb-0 sm:rounded-lg sm:px-2 sm:py-1.5 sm:text-xs",
                           s.classType === "lab" ? "cell-lab" : "cell-theory"
                         )}
                       >
                         <p className="font-bold">{s.courseCode}</p>
-                        <p className="truncate text-[10px] opacity-80 sm:text-[11px]">
+                        <p className="max-w-[92px] truncate text-[9px] opacity-80 sm:max-w-[140px] sm:text-[11px]">
                           {s.roomNumber}
                           {showTeacher && s.teacherName ? ` · ${s.teacherName}` : ""}
                         </p>

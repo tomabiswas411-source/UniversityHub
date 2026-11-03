@@ -714,7 +714,7 @@ export function SuperAdminPanel() {
 
  {/* ---------- tabs ---------- */}
  <Tabs defaultValue="universities" className="gap-4">
- <TabsList className="h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:h-9">
+ <TabsList className="no-scrollbar h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:h-9">
  <TabsTrigger value="universities" className="shrink-0 gap-1.5 px-4">
  <Building2 className="h-3.5 w-3.5" />
  Universities
@@ -747,7 +747,7 @@ export function SuperAdminPanel() {
  hint="Create your first university to onboard departments, teachers and students."
  />
  ) : (
- <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+ <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
  {universities.map((u, i) => (
  <motion.div
  key={u.id}
@@ -929,7 +929,7 @@ export function SuperAdminPanel() {
  hint="Subscription plans appear here once seeded on the server."
  />
  ) : (
- <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+ <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
  {plans.map((p, i) => {
  const draft = planDrafts[p.id];
  if (!draft) return null;
@@ -1108,7 +1108,7 @@ export function SuperAdminPanel() {
  : "Register a new university on the platform (default settings are created automatically)."}
  </DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
+ <div className="grid grid-cols-1 gap-3">
  <Field label="University name" required>
  <Input
  value={uniForm.name}
@@ -1122,7 +1122,7 @@ export function SuperAdminPanel() {
  }
  />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Slug (URL)" required>
  <Input
  value={uniForm.slug}
@@ -1152,7 +1152,7 @@ export function SuperAdminPanel() {
  }
  />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Contact email">
  <Input
  type="email"
@@ -1173,7 +1173,7 @@ export function SuperAdminPanel() {
  />
  </Field>
  </div>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Website">
  <Input
  value={uniForm.websiteURL}
@@ -1259,7 +1259,7 @@ export function SuperAdminPanel() {
  Departments group teachers, students, courses and routines.
  </DialogDescription>
  </DialogHeader>
- <div className="grid gap-3">
+ <div className="grid grid-cols-1 gap-3">
  <Field label="Department name" required>
  <Input
  value={deptForm.name}
@@ -1269,7 +1269,7 @@ export function SuperAdminPanel() {
  }
  />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Short name">
  <Input
  value={deptForm.shortName}
@@ -1298,7 +1298,7 @@ export function SuperAdminPanel() {
  }
  />
  </Field>
- <div className="grid gap-3 sm:grid-cols-2">
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Contact email">
  <Input
  type="email"
