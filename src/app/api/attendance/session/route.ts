@@ -4,6 +4,7 @@ import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { assertDepartmentAccess } from "@/lib/auth";
+import { isSaneCoords } from "@/lib/geo";
 
 /**
  * QR attendance session management (teacher / dept_admin).
@@ -13,6 +14,10 @@ import { assertDepartmentAccess } from "@/lib/auth";
  *  • GET ?id= is the teacher live-poll — reads a couple of rows and
  *    returns <200 bytes: {st, pc, exp, recent[≤3]}
  *  • GET ?scheduleId= returns the last 5 sessions for history chips
+ *
+ * GEO-FENCE: the teacher's browser sends ONE position fix when the
+ * window opens; it is stored on the session row and every student scan
+ * is distance-checked server-side. No extra requests, no tracking.
  */
 
 export async function POST(req: NextRequest) {
@@ -25,6 +30,10 @@ export async function POST(req: NextRequest) {
       scheduleId?: string;
       date?: string;
       durationSec?: number;
+      geoEnabled?: boolean;
+      lat?: number;
+      lng?: number;
+      radiusM?: number;
     };
 
     if (!body.scheduleId) throw new ApiError(400, "Schedule is required");
@@ -33,6 +42,14 @@ export async function POST(req: NextRequest) {
       throw new ApiError(400, "Date must be YYYY-MM-DD");
     }
     const duration = Math.min(Math.max(Number(body.durationSec) || 120, 30), 600);
+
+    // Geo-fence inputs: enabled only when the teacher asked for it AND
+    // the browser actually produced a usable position fix.
+    let geo: { geoLat: number; geoLng: number; geoRadiusM: number } | null = null;
+    if (body.geoEnabled && isSaneCoords(body.lat, body.lng)) {
+      const radius = Math.min(Math.max(Math.round(Number(body.radiusM) || 150), 30), 2000);
+      geo = { geoLat: body.lat as number, geoLng: body.lng as number, geoRadiusM: radius };
+    }
 
     const schedule = await db.schedule.findUnique({ where: { id: body.scheduleId } });
     if (!schedule) throw new ApiError(404, "Schedule not found");
@@ -58,6 +75,7 @@ export async function POST(req: NextRequest) {
         date: classDate,
         durationSec: duration,
         expiresAt,
+        ...(geo ?? {}),
       },
     });
 
@@ -66,6 +84,7 @@ export async function POST(req: NextRequest) {
       token: created.token,
       expiresAt: created.expiresAt.toISOString(),
       durationSec: created.durationSec,
+      geo: geo ? { radiusM: geo.geoRadiusM } : null,
       url: `/?view=attend&k=${created.token}`,
     };
   });
@@ -93,6 +112,7 @@ export async function GET(req: NextRequest) {
           presentCount: true,
           closed: true,
           expiresAt: true,
+          geoRadiusM: true,
         },
       });
       if (!s) throw new ApiError(404, "Session not found");
@@ -113,6 +133,7 @@ export async function GET(req: NextRequest) {
         st: s.closed ? "closed" : expired ? "expired" : "active",
         pc: s.presentCount,
         exp: s.expiresAt.toISOString(),
+        geo: s.geoRadiusM != null,
         recent: recent.map((r) => ({ n: r.student.fullName, r: r.student.rollNumber })),
       };
     }

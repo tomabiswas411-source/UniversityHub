@@ -226,6 +226,26 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  ]);
  const existingMap: Record<string, string> = {};
  for (const e of existing) existingMap[e.studentId] = e.status;
+
+ // When the class batch is empty, tell the teacher WHY: count active
+ // students per semester of the same program (one tiny indexed groupBy,
+ // only in the empty case — happy path pays nothing).
+ let batchCounts: { semester: number; count: number }[] | undefined;
+ if (students.length === 0) {
+ const grouped = await db.user.groupBy({
+ by: ["semester"],
+ where: {
+ departmentId: schedule.departmentId,
+ role: "student",
+ isActive: true,
+ programId: schedule.programId,
+ },
+ _count: true,
+ orderBy: { semester: "asc" },
+ });
+ batchCounts = grouped.map((g) => ({ semester: g.semester, count: g._count }));
+ }
+
  return {
  schedule: {
  id: schedule.id,
@@ -242,6 +262,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  existing: existingMap,
  markedCount: existing.length,
  recentDates: history.map((h) => h.date),
+ batchCounts,
  };
  }
 

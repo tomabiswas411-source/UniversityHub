@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { getSession, requireSession, ApiError } from "@/lib/session";
+import { distanceMeters, isSaneCoords } from "@/lib/geo";
 
 /**
  * QR scan endpoints (student-facing).
@@ -9,6 +10,15 @@ import { getSession, requireSession, ApiError } from "@/lib/session";
  * COST GUARD: every response is a handful of fields — a student's
  * scan is ONE GET (page info) + ONE POST (mark present). No fan-out,
  * no heavy joins, no notifications generated on the scan path.
+ *
+ * GEO-FENCE (anti-fraud): when the teacher enabled the location check,
+ * the POST must carry the student's coords; the server keeps them only
+ * long enough to compute one distance and store the rounded meter
+ * count on the attendance row (audit trail). Outside the radius →
+ * rejected, so a friend cannot check you in from home.
+ *
+ * DEVICE GUARD: one phone can check in ONE student per class-date —
+ * passing 5 friends' phones around stops here.
  *
  * GET  /api/attendance/scan?token=  → public class info + my status
  * POST /api/attendance/scan {token} → mark me present (student only)
@@ -32,6 +42,7 @@ export async function GET(req: NextRequest) {
         closed: true,
         expiresAt: true,
         presentCount: true,
+        geoRadiusM: true,
         schedule: {
           select: {
             courseCode: true,
@@ -89,6 +100,7 @@ export async function GET(req: NextRequest) {
       presentCount: s.presentCount,
       expiresAt: s.expiresAt.toISOString(),
       myStatus,
+      geoRequired: s.geoRadiusM != null,
       serverTime: new Date().toISOString(),
     };
   });
@@ -100,7 +112,13 @@ export async function POST(req: NextRequest) {
     if (session.role !== "student") {
       throw new ApiError(403, "Only students can self check-in via QR");
     }
-    const body = (await req.json().catch(() => ({}))) as { token?: string };
+    const body = (await req.json().catch(() => ({}))) as {
+      token?: string;
+      lat?: number;
+      lng?: number;
+      accuracy?: number;
+      deviceId?: string;
+    };
     const token = body.token;
     if (!token || !TOKEN_RE.test(token)) {
       throw new ApiError(400, "Invalid QR code");
@@ -117,6 +135,9 @@ export async function POST(req: NextRequest) {
         date: true,
         closed: true,
         expiresAt: true,
+        geoLat: true,
+        geoLng: true,
+        geoRadiusM: true,
         schedule: {
           select: { courseCode: true, programId: true, semester: true },
         },
@@ -142,6 +163,45 @@ export async function POST(req: NextRequest) {
       throw new ApiError(403, "This QR is for a different class batch — you are not on this roster");
     }
 
+    // ---- GEO-FENCE: student must be inside the classroom area ----
+    let distance: number | null = null;
+    if (s.geoRadiusM != null) {
+      if (!isSaneCoords(body.lat, body.lng)) {
+        throw new ApiError(
+          403,
+          "Location permission is required for check-in. Sit inside the classroom, allow location access and try again."
+        );
+      }
+      distance = distanceMeters(
+        { lat: s.geoLat as number, lng: s.geoLng as number },
+        { lat: body.lat as number, lng: body.lng as number }
+      );
+      if (distance > s.geoRadiusM) {
+        throw new ApiError(
+          403,
+          `You appear to be ${Math.round(distance)}m away from the classroom — outside the check-in area (${s.geoRadiusM}m). Please be present in class.`
+        );
+      }
+    }
+
+    // ---- DEVICE GUARD: one phone = one student per class-date ----
+    const deviceId =
+      typeof body.deviceId === "string" && body.deviceId.length >= 8 && body.deviceId.length <= 64
+        ? body.deviceId.slice(0, 64)
+        : null;
+    if (deviceId) {
+      const clash = await db.attendance.findFirst({
+        where: { scheduleId: s.scheduleId, date: s.date, deviceId, studentId: { not: session.userId } },
+        select: { studentId: true },
+      });
+      if (clash) {
+        throw new ApiError(
+          403,
+          "This phone has already checked in for another student of this class. Each student must use their own device."
+        );
+      }
+    }
+
     const key = {
       scheduleId_studentId_date: {
         scheduleId: s.scheduleId,
@@ -162,7 +222,12 @@ export async function POST(req: NextRequest) {
       // teacher pre-marked something else → correct it to present
       await db.attendance.update({
         where: key,
-        data: { status: "present", markedByName: "QR self check-in" },
+        data: {
+          status: "present",
+          markedByName: "QR self check-in",
+          ...(deviceId ? { deviceId } : {}),
+          ...(distance != null ? { distanceM: Math.round(distance) } : {}),
+        },
       });
       return { ok: true, already: false, status: "present", corrected: true };
     }
@@ -180,6 +245,8 @@ export async function POST(req: NextRequest) {
           markedBy: s.teacherId,
           markedByName: "QR self check-in",
           courseCode: s.schedule.courseCode,
+          ...(deviceId ? { deviceId } : {}),
+          ...(distance != null ? { distanceM: Math.round(distance) } : {}),
         },
       }),
       db.attendanceSession.update({

@@ -265,6 +265,7 @@ export function TeacherPanel() {
  startTime: string;
  endTime: string;
  dayOfWeek: string;
+ semester: number;
  }
  const [attScheduleId, setAttScheduleId] = useState("");
  const [attDate, setAttDate] = useState(todayISO());
@@ -272,6 +273,7 @@ export function TeacherPanel() {
  const [attStudents, setAttStudents] = useState<StudentRow[]>([]);
  const [attStatuses, setAttStatuses] = useState<Record<string, string>>({});
  const [attRecentDates, setAttRecentDates] = useState<string[]>([]);
+ const [attBatchCounts, setAttBatchCounts] = useState<{ semester: number; count: number }[]>([]);
  const [attLoading, setAttLoading] = useState(false);
  const [attSaving, setAttSaving] = useState(false);
 
@@ -281,6 +283,7 @@ export function TeacherPanel() {
  setAttStatuses({});
  setAttSchedule(null);
  setAttRecentDates([]);
+ setAttBatchCounts([]);
  return;
  }
  setAttLoading(true);
@@ -291,11 +294,13 @@ export function TeacherPanel() {
  existing: Record<string, string>;
  markedCount: number;
  recentDates: string[];
+ batchCounts?: { semester: number; count: number }[];
  }>(`/api/teacher/attendance?scheduleId=${encodeURIComponent(scheduleId)}&date=${encodeURIComponent(date)}`);
  setAttSchedule(data.schedule);
  setAttStudents(data.students);
  setAttStatuses({ ...data.existing });
  setAttRecentDates(data.recentDates ?? []);
+ setAttBatchCounts(data.batchCounts ?? []);
  } catch (err) {
  toast({ title: "Failed to load roster", description: errMsg(err), variant: "destructive" });
  } finally {
@@ -985,11 +990,25 @@ export function TeacherPanel() {
  ) : attLoading ? (
  <PanelLoader label="Loading roster…" />
  ) : attStudents.length === 0 ? (
- <EmptyState
- icon={Users}
- title="No students enrolled"
- hint="No active students match this class batch (program + semester)."
- />
+ <div className="rounded-xl border border-amber-300/60 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+ <p className="flex items-center gap-2 text-sm font-bold text-amber-800 dark:text-amber-300">
+ <Users className="h-4 w-4" />
+ No students in this class batch yet
+ </p>
+ <p className="mt-1 text-xs text-amber-700/90 dark:text-amber-400/80">
+ Attendance matches students by <span className="font-semibold">program + semester</span>.
+ This class is <span className="font-semibold">semester {attSchedule?.semester ?? "?"}</span>, but no active student is in it right now.
+ {attBatchCounts.length > 0 && (
+ <>
+ {" "}Students currently exist in: {""}
+ {attBatchCounts.map((b) => `Semester ${b.semester} (${b.count})`).join(", ")}.
+ </>
+ )}
+ </p>
+ <p className="mt-2 text-xs text-amber-700/90 dark:text-amber-400/80">
+ Fix: open the <span className="font-semibold">Students</span> tab → move students into semester {attSchedule?.semester ?? "?"} (or hold them back), then come back here.
+ </p>
+ </div>
  ) : (
  <>
  <div className="flex flex-wrap items-center gap-2">

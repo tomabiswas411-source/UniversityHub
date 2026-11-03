@@ -19,6 +19,7 @@ import {
   GraduationCap,
   KeyRound,
   Loader2,
+  MapPin,
   ScanLine,
   UserCheck,
   XCircle,
@@ -45,6 +46,7 @@ interface ScanInfo {
   presentCount: number;
   expiresAt: string;
   myStatus: string | null;
+  geoRequired?: boolean;
   serverTime: string;
 }
 
@@ -52,6 +54,34 @@ type Result = { kind: "success" | "already" | "corrected" } | null;
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong. Please try again.";
+}
+
+/* Anti-fraud device id: stable random id per phone (localStorage).
+   The server blocks one device from checking in two different
+   students of the same class-date. */
+function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem("uh_device_id");
+    if (!id) {
+      id = crypto.randomUUID().replace(/-/g, "");
+      localStorage.setItem("uh_device_id", id);
+    }
+    return id;
+  } catch {
+    return "anon-device";
+  }
+}
+
+/** One-shot browser position fix; resolves null when unavailable/denied. */
+function getPosition(): Promise<{ lat: number; lng: number } | null> {
+  return new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 20000 }
+    );
+  });
 }
 
 export function AttendView({ token }: { token: string | null }) {
@@ -72,6 +102,14 @@ export function AttendView({ token }: { token: string | null }) {
   const [markErr, setMarkErr] = useState<string | null>(null);
   const [result, setResult] = useState<Result>(null);
   const markedOnce = useRef(false);
+
+  /* geo-fence state: coords are requested up-front when the teacher
+     enabled the location check, so the permission prompt appears while
+     the student is still reading the page. */
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [geoNeeded, setGeoNeeded] = useState(false);
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoDenied, setGeoDenied] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -95,12 +133,40 @@ export function AttendView({ token }: { token: string | null }) {
     void load();
   }, [load]);
 
+  /* Ask for the position as soon as we know the window needs it */
+  const askGeo = useCallback(async () => {
+    setGeoBusy(true);
+    const pos = await getPosition();
+    setCoords(pos);
+    setGeoDenied(!pos);
+    setGeoBusy(false);
+  }, []);
+
+  useEffect(() => {
+    if (info?.geoRequired && info.state === "active" && !coords && !geoBusy) {
+      setGeoNeeded(true);
+      void askGeo();
+    }
+  }, [info, coords, geoBusy, askGeo]);
+
   const markPresent = useCallback(async () => {
     if (!token || marking || markedOnce.current) return;
     setMarking(true);
     setMarkErr(null);
     try {
-      const data = await apiPost<{ already: boolean; corrected?: boolean }>("/api/attendance/scan", { token });
+      // If the teacher enabled the location check, make sure we carry a
+      // position (second attempt in case the first was denied).
+      let pos = coords;
+      if (info?.geoRequired && !pos) {
+        pos = await getPosition();
+        setCoords(pos);
+        if (!pos) setGeoDenied(true);
+      }
+      const data = await apiPost<{ already: boolean; corrected?: boolean }>("/api/attendance/scan", {
+        token,
+        ...(pos ? { lat: pos.lat, lng: pos.lng } : {}),
+        deviceId: getDeviceId(),
+      });
       markedOnce.current = true;
       if (data.corrected) setResult("corrected");
       else if (data.already) setResult("already");
@@ -111,7 +177,7 @@ export function AttendView({ token }: { token: string | null }) {
     } finally {
       setMarking(false);
     }
-  }, [token, marking, load]);
+  }, [token, marking, load, coords, info]);
 
   const loginAndMark = useCallback(
     async (e: React.FormEvent) => {
@@ -248,9 +314,54 @@ export function AttendView({ token }: { token: string | null }) {
                   <UserCheck className="h-8 w-8 text-[#FFE01B]" />
                 </div>
                 <p className="mb-1 text-lg font-bold">Hi {user?.name?.split(" ")[0] ?? "there"} 👋</p>
-                <p className="mb-5 text-sm text-muted-foreground">
+                <p className="mb-4 text-sm text-muted-foreground">
                   Confirm your presence for <span className="font-semibold">{info.courseCode}</span>
                 </p>
+
+                {info.geoRequired && (
+                  <div
+                    className={cn(
+                      "mx-auto mb-4 flex max-w-xs items-start gap-2 rounded-xl border px-3 py-2.5 text-left",
+                      coords
+                        ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30"
+                        : "border-amber-300/60 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
+                    )}
+                  >
+                    <MapPin
+                      className={cn(
+                        "mt-0.5 h-4 w-4 shrink-0",
+                        coords ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+                      )}
+                    />
+                    <div className="min-w-0 text-xs">
+                      {geoBusy ? (
+                        <p className="font-medium text-amber-700 dark:text-amber-300">
+                          Getting your location… stay inside the classroom.
+                        </p>
+                      ) : coords ? (
+                        <p className="font-medium text-emerald-700 dark:text-emerald-300">
+                          Location locked — you can check in from inside the class area.
+                        </p>
+                      ) : (
+                        <p className="font-medium text-amber-800 dark:text-amber-300">
+                          {geoDenied
+                            ? "Location is off or blocked. Allow location for this site and try again — check-in without it is not possible."
+                            : "This check-in verifies you are inside the classroom area."}
+                        </p>
+                      )}
+                      {!coords && !geoBusy && (
+                        <button
+                          type="button"
+                          onClick={() => void askGeo()}
+                          className="mt-1 font-semibold text-amber-900 underline underline-offset-2 dark:text-amber-200"
+                        >
+                          Retry location
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <Button
                   size="lg"
                   className={cn("h-12 w-full text-base", "btn-shine bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25")}
@@ -258,7 +369,11 @@ export function AttendView({ token }: { token: string | null }) {
                   disabled={marking}
                 >
                   {marking ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <CheckCheck className="mr-2 h-5 w-5" />}
-                  {marking ? "Marking you present…" : "Mark me Present"}
+                  {marking
+                    ? "Marking you present…"
+                    : info.geoRequired && !coords
+                      ? "Check in (location needed)"
+                      : "Mark me Present"}
                 </Button>
                 {markErr && (
                   <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">

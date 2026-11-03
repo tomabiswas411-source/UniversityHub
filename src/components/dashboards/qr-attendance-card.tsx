@@ -24,6 +24,8 @@ import {
   Copy,
   Download,
   Loader2,
+  MapPin,
+  MapPinOff,
   QrCode,
   ScanLine,
   Timer,
@@ -35,6 +37,7 @@ import { apiGet, apiPost } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -50,6 +53,7 @@ interface LiveStatus {
   st: "active" | "expired" | "closed";
   pc: number;
   exp: string;
+  geo?: boolean;
   recent: { n: string; r: string | null }[];
 }
 
@@ -58,6 +62,15 @@ const DURATIONS = [
   { value: "120", label: "2 minutes" },
   { value: "180", label: "3 minutes" },
   { value: "300", label: "5 minutes" },
+];
+
+/* Geo-fence radius presets — generous on purpose: phone GPS indoors
+   can drift 20–50m, so Room is the strictest sensible option and
+   Building is the default. */
+const GEO_RADII = [
+  { value: "50", label: "Room · 50m" },
+  { value: "150", label: "Building · 150m" },
+  { value: "400", label: "Campus · 400m" },
 ];
 
 function fmtLeft(sec: number): string {
@@ -78,6 +91,8 @@ export function QRAttendanceCard({
   onRosterRefresh: () => void;
 }) {
   const [duration, setDuration] = useState("120");
+  const [geoOn, setGeoOn] = useState(true);
+  const [geoRadius, setGeoRadius] = useState("150");
   const [phase, setPhase] = useState<Phase>("idle");
   const [session, setSession] = useState<{ id: string; token: string; url: string; exp: number } | null>(null);
   const [qrData, setQrData] = useState<string | null>(null);
@@ -94,15 +109,41 @@ export function QRAttendanceCard({
     if (!scheduleId) return;
     setStarting(true);
     try {
+      // One-time position fix when location check is on (HTTPS required;
+      // Vercel serves over HTTPS so this works in real classrooms).
+      let coords: { lat: number; lng: number } | null = null;
+      if (geoOn) {
+        coords = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
+          if (typeof navigator === "undefined" || !navigator.geolocation) return resolve(null);
+          navigator.geolocation.getCurrentPosition(
+            (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+          );
+        });
+        if (!coords) {
+          toast({
+            title: "Location not available",
+            description:
+              "Allow location access to start a location-checked QR — or turn the location check off below.",
+            variant: "destructive",
+          });
+          setStarting(false);
+          return;
+        }
+      }
       const data = await apiPost<{
         id: string;
         token: string;
         expiresAt: string;
         url: string;
+        geo: { radiusM: number } | null;
       }>("/api/attendance/session", {
         scheduleId,
         date,
         durationSec: Number(duration),
+        geoEnabled: geoOn,
+        ...(coords ? { lat: coords.lat, lng: coords.lng, radiusM: Number(geoRadius) } : {}),
       });
       const shareUrl = `${window.location.origin}${data.url}`;
       const dataUrl = await QRCode.toDataURL(shareUrl, {
@@ -120,7 +161,9 @@ export function QRAttendanceCard({
       setSummary(null);
       toast({
         title: "QR check-in is live",
-        description: `Students have ${Math.round(Number(duration) / 60)} minute(s) to scan.`,
+        description: data.geo
+          ? `Location check ON (${data.geo.radiusM}m) · students have ${Math.round(Number(duration) / 60)} minute(s) to scan from inside class.`
+          : `Students have ${Math.round(Number(duration) / 60)} minute(s) to scan.`,
       });
     } catch (err) {
       toast({
@@ -131,7 +174,7 @@ export function QRAttendanceCard({
     } finally {
       setStarting(false);
     }
-  }, [scheduleId, date, duration]);
+  }, [scheduleId, date, duration, geoOn, geoRadius]);
 
   /* Countdown — 1s local tick; server remains the authority */
   useEffect(() => {
@@ -320,31 +363,82 @@ export function QRAttendanceCard({
               marked <span className="font-semibold text-emerald-600 dark:text-emerald-400">present</span> instantly.
               When you close the window, everyone who didn&apos;t scan is marked absent and notified automatically.
             </p>
+            {totalStudents === 0 && (
+              <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                No students enrolled in this class batch yet — the QR button stays disabled until at least one student matches.
+              </p>
+            )}
           </div>
-          <div className="flex w-full items-end gap-2 sm:w-auto">
-            <div className="w-32 space-y-1.5">
-              <Label htmlFor="qr-duration">Window</Label>
-              <Select value={duration} onValueChange={setDuration}>
-                <SelectTrigger id="qr-duration">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DURATIONS.map((d) => (
-                    <SelectItem key={d.value} value={d.value}>
-                      {d.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <div className="w-full space-y-3 sm:w-auto">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="w-32 space-y-1.5">
+                <Label htmlFor="qr-duration">Window</Label>
+                <Select value={duration} onValueChange={setDuration}>
+                  <SelectTrigger id="qr-duration">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DURATIONS.map((d) => (
+                      <SelectItem key={d.value} value={d.value}>
+                        {d.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {geoOn && (
+                <div className="w-40 space-y-1.5">
+                  <Label htmlFor="qr-radius">Radius</Label>
+                  <Select value={geoRadius} onValueChange={setGeoRadius}>
+                    <SelectTrigger id="qr-radius">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GEO_RADII.map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <Button
+                className={cn(GRADIENT_BTN, "h-9 flex-1 sm:flex-none")}
+                onClick={() => void startSession()}
+                disabled={starting || totalStudents === 0}
+              >
+                {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}
+                Start QR
+              </Button>
             </div>
-            <Button
-              className={cn(GRADIENT_BTN, "h-9 flex-1 sm:flex-none")}
-              onClick={() => void startSession()}
-              disabled={starting || totalStudents === 0}
-            >
-              {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}
-              Start QR
-            </Button>
+            <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/40 px-3 py-2.5 sm:justify-start">
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-xs font-semibold">
+                  {geoOn ? (
+                    <>
+                      <MapPin className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                      Location check
+                    </>
+                  ) : (
+                    <>
+                      <MapPinOff className="h-3.5 w-3.5 text-muted-foreground" />
+                      Location check
+                    </>
+                  )}
+                </p>
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  {geoOn
+                    ? "Only students inside the area can check in — no check-in from home."
+                    : "Anyone with the code can check in — location not verified."}
+                </p>
+              </div>
+              <Switch
+                aria-label="Toggle location check"
+                checked={geoOn}
+                onCheckedChange={setGeoOn}
+              />
+            </div>
           </div>
         </div>
       ) : phase === "active" ? (
@@ -375,6 +469,12 @@ export function QRAttendanceCard({
                 <UserCheck className="h-4 w-4" />
                 {scanned}/{totalStudents} scanned
               </span>
+              {live?.geo && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  <MapPin className="h-3 w-3" />
+                  Location · {geoRadius}m
+                </span>
+              )}
             </div>
 
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">

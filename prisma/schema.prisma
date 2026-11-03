@@ -369,6 +369,11 @@ model Attendance {
   markedBy     String // teacher user id
   markedByName String?
   courseCode   String // denormalized for fast lists
+  // QR anti-fraud audit trail:
+  // • deviceId  — one device can check in ONE student per class-date
+  // • distanceM — how far the student was from the classroom at scan
+  deviceId     String?
+  distanceM    Int?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -377,6 +382,7 @@ model Attendance {
   marker   User     @relation("AttendanceMarker", fields: [markedBy], references: [id])
 
   @@unique([scheduleId, studentId, date])
+  @@unique([scheduleId, date, deviceId])
   @@index([departmentId, date])
   @@index([studentId, courseId])
   @@index([courseId, date])
@@ -400,6 +406,12 @@ model AttendanceSession {
   expiresAt    DateTime
   closed       Boolean  @default(false)
   presentCount Int      @default(0)
+  // Geo-fence (anti-fraud): teacher's position captured once at window
+  // open. Students must be inside geoRadiusM meters of this point to
+  // check in. geoRadiusM = null → location check disabled for this window.
+  geoLat       Float?
+  geoLng       Float?
+  geoRadiusM   Int?
   createdAt    DateTime @default(now())
 
   schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
