@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Offline — UniversityHub</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(180deg, #FBF7EA 0%, #F4EDD8 100%);
+    color: #241C15;
+    padding: 24px;
+    text-align: center;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: linear-gradient(180deg, #1A1612 0%, #241C15 100%); color: #EFEDE9; }
+  }
+  .card { max-width: 420px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: #FFD60A; color: #241C15;
+    font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    padding: 8px 14px; border-radius: 999px; margin-bottom: 20px;
+  }
+  h1 { font-size: 28px; font-weight: 800; margin-bottom: 10px; }
+  p { font-size: 15px; opacity: .75; line-height: 1.6; margin-bottom: 24px; }
+  button {
+    background: #2D4F35; color: #fff; border: 0; cursor: pointer;
+    font-size: 15px; font-weight: 600;
+    padding: 12px 28px; border-radius: 12px;
+    box-shadow: 0 6px 18px rgba(45,79,53,.3);
+  }
+  button:hover { background: #3A6B47; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="badge">● Offline</div>
+  <h1>You're offline</h1>
+  <p>
+    UniversityHub needs an internet connection to load your live class
+    routines, notices and results. Reconnect and try again — your cached
+    pages will still work in the meantime.
+  </p>
+  <button onclick="location.reload()">Try again</button>
+</div>
+</body>
+</html>

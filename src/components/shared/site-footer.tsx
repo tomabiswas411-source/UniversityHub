@@ -9,7 +9,7 @@ interface SiteFooterProps {
 
 export function SiteFooter({ navigate }: SiteFooterProps) {
  return (
- <footer className="mt-auto w-full border-t border-border bg-gradient-to-b from-secondary to-background dark:from-[#241C15] dark:to-[#1A1612]">
+ <footer className="mt-auto w-full border-t border-border bg-gradient-to-b from-secondary to-background dark:from-[#241C15] dark:to-[#1A1612] [padding-bottom:env(safe-area-inset-bottom)]">
  <div className="max-w-7xl mx-auto px-4 md:px-6 py-8">
  <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
  {/* Brand */}

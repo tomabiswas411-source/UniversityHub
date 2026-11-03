@@ -3,6 +3,7 @@ import { handle, badRequest } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { assertDepartmentAccess } from "@/lib/auth";
+import { percentToGrade, resultPct } from "@/lib/grades";
 
 /**
  * Teacher actions API.
@@ -31,6 +32,144 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  throw new ApiError(403, "Teacher access required");
  }
  const { searchParams } = new URL(req.url);
+
+ if (action === "insights") {
+ // Day 42 — teacher performance insights
+ const [myResults, myAssignments, mySchedules] = await Promise.all([
+ db.result.findMany({
+ where: { enteredBy: session.userId },
+ include: {
+ course: { select: { code: true, name: true, creditHours: true } },
+ student: { select: { fullName: true, rollNumber: true } },
+ },
+ orderBy: { createdAt: "desc" },
+ take: 500,
+ }),
+ db.assignment.findMany({
+ where: { teacherId: session.userId, isActive: true },
+ select: { id: true, courseId: true, title: true, dueDate: true },
+ }),
+ db.schedule.findMany({
+ where: { teacherId: session.userId, isActive: true },
+ select: { id: true, courseId: true, dayOfWeek: true },
+ }),
+ ]);
+
+ // Group results by course
+ const byCourse = new Map<
+ string,
+ {
+ courseCode: string;
+ courseName: string;
+ creditHours: number;
+ results: { marks: number; maxMarks: number; examType: string; studentName: string; rollNumber: string | null }[];
+ }
+ >();
+ for (const r of myResults) {
+ const key = r.courseId;
+ const cur =
+ byCourse.get(key) ??
+ {
+ courseCode: r.course?.code ?? "—",
+ courseName: r.course?.name ?? "",
+ creditHours: r.course?.creditHours ?? 3,
+ results: [],
+ };
+ cur.results.push({
+ marks: r.marks,
+ maxMarks: r.maxMarks,
+ examType: r.examType,
+ studentName: r.student?.fullName ?? "Unknown",
+ rollNumber: r.student?.rollNumber ?? null,
+ });
+ byCourse.set(key, cur);
+ }
+
+ const courseStats = [...byCourse.entries()].map(([courseId, c]) => {
+ const avg =
+ Math.round(
+ (c.results.reduce((a, r) => a + resultPct(r), 0) / c.results.length) * 10
+ ) / 10;
+ const examTypes = ["ct1", "ct2", "midterm", "final", "assignment"];
+ const examBreakdown = examTypes
+ .map((t) => {
+ const rs = c.results.filter((r) => r.examType === t);
+ return {
+ examType: t,
+ count: rs.length,
+ avgPct: rs.length
+ ? Math.round((rs.reduce((a, r) => a + resultPct(r), 0) / rs.length) * 10) / 10
+ : 0,
+ };
+ })
+ .filter((e) => e.count > 0);
+
+ // Per-student averages within this course (keyed by roll+name so
+ // two students sharing a name are never merged)
+ const perStudent = new Map<
+ string,
+ { name: string; roll: string | null; pcts: number[] }
+ >();
+ for (const r of c.results) {
+ const key = `${r.rollNumber ?? "—"}|${r.studentName}`;
+ const cur = perStudent.get(key) ?? { name: r.studentName, roll: r.rollNumber, pcts: [] };
+ cur.pcts.push(resultPct(r));
+ perStudent.set(key, cur);
+ }
+ const studentAvgs = [...perStudent.values()]
+ .map((s) => ({
+ name: s.name,
+ roll: s.roll,
+ avgPct: Math.round((s.pcts.reduce((a, b) => a + b, 0) / s.pcts.length) * 10) / 10,
+ }))
+ .sort((a, b) => b.avgPct - a.avgPct);
+
+ const band = percentToGrade(avg);
+ return {
+ courseId,
+ courseCode: c.courseCode,
+ courseName: c.courseName,
+ creditHours: c.creditHours,
+ totalEntries: c.results.length,
+ avgPct: avg,
+ grade: band.letter,
+ gpaPoint: band.gpa,
+ examBreakdown,
+ topStudents: studentAvgs.filter((s) => s.avgPct >= 70).slice(0, 5),
+ atRiskStudents: studentAvgs
+ .filter((s) => s.avgPct < 40)
+ .sort((a, b) => a.avgPct - b.avgPct)
+ .slice(0, 10),
+ };
+ });
+ courseStats.sort((a, b) => b.totalEntries - a.totalEntries);
+
+ // Assignments per course + upcoming deadlines
+ const upcomingAssignments = myAssignments
+ .filter((a) => a.dueDate && new Date(a.dueDate).getTime() > Date.now())
+ .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime())
+ .slice(0, 5)
+ .map((a) => ({
+ id: a.id,
+ title: a.title,
+ dueDate: a.dueDate?.toISOString() ?? null,
+ }));
+
+ const weeklyLoad = DAYS.map((d) => ({
+ label: d.charAt(0).toUpperCase() + d.slice(1, 3),
+ value: mySchedules.filter((s) => s.dayOfWeek === d).length,
+ }));
+
+ return {
+ hasData: myResults.length > 0 || courseStats.length > 0,
+ totalEntries: myResults.length,
+ courseCount: courseStats.length,
+ assignmentCount: myAssignments.length,
+ weeklyLoad,
+ courseStats,
+ upcomingAssignments,
+ };
+ }
 
  if (action === "overview") {
  const [schedules, courses, changes] = await Promise.all([

@@ -1,6 +1,14 @@
-/* UniversityHub Service Worker — PWA offline shell + notification routing */
-const CACHE = "universityhub-v3";
-const OFFLINE_ASSETS = ["/", "/manifest.json", "/icons/icon-192x192.png", "/icons/icon-512x512.png", "/notification.mp3"];
+/* UniversityHub Service Worker — PWA offline shell + notification routing
+ * v4: dedicated offline.html fallback page + better navigation cache */
+const CACHE = "universityhub-v4";
+const OFFLINE_ASSETS = [
+ "/",
+ "/offline.html",
+ "/manifest.json",
+ "/icons/icon-192x192.png",
+ "/icons/icon-512x512.png",
+ "/notification.mp3",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -59,7 +67,7 @@ self.addEventListener("fetch", (event) => {
           }
           return res;
         })
-        .catch(() => caches.match(req).then((c) => c || caches.match("/")))
+        .catch(() => caches.match(req).then((c) => c || caches.match("/")).then((c) => c || caches.match("/offline.html")))
     );
     return;
   }

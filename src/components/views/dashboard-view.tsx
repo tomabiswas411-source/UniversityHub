@@ -1,14 +1,31 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { LogIn, ShieldCheck } from "lucide-react";
 import { useAuthStore } from "@/store/auth-store";
-import { GRADIENT_BTN } from "@/components/dashboards/dashboard-shared";
-import { SuperAdminPanel } from "@/components/dashboards/super-admin-panel";
-import { DeptAdminPanel } from "@/components/dashboards/dept-admin-panel";
-import { TeacherPanel } from "@/components/dashboards/teacher-panel";
-import { StudentPanel } from "@/components/dashboards/student-panel";
+import { GRADIENT_BTN, PanelLoader } from "@/components/dashboards/dashboard-shared";
 import { Button } from "@/components/ui/button";
+
+/* Day 45 — each role panel is code-split so a student never downloads
+ the dept-admin bundle and vice-versa. Panels are heavy (recharts,
+ dialogs); dynamic import cuts the shared dashboard chunk massively. */
+const SuperAdminPanel = dynamic(
+ () => import("@/components/dashboards/super-admin-panel").then((m) => m.SuperAdminPanel),
+ { loading: () => <PanelLoader label="Loading your panel…" /> }
+);
+const DeptAdminPanel = dynamic(
+ () => import("@/components/dashboards/dept-admin-panel").then((m) => m.DeptAdminPanel),
+ { loading: () => <PanelLoader label="Loading your panel…" /> }
+);
+const TeacherPanel = dynamic(
+ () => import("@/components/dashboards/teacher-panel").then((m) => m.TeacherPanel),
+ { loading: () => <PanelLoader label="Loading your panel…" /> }
+);
+const StudentPanel = dynamic(
+ () => import("@/components/dashboards/student-panel").then((m) => m.StudentPanel),
+ { loading: () => <PanelLoader label="Loading your panel…" /> }
+);
 
 type NavView = "home" | "department" | "login" | "pricing" | "dashboard";
 

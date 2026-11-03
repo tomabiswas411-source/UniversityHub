@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
+ AlertTriangle,
+ BarChart3,
  BookOpen,
  Building2,
  CalendarClock,
@@ -18,6 +20,8 @@ import {
  Save,
  Send,
  Trash2,
+ Trophy,
+ TrendingUp,
  Users,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -35,6 +39,13 @@ import {
  StatCard,
  TimetableGrid,
 } from "@/components/dashboards/dashboard-shared";
+import {
+ CHART_COLORS,
+ ChartCard,
+ HBarChart,
+ StatPill,
+ VBarChart,
+} from "@/components/dashboards/analytics-charts";
 import {
  AlertDialog,
  AlertDialogAction,
@@ -186,6 +197,50 @@ export function TeacherPanel() {
  const [changes, setChanges] = useState<ScheduleChangeDTO[]>([]);
  const [stats, setStats] = useState({ totalClasses: 0, todayClasses: 0, totalCourses: 0 });
  const [activeTab, setActiveTab] = useState("schedule");
+
+ /* ---------------- insights (Day 42, lazy-loaded) ---------------- */
+ interface TeacherInsights {
+ hasData: boolean;
+ totalEntries: number;
+ courseCount: number;
+ assignmentCount: number;
+ weeklyLoad: { label: string; value: number }[];
+ courseStats: {
+ courseId: string;
+ courseCode: string;
+ courseName: string;
+ creditHours: number;
+ totalEntries: number;
+ avgPct: number;
+ grade: string;
+ gpaPoint: number;
+ examBreakdown: { examType: string; count: number; avgPct: number }[];
+ topStudents: { name: string; roll: string | null; avgPct: number }[];
+ atRiskStudents: { name: string; roll: string | null; avgPct: number }[];
+ }[];
+ upcomingAssignments: { id: string; title: string; dueDate: string | null }[];
+ }
+ const [insights, setInsights] = useState<TeacherInsights | null>(null);
+ const [insightsLoading, setInsightsLoading] = useState(false);
+ const loadInsights = useCallback(async () => {
+ setInsightsLoading(true);
+ try {
+ const data = await apiGet<TeacherInsights>("/api/teacher/insights");
+ setInsights(data);
+ } catch (err) {
+ toast({ title: "Failed to load insights", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setInsightsLoading(false);
+ }
+ }, []);
+
+ const handleTabChange = useCallback(
+ (v: string) => {
+ setActiveTab(v);
+ if (v === "insights" && !insights && !insightsLoading) void loadInsights();
+ },
+ [insights, insightsLoading, loadInsights]
+ );
 
  const loadOverview = useCallback(async () => {
  setLoading(true);
@@ -536,12 +591,13 @@ export function TeacherPanel() {
  </div>
 
  {/* ---------- tabs ---------- */}
- <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
- <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+ <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+ <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-5">
  <TabsTrigger value="schedule" className="py-1.5">My Schedule</TabsTrigger>
  <TabsTrigger value="changes" className="py-1.5">Class Changes</TabsTrigger>
  <TabsTrigger value="assignments" className="py-1.5">Assignments</TabsTrigger>
  <TabsTrigger value="results" className="py-1.5">Results</TabsTrigger>
+ <TabsTrigger value="insights" className="py-1.5">Insights</TabsTrigger>
  </TabsList>
 
  {/* ============ MY SCHEDULE ============ */}
@@ -1094,6 +1150,128 @@ export function TeacherPanel() {
  )}
  </div>
  </SectionCard>
+ </TabsContent>
+
+ {/* ============ INSIGHTS (Day 42) ============ */}
+ <TabsContent value="insights" className="mt-4 space-y-4">
+ {insightsLoading && !insights ? (
+ <PanelLoader label="Analysing your class performance…" />
+ ) : !insights ? (
+ <EmptyState
+ icon={TrendingUp}
+ title="Insights ready to load"
+ hint="Open this tab again to analyse your results."
+ />
+ ) : insights.courseStats.length === 0 ? (
+ <EmptyState
+ icon={BarChart3}
+ title="No results entered yet"
+ hint="Enter results in the Results tab — insights will appear automatically."
+ />
+ ) : (
+ <>
+ <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+ <StatPill label="Mark Entries" value={insights.totalEntries} tone="green" />
+ <StatPill label="Courses Graded" value={insights.courseStats.length} tone="navy" />
+ <StatPill label="Assignments Given" value={insights.assignmentCount} tone="gold" />
+ <StatPill
+ label="Needs Attention"
+ value={insights.courseStats.reduce((a, c) => a + c.atRiskStudents.length, 0)}
+ tone="rust"
+ />
+ </div>
+
+ <ChartCard title="Weekly Teaching Load" icon={CalendarDays} height={220}>
+ <VBarChart data={insights.weeklyLoad} color={CHART_COLORS.green} valueLabel="Classes" />
+ </ChartCard>
+
+ {insights.courseStats.map((c) => (
+ <SectionCard
+ key={c.courseId}
+ title={`${c.courseCode} — ${c.courseName}`}
+ icon={BookOpen}
+ action={
+ <div className="flex items-center gap-2">
+ <Badge variant="outline" className="font-display text-sm font-bold">
+ {c.grade}
+ </Badge>
+ <Badge className="bg-[#2D4F35] text-white hover:bg-[#3A6B47]">
+ Avg {c.avgPct}%
+ </Badge>
+ </div>
+ }
+ >
+ <div className="space-y-4">
+ <div className="grid gap-4 md:grid-cols-2">
+ <div className="h-44">
+ <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+ Average by exam type
+ </p>
+ <VBarChart
+ data={c.examBreakdown.map((e) => ({
+ label: e.examType === "ct1" ? "CT-1" : e.examType === "ct2" ? "CT-2" : e.examType.charAt(0).toUpperCase() + e.examType.slice(1),
+ value: e.avgPct,
+ }))}
+ color={CHART_COLORS.gold}
+ valueLabel="Avg %"
+ />
+ </div>
+ <div className="h-44">
+ <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+ Top performers (≥70%)
+ </p>
+ {c.topStudents.length === 0 ? (
+ <div className="flex h-[85%] items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">
+ No one above 70% yet
+ </div>
+ ) : (
+ <HBarChart
+ data={c.topStudents.map((s) => ({
+ label: s.name.split(" ")[0] + (s.roll ? ` · ${s.roll}` : ""),
+ value: s.avgPct,
+ }))}
+ color={CHART_COLORS.green}
+ />
+ )}
+ </div>
+ </div>
+
+ {c.atRiskStudents.length > 0 && (
+ <div className="rounded-xl border border-[#C8442E]/30 bg-[#C8442E]/5 p-3">
+ <p className="mb-2 flex items-center gap-1.5 text-xs font-bold text-[#C8442E]">
+ <AlertTriangle className="h-3.5 w-3.5" />
+ At-risk students (below 40%) — {c.atRiskStudents.length}
+ </p>
+ <div className="flex flex-wrap gap-1.5">
+ {c.atRiskStudents.map((s) => (
+ <Badge key={s.name + s.roll} variant="outline" className="border-[#C8442E]/40 text-[#C8442E]">
+ {s.name}
+ {s.roll ? ` · ${s.roll}` : ""} — {s.avgPct}%
+ </Badge>
+ ))}
+ </div>
+ </div>
+ )}
+ </div>
+ </SectionCard>
+ ))}
+
+ {insights.upcomingAssignments.length > 0 && (
+ <SectionCard title="Upcoming deadlines" icon={ClipboardList}>
+ <div className="space-y-2">
+ {insights.upcomingAssignments.map((a) => (
+ <div key={a.id} className="flex items-center justify-between rounded-xl border px-3 py-2 text-sm">
+ <p className="truncate font-medium">{a.title}</p>
+ <Badge variant="outline">
+ {a.dueDate ? new Date(a.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No due date"}
+ </Badge>
+ </div>
+ ))}
+ </div>
+ </SectionCard>
+ )}
+ </>
+ )}
  </TabsContent>
  </Tabs>
  </div>

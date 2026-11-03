@@ -1,6 +1,7 @@
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
+import { computeCoursePerformance, computeGPA, resultPct, percentToGrade } from "@/lib/grades";
 import type {
  AssignmentDTO,
  NoticeDTO,
@@ -210,6 +211,57 @@ export async function GET() {
  (s) => s.dayOfWeek === today
  ).length;
 
+ /* ---------- Day 44: student performance analytics ---------- */
+ const byCourse = new Map<string, { code: string; name: string; credit: number; results: { marks: number; maxMarks: number; examType: string }[] }>();
+ for (const r of results) {
+ const cur = byCourse.get(r.courseId) ?? {
+ code: r.course?.code ?? "—",
+ name: r.course?.name ?? "",
+ credit: 3,
+ results: [],
+ };
+ cur.results.push({ marks: r.marks, maxMarks: r.maxMarks, examType: r.examType });
+ byCourse.set(r.courseId, cur);
+ }
+ const coursePerformance = [...byCourse.entries()].map(([id, c]) => ({
+ courseId: id,
+ ...computeCoursePerformance(c.code, c.name, c.results, c.credit),
+ }));
+ coursePerformance.sort((a, b) => b.avgPct - a.avgPct);
+ const estimatedGPA = computeGPA(coursePerformance);
+ const overallAvgPct = results.length
+ ? Math.round((results.reduce((a, r) => a + resultPct(r), 0) / results.length) * 10) / 10
+ : 0;
+ const overallGrade = results.length ? percentToGrade(overallAvgPct).letter : "—";
+
+ const examTrend = ["ct1", "ct2", "midterm", "final", "assignment"]
+ .map((t) => {
+ const rs = results.filter((r) => r.examType === t);
+ return {
+ type: t,
+ label: t === "ct1" ? "CT-1" : t === "ct2" ? "CT-2" : t.charAt(0).toUpperCase() + t.slice(1),
+ pct: rs.length ? Math.round((rs.reduce((a, r) => a + resultPct(r), 0) / rs.length) * 10) / 10 : 0,
+ };
+ })
+ .filter((e) => results.some((r) => r.examType === e.type))
+ .map(({ label, pct }) => ({ label, pct }));
+
+ const upcomingDeadlines = assignmentDTOs
+ .filter((a) => a.dueDate && new Date(a.dueDate).getTime() > Date.now())
+ .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime())
+ .slice(0, 5);
+
+ const analytics = {
+ hasData: results.length > 0,
+ estimatedGPA,
+ overallAvgPct,
+ overallGrade,
+ totalEntries: results.length,
+ coursePerformance,
+ examTrend,
+ upcomingDeadlines,
+ };
+
  return {
  profile: {
  fullName: user.fullName,
@@ -241,6 +293,7 @@ export async function GET() {
  calendar: calendarDTOs,
  unreadCount,
  todayClasses,
+ analytics,
  };
  });
 }

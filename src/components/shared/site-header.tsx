@@ -67,6 +67,13 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  : "bg-transparent border-transparent"
  }`}
  >
+ {/* Day 46 — keyboard users can skip the header straight to content */}
+ <a
+ href="#main-content"
+ className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded-lg focus:bg-[#241C15] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[#FFE01B] focus:shadow-lg"
+ >
+ Skip to main content
+ </a>
  <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 h-16 flex items-center justify-between gap-2">
  {/* Logo */}
  <button

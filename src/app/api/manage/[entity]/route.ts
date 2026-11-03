@@ -3,6 +3,7 @@ import { handle, badRequest } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError, type SessionPayload } from "@/lib/session";
 import { hashPassword } from "@/lib/auth";
+import { gradeDistribution, passRate, resultPct } from "@/lib/grades";
 
 /**
  * Department-scoped management API for dept_admin & super_admin.
@@ -46,6 +47,7 @@ const ENTITIES = [
  "schedules",
  "stats",
  "overview",
+ "analytics",
 ] as const;
 type Entity = (typeof ENTITIES)[number];
 
@@ -137,6 +139,122 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  totalRooms,
  totalSchedules: schedules.length,
  todayClasses,
+ };
+ }
+
+ case "analytics": {
+ // Aggregated department insights — Day 41
+ const [results, schedulesForLoad, studentsForDist, coursesInfo, recentChanges, noticesCount] =
+ await Promise.all([
+ db.result.findMany({
+ where: { departmentId },
+ select: { marks: true, maxMarks: true, examType: true, createdAt: true },
+ }),
+ db.schedule.findMany({
+ where: { departmentId, isActive: true },
+ select: { teacherId: true, teacherName: true, dayOfWeek: true, programId: true, semester: true },
+ }),
+ db.user.findMany({
+ where: { departmentId, role: "student", isActive: true },
+ select: { programId: true, program: { select: { shortName: true } }, semester: true },
+ }),
+ db.course.findMany({
+ where: { departmentId, isActive: true },
+ select: { semester: true, program: { select: { shortName: true } } },
+ }),
+ db.scheduleChange.count({
+ where: {
+ departmentId,
+ createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+ },
+ }),
+ db.notice.count({ where: { departmentId } }),
+ ]);
+
+ const distribution = gradeDistribution(results);
+
+ // Average % per exam type
+ const examTypes = ["ct1", "ct2", "midterm", "final", "assignment"];
+ const examAverages = examTypes
+ .map((t) => {
+ const rs = results.filter((r) => r.examType === t);
+ return {
+ label: t === "ct1" ? "CT-1" : t === "ct2" ? "CT-2" : t.charAt(0).toUpperCase() + t.slice(1),
+ value: rs.length
+ ? Math.round((rs.reduce((a, r) => a + resultPct(r), 0) / rs.length) * 10) / 10
+ : 0,
+ count: rs.length,
+ };
+ })
+ .filter((e) => e.count > 0);
+
+ // Teacher workload (schedules per teacher)
+ const loadMap = new Map<string, { name: string; count: number }>();
+ for (const s of schedulesForLoad) {
+ const cur = loadMap.get(s.teacherId) ?? { name: s.teacherName, count: 0 };
+ cur.count += 1;
+ loadMap.set(s.teacherId, cur);
+ }
+ const teacherLoad = [...loadMap.values()]
+ .sort((a, b) => b.count - a.count)
+ .slice(0, 8)
+ .map((t) => ({ label: t.name.length > 18 ? t.name.slice(0, 17) + "…" : t.name, value: t.count }));
+
+ // Weekly class density
+ const days = ["saturday", "sunday", "monday", "tuesday", "wednesday", "thursday"];
+ const dayLabels: Record<string, string> = {
+ saturday: "Sat", sunday: "Sun", monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu",
+ };
+ const weeklyDensity = days.map((d) => ({
+ label: dayLabels[d],
+ value: schedulesForLoad.filter((s) => s.dayOfWeek === d).length,
+ }));
+
+ // Students per program
+ const programMap = new Map<string, number>();
+ for (const s of studentsForDist) {
+ const key = s.program?.shortName ?? "Unassigned";
+ programMap.set(key, (programMap.get(key) ?? 0) + 1);
+ }
+ const studentsPerProgram = [...programMap.entries()].map(([label, value]) => ({ label, value }));
+
+ // Students per semester
+ const semesterMap = new Map<number, number>();
+ for (const s of studentsForDist) {
+ const key = s.semester ?? 0;
+ semesterMap.set(key, (semesterMap.get(key) ?? 0) + 1);
+ }
+ const studentsPerSemester = [...semesterMap.entries()]
+ .sort((a, b) => a[0] - b[0])
+ .map(([sem, value]) => ({ label: sem === 0 ? "N/A" : `S${sem}`, value }));
+
+ // Courses per semester
+ const coursesPerSemesterMap = new Map<number, number>();
+ for (const c of coursesInfo) {
+ coursesPerSemesterMap.set(c.semester, (coursesPerSemesterMap.get(c.semester) ?? 0) + 1);
+ }
+ const coursesPerSemester = [...coursesPerSemesterMap.entries()]
+ .sort((a, b) => a[0] - b[0])
+ .map(([sem, value]) => ({ label: `S${sem}`, value }));
+
+ const avgPct = results.length
+ ? Math.round((results.reduce((a, r) => a + resultPct(r), 0) / results.length) * 10) / 10
+ : 0;
+
+ return {
+ hasData: results.length > 0,
+ totalResults: results.length,
+ avgPerformance: avgPct,
+ passRate: passRate(results),
+ recentChanges,
+ noticesCount,
+ gradeDistribution: distribution,
+ examAverages,
+ teacherLoad,
+ weeklyDensity,
+ studentsPerProgram,
+ studentsPerSemester,
+ coursesPerSemester,
  };
  }
 

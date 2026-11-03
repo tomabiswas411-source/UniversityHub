@@ -370,6 +370,8 @@ model Assignment {
   teacher    User       @relation(fields: [teacherId], references: [id])
 
   @@index([departmentId, courseId])
+  @@index([teacherId, isActive]) // teacher insights + assignment lists
+  @@index([dueDate]) // upcoming deadline sorting
 }
 
 model Result {
@@ -392,6 +394,8 @@ model Result {
   enteredByUser  User       @relation("ResultGiver", fields: [enteredBy], references: [id])
 
   @@unique([courseId, studentId, examType])
+  @@index([studentId]) // student dashboard fetches all own results
+  @@index([departmentId, examType]) // analytics aggregation
 }
 
 // ============ SETTINGS & CALENDAR ============

@@ -66,6 +66,110 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  };
  }
 
+ if (action === "analytics") {
+ // Day 43 — platform growth & revenue insights
+ const [universities, plans, roleCounts, scheduleRows, recentUsers] =
+ await Promise.all([
+ db.university.findMany({
+ include: {
+ plan: { select: { name: true, slug: true, priceMonthly: true, priceYearly: true } },
+ _count: {
+ select: {
+ departments: true,
+ users: { where: { isActive: true } },
+ },
+ },
+ },
+ orderBy: { createdAt: "asc" },
+ }),
+ db.plan.findMany({ orderBy: { sortOrder: "asc" } }),
+ db.user.groupBy({ by: ["role"], _count: { role: true } }),
+ // schedules live on departments — map them to universities here
+ db.schedule.findMany({
+ select: { department: { select: { universityId: true } } },
+ }),
+ db.user.findMany({
+ select: { createdAt: true },
+ orderBy: { createdAt: "desc" },
+ take: 500,
+ }),
+ ]);
+
+ const schedulesByUni = new Map<string, number>();
+ for (const s of scheduleRows) {
+ const uid = s.department?.universityId;
+ if (uid) schedulesByUni.set(uid, (schedulesByUni.get(uid) ?? 0) + 1);
+ }
+
+ // Growth: universities joined per month (last 8 months)
+ const months: { label: string; value: number }[] = [];
+ const now = new Date();
+ for (let i = 7; i >= 0; i--) {
+ const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+ const label = d.toLocaleDateString("en-US", { month: "short" });
+ const count = universities.filter((u) => {
+ const c = new Date(u.createdAt);
+ return c.getFullYear() === d.getFullYear() && c.getMonth() === d.getMonth();
+ }).length;
+ months.push({ label, value: count });
+ }
+
+ // User growth per month
+ const userMonths: { label: string; value: number }[] = [];
+ for (let i = 5; i >= 0; i--) {
+ const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+ const label = d.toLocaleDateString("en-US", { month: "short" });
+ const count = recentUsers.filter((u) => {
+ const c = new Date(u.createdAt);
+ return c.getFullYear() === d.getFullYear() && c.getMonth() === d.getMonth();
+ }).length;
+ userMonths.push({ label, value: count });
+ }
+
+ // Plan distribution + MRR
+ const planDist = plans.map((p) => ({
+ label: p.name,
+ value: universities.filter((u) => u.planId === p.id).length,
+ }));
+ const unassignedCount = universities.filter((u) => !u.planId).length;
+ if (unassignedCount > 0) planDist.push({ label: "No plan", value: unassignedCount });
+
+ const activeUnis = universities.filter((u) => u.isActive);
+ const mrr = activeUnis.reduce((acc, u) => acc + (u.plan?.priceMonthly ?? 0), 0);
+ const arr = mrr * 12;
+
+ // Per-university usage
+ const perUniversity = universities
+ .map((u) => ({
+ id: u.id,
+ name: u.shortName || u.name,
+ plan: u.plan?.name ?? "—",
+ departments: u._count.departments,
+ users: u._count.users,
+ schedules: schedulesByUni.get(u.id) ?? 0,
+ isActive: u.isActive,
+ }))
+ .sort((a, b) => b.users - a.users);
+
+ const roles = roleCounts.map((r) => ({
+ label: r.role.replace("_", " "),
+ value: r._count.role,
+ }));
+
+ return {
+ hasData: universities.length > 0,
+ growthMonths: months,
+ userGrowth: userMonths,
+ planDistribution: planDist,
+ mrr,
+ arr,
+ payingUniversities: activeUnis.filter((u) => (u.plan?.priceMonthly ?? 0) > 0).length,
+ perUniversity,
+ roles,
+ totalSchedules: scheduleRows.length,
+ };
+ }
+
  if (action === "university") {
  const id = searchParams.get("id");
  if (!id) throw new ApiError(400, "id is required");

@@ -22,6 +22,7 @@ import {
  Pin,
  RefreshCw,
  Sunrise,
+ TrendingUp,
  User,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -42,6 +43,12 @@ import {
  StatCard,
  TimetableGrid,
 } from "@/components/dashboards/dashboard-shared";
+import {
+ CHART_COLORS,
+ ChartCard,
+ MetricRing,
+ PerfLineChart,
+} from "@/components/dashboards/analytics-charts";
 import { timeAgo } from "@/components/shared/notification-bell";
 import type {
  AcademicCalendarDTO,
@@ -84,6 +91,27 @@ interface StudentDashboardData {
  calendar: AcademicCalendarDTO[];
  unreadCount: number;
  todayClasses: number;
+ analytics?: StudentAnalytics;
+}
+
+interface StudentAnalytics {
+ hasData: boolean;
+ estimatedGPA: number;
+ overallAvgPct: number;
+ overallGrade: string;
+ totalEntries: number;
+ coursePerformance: {
+ courseId: string;
+ courseCode: string;
+ courseName: string;
+ avgPct: number;
+ grade: string;
+ gpaPoint: number;
+ examCount: number;
+ creditHours: number;
+ }[];
+ examTrend: { label: string; pct: number }[];
+ upcomingDeadlines: AssignmentDTO[];
 }
 
 /* ---------------- local helpers ---------------- */
@@ -397,7 +425,7 @@ export function StudentPanel() {
  </motion.section>
 
  {/* ---------- Stats row ---------- */}
- <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+ <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-5">
  <StatCard
  icon={CalendarClock}
  label="Today's Classes"
@@ -420,6 +448,14 @@ export function StudentPanel() {
  sub={assignmentsSub ?? "Nothing assigned"}
  tone="fuchsia"
  delay={0.1}
+ />
+ <StatCard
+ icon={Award}
+ label="Est. GPA / 4.00"
+ value={data?.analytics?.hasData ? data.analytics.estimatedGPA.toFixed(2) : "—"}
+ sub={data?.analytics?.hasData ? `Grade ${data.analytics.overallGrade} · ${data.analytics.overallAvgPct}%` : "Enter results first"}
+ tone="emerald"
+ delay={0.12}
  />
  <StatCard
  icon={Bell}
@@ -445,6 +481,9 @@ export function StudentPanel() {
  </TabsTrigger>
  <TabsTrigger value="results" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
  Results
+ </TabsTrigger>
+ <TabsTrigger value="performance" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
+ Performance
  </TabsTrigger>
  <TabsTrigger value="alerts" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
  Alerts
@@ -772,6 +811,131 @@ export function StudentPanel() {
  )}
  </SectionCard>
  </motion.div>
+ </TabsContent>
+
+ {/* ===== Performance (Day 44) ===== */}
+ <TabsContent value="performance" className="mt-4">
+ {!data?.analytics?.hasData ? (
+ <EmptyState
+ icon={TrendingUp}
+ title="No results to analyse yet"
+ hint="Once your teachers publish CT, midterm or final results, your performance dashboard will light up here."
+ />
+ ) : (
+ <div className="space-y-4">
+ {/* GPA rings */}
+ <div className="flex flex-wrap items-center justify-around gap-4 rounded-xl border bg-card p-5 shadow-sm">
+ <MetricRing
+ pct={data.analytics.overallAvgPct}
+ label={`Overall · Grade ${data.analytics.overallGrade}`}
+ color={CHART_COLORS.green}
+ delay={0}
+ />
+ <MetricRing
+ pct={(data.analytics.estimatedGPA / 4) * 100}
+ label={`GPA ${data.analytics.estimatedGPA.toFixed(2)} / 4.00`}
+ color={CHART_COLORS.gold}
+ delay={0.1}
+ />
+ <MetricRing
+ pct={data.analytics.coursePerformance.length > 0
+ ? (data.analytics.coursePerformance.filter((c) => c.avgPct >= 40).length /
+ data.analytics.coursePerformance.length) * 100
+ : 0}
+ label="Courses passed"
+ color={CHART_COLORS.navy}
+ delay={0.2}
+ />
+ </div>
+
+ <ChartCard title="Average score by exam type" icon={TrendingUp} height={240}>
+ <PerfLineChart data={data.analytics.examTrend} hint="Trend appears as more exam results arrive." />
+ </ChartCard>
+
+ <SectionCard title="Course-wise performance" icon={BookOpen}>
+ <div className="space-y-2.5">
+ {data.analytics.coursePerformance.map((c, i) => (
+ <motion.div
+ key={c.courseId}
+ initial={{ opacity: 0, x: -12 }}
+ animate={{ opacity: 1, x: 0 }}
+ transition={{ delay: i * 0.06 }}
+ className="rounded-xl border p-3"
+ >
+ <div className="flex items-center justify-between gap-3">
+ <div className="min-w-0">
+ <p className="truncate text-sm font-semibold">
+ {c.courseCode} · {c.courseName}
+ </p>
+ <p className="text-[11px] text-muted-foreground">
+ {c.examCount} exam{c.examCount === 1 ? "" : "s"} · {c.creditHours} credits
+ </p>
+ </div>
+ <div className="flex shrink-0 items-center gap-2">
+ <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted sm:w-28">
+ <div
+ className="h-full rounded-full bg-gradient-to-r from-[#2D4F35] to-[#4A7C58]"
+ style={{ width: `${Math.min(100, c.avgPct)}%` }}
+ />
+ </div>
+ <Badge
+ variant="outline"
+ className="font-display w-9 justify-center text-sm font-bold"
+ >
+ {c.grade}
+ </Badge>
+ </div>
+ </div>
+ </motion.div>
+ ))}
+ </div>
+ </SectionCard>
+
+ {data.analytics.upcomingDeadlines.length > 0 && (
+ <SectionCard title="Upcoming deadlines" icon={CalendarClock}>
+ <div className="relative space-y-3 pl-5">
+ <span
+ aria-hidden
+ className="absolute left-[7px] top-1 h-[calc(100%-8px)] w-px bg-border"
+ />
+ {data.analytics.upcomingDeadlines.map((a) => (
+ <div key={a.id} className="relative">
+ <span
+ aria-hidden
+ className="absolute -left-[17px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-[#2D4F35] bg-gold"
+ />
+ <div className="rounded-xl border p-3">
+ <div className="flex flex-wrap items-center justify-between gap-2">
+ <p className="min-w-0 truncate text-sm font-semibold">
+ {a.courseCode ? `${a.courseCode} · ` : ""}
+ {a.title}
+ </p>
+ <Badge className="bg-gold/25 text-[#7A6500] hover:bg-gold/35 dark:text-gold">
+ {a.dueDate
+ ? new Date(a.dueDate).toLocaleDateString("en-US", {
+ weekday: "short",
+ month: "short",
+ day: "numeric",
+ })
+ : "No due date"}
+ </Badge>
+ </div>
+ {a.teacherName && (
+ <p className="mt-1 text-[11px] text-muted-foreground">{a.teacherName}</p>
+ )}
+ </div>
+ </div>
+ ))}
+ </div>
+ </SectionCard>
+ )}
+
+ <p className="px-1 text-center text-[11px] text-muted-foreground">
+ GPA is estimated on the Bangladesh UGC 4.00 scale from your entered marks —
+ official transcripts may use different weightage.
+ </p>
+ </div>
+ )}
  </TabsContent>
 
  {/* ===== Alerts ===== */}

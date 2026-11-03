@@ -5,8 +5,10 @@ import { motion } from "framer-motion";
 import {
  Building2,
  CalendarDays,
+ ChartNoAxesColumn,
  Check,
  CreditCard,
+ DollarSign,
  GraduationCap,
  Layers,
  Loader2,
@@ -17,6 +19,7 @@ import {
  Power,
  ShieldCheck,
  Trash2,
+ TrendingUp,
  Users,
 } from "lucide-react";
 
@@ -68,6 +71,13 @@ import {
  SectionCard,
  StatCard,
 } from "@/components/dashboards/dashboard-shared";
+import {
+ CHART_COLORS,
+ ChartCard,
+ DonutChart,
+ StatPill,
+ TrendAreaChart,
+} from "@/components/dashboards/analytics-charts";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
@@ -118,6 +128,27 @@ interface SuperOverview {
  stats: SuperStats;
  universities: UniversityRow[];
  plans: PlanRow[];
+}
+
+interface PlatformAnalytics {
+ hasData: boolean;
+ growthMonths: { label: string; value: number }[];
+ userGrowth: { label: string; value: number }[];
+ planDistribution: { label: string; value: number }[];
+ mrr: number;
+ arr: number;
+ payingUniversities: number;
+ perUniversity: {
+ id: string;
+ name: string;
+ plan: string;
+ departments: number;
+ users: number;
+ schedules: number;
+ isActive: boolean;
+ }[];
+ roles: { label: string; value: number }[];
+ totalSchedules: number;
 }
 
 /* ---------------- form state ---------------- */
@@ -317,6 +348,28 @@ export function SuperAdminPanel() {
  const [deptSaving, setDeptSaving] = useState(false);
  const [deleteDeptTarget, setDeleteDeptTarget] = useState<DetailDept | null>(null);
  const [deleting, setDeleting] = useState(false);
+
+ /* ---------------- analytics (Day 43, lazy) ---------------- */
+ const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
+ const [analyticsLoading, setAnalyticsLoading] = useState(false);
+ const loadAnalytics = useCallback(async () => {
+ if (analytics || analyticsLoading) return;
+ setAnalyticsLoading(true);
+ try {
+ setAnalytics(await apiGet<PlatformAnalytics>("/api/admin/analytics"));
+ } catch {
+ setAnalytics(null);
+ } finally {
+ setAnalyticsLoading(false);
+ }
+ }, [analytics, analyticsLoading]);
+
+ const handleTabChange = useCallback(
+ (v: string) => {
+ if (v === "analytics") void loadAnalytics();
+ },
+ [loadAnalytics]
+ );
 
  /* ---------------- loaders ---------------- */
 
@@ -713,7 +766,7 @@ export function SuperAdminPanel() {
  </section>
 
  {/* ---------- tabs ---------- */}
- <Tabs defaultValue="universities" className="gap-4">
+ <Tabs defaultValue="universities" onValueChange={handleTabChange} className="gap-4">
  <TabsList className="no-scrollbar h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:h-9">
  <TabsTrigger value="universities" className="shrink-0 gap-1.5 px-4">
  <Building2 className="h-3.5 w-3.5" />
@@ -722,6 +775,10 @@ export function SuperAdminPanel() {
  <TabsTrigger value="plans" className="shrink-0 gap-1.5 px-4">
  <CreditCard className="h-3.5 w-3.5" />
  Plans &amp; Billing
+ </TabsTrigger>
+ <TabsTrigger value="analytics" className="shrink-0 gap-1.5 px-4">
+ <ChartNoAxesColumn className="h-3.5 w-3.5" />
+ Analytics
  </TabsTrigger>
  </TabsList>
 
@@ -1092,6 +1149,94 @@ export function SuperAdminPanel() {
  </div>
  )}
  </SectionCard>
+ </TabsContent>
+
+ {/* ===== Analytics tab (Day 43) ===== */}
+ <TabsContent value="analytics" className="space-y-4">
+ {analyticsLoading && !analytics ? (
+ <PanelLoader label="Loading platform insights…" />
+ ) : !analytics ? (
+ <EmptyState
+ icon={ChartNoAxesColumn}
+ title="Analytics unavailable"
+ hint="Switch tabs and come back to retry."
+ />
+ ) : (
+ <>
+ {/* Revenue KPIs */}
+ <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+ <StatPill label="MRR" value={`৳${analytics.mrr.toLocaleString()}`} tone="green" />
+ <StatPill label="ARR" value={`৳${analytics.arr.toLocaleString()}`} tone="navy" />
+ <StatPill label="Paying Universities" value={analytics.payingUniversities} tone="gold" />
+ <StatPill label="Active Routines" value={analytics.totalSchedules} tone="rust" />
+ </div>
+
+ <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+ <ChartCard title="Universities joined per month" icon={TrendingUp} height={250}>
+ <TrendAreaChart
+ data={analytics.growthMonths}
+ color={CHART_COLORS.green}
+ valueLabel="New universities"
+ hint="Growth chart fills in as institutions onboard."
+ />
+ </ChartCard>
+ <ChartCard title="New users per month" icon={Users} height={250}>
+ <TrendAreaChart
+ data={analytics.userGrowth}
+ color={CHART_COLORS.navy}
+ valueLabel="New users"
+ />
+ </ChartCard>
+ <ChartCard title="Plan distribution" icon={Layers} height={280}>
+ <DonutChart
+ data={analytics.planDistribution}
+ hint="Assign plans to universities to see the revenue mix."
+ />
+ </ChartCard>
+ <ChartCard title="Users by role" icon={ShieldCheck} height={280}>
+ <DonutChart data={analytics.roles} />
+ </ChartCard>
+ </div>
+
+ <SectionCard title="University usage leaderboard" icon={Building2}>
+ <div className="overflow-x-auto">
+ <table className="w-full min-w-[560px] text-sm">
+ <thead>
+ <tr className="border-b text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+ <th className="py-2 pr-3">University</th>
+ <th className="py-2 pr-3">Plan</th>
+ <th className="py-2 pr-3 text-right">Depts</th>
+ <th className="py-2 pr-3 text-right">Users</th>
+ <th className="py-2 text-right">Routines</th>
+ </tr>
+ </thead>
+ <tbody>
+ {analytics.perUniversity.map((u) => (
+ <tr key={u.id} className="border-b last:border-0">
+ <td className="py-2.5 pr-3 font-semibold">
+ <span className="inline-flex items-center gap-1.5">
+ {u.name}
+ {!u.isActive && (
+ <Badge variant="outline" className="text-[10px] text-muted-foreground">
+ inactive
+ </Badge>
+ )}
+ </span>
+ </td>
+ <td className="py-2.5 pr-3">
+ <Badge variant="outline">{u.plan}</Badge>
+ </td>
+ <td className="py-2.5 pr-3 text-right tabular-nums">{u.departments}</td>
+ <td className="py-2.5 pr-3 text-right tabular-nums">{u.users}</td>
+ <td className="py-2.5 text-right tabular-nums">{u.schedules}</td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ </SectionCard>
+ </>
+ )}
  </TabsContent>
  </Tabs>
 

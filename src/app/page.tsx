@@ -66,7 +66,11 @@ function AppShell() {
  <SiteHeader view={view} navigate={navigate} />
  <ScrollProgress />
 
- <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 pb-24 md:pb-8">
+ <main
+ id="main-content"
+ tabIndex={-1}
+ className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 pb-24 md:pb-8"
+ >
  <Suspense
  fallback={
  <div className="flex items-center justify-center py-24">

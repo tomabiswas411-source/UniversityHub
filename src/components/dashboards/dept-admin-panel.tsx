@@ -15,6 +15,7 @@ import {
 } from "react";
 import { motion } from "framer-motion";
 import {
+ BarChart3,
  BookOpen,
  CalendarDays,
  Clock,
@@ -74,6 +75,14 @@ import {
  StatCard,
  TimetableGrid,
 } from "@/components/dashboards/dashboard-shared";
+import {
+ CHART_COLORS,
+ ChartCard,
+ DonutChart,
+ HBarChart,
+ StatPill,
+ VBarChart,
+} from "@/components/dashboards/analytics-charts";
 import { timeAgo } from "@/components/shared/notification-bell";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -115,6 +124,22 @@ interface ManageOverview {
  programs: ProgramDTO[];
  notices: NoticeDTO[];
  schedules: ScheduleDTO[];
+}
+
+interface DeptAnalytics {
+ hasData: boolean;
+ totalResults: number;
+ avgPerformance: number;
+ passRate: number;
+ recentChanges: number;
+ noticesCount: number;
+ gradeDistribution: { letter: string; count: number }[];
+ examAverages: { label: string; value: number; count: number }[];
+ teacherLoad: { label: string; value: number }[];
+ weeklyDensity: { label: string; value: number }[];
+ studentsPerProgram: { label: string; value: number }[];
+ studentsPerSemester: { label: string; value: number }[];
+ coursesPerSemester: { label: string; value: number }[];
 }
 
 type ManageEntity =
@@ -233,6 +258,7 @@ const ROOM_TYPES: Array<{ value: RoomDTO["type"]; label: string }> = [
 
 const TABS = [
  { value: "overview", label: "Overview", icon: LayoutDashboard },
+ { value: "analytics", label: "Analytics", icon: BarChart3 },
  { value: "schedule", label: "Schedule", icon: CalendarDays },
  { value: "teachers", label: "Teachers", icon: GraduationCap },
  { value: "students", label: "Students", icon: Users },
@@ -438,6 +464,7 @@ export function DeptAdminPanel() {
  const [programs, setPrograms] = useState<ProgramDTO[]>([]);
  const [notices, setNotices] = useState<NoticeDTO[]>([]);
  const [schedules, setSchedules] = useState<ScheduleDTO[]>([]);
+ const [analytics, setAnalytics] = useState<DeptAnalytics | null>(null);
 
  /* -------- dialogs -------- */
  const [teacherOpen, setTeacherOpen] = useState(false);
@@ -474,9 +501,10 @@ export function DeptAdminPanel() {
  if (!silent) setLoading(true);
  try {
  const q = `?departmentId=${departmentId}`;
- const [ov, st] = await Promise.all([
+ const [ov, st, an] = await Promise.all([
  apiGet<ManageOverview>(`/api/manage/overview${q}`),
  apiGet<DeptStatsDTO>(`/api/manage/stats${q}`),
+ apiGet<DeptAnalytics>(`/api/manage/analytics${q}`).catch(() => null),
  ]);
  setTeachers(ov.teachers ?? []);
  setStudents(ov.students ?? []);
@@ -487,6 +515,7 @@ export function DeptAdminPanel() {
  setNotices(ov.notices ?? []);
  setSchedules(ov.schedules ?? []);
  setStats(st ?? null);
+ setAnalytics(an);
  } catch (err) {
  toast({
  title: "Failed to load department data",
@@ -850,6 +879,85 @@ export function DeptAdminPanel() {
  </SectionCard>
  </div>
  </div>
+ </TabsContent>
+
+ {/* ===== Analytics (Day 41) ===== */}
+ <TabsContent value="analytics" className="space-y-4">
+ {!analytics ? (
+ <PanelLoader label="Crunching department numbers…" />
+ ) : (
+ <>
+ {/* KPI row */}
+ <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+ <StatPill label="Result Entries" value={analytics.totalResults} tone="navy" />
+ <StatPill
+ label="Avg Performance"
+ value={`${analytics.avgPerformance}%`}
+ tone={analytics.avgPerformance >= 60 ? "green" : analytics.avgPerformance >= 40 ? "gold" : "rust"}
+ />
+ <StatPill
+ label="Pass Rate"
+ value={`${analytics.passRate}%`}
+ tone={analytics.passRate >= 70 ? "green" : "gold"}
+ />
+ <StatPill label="Schedule Changes (30d)" value={analytics.recentChanges} tone="gold" />
+ </div>
+
+ <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+ <ChartCard title="Grade Distribution" icon={BarChart3} height={280}>
+ <VBarChart
+ data={analytics.gradeDistribution.map((g) => ({ label: g.letter, value: g.count }))}
+ color={CHART_COLORS.green}
+ valueLabel="Students"
+ hint="Grades appear here once teachers enter results."
+ />
+ </ChartCard>
+ <ChartCard title="Average Score by Exam Type" icon={BarChart3} height={280}>
+ <VBarChart
+ data={analytics.examAverages}
+ color={CHART_COLORS.gold}
+ valueLabel="Avg %"
+ hint="Shows once CT / midterm / final results are entered."
+ />
+ </ChartCard>
+ <ChartCard title="Teacher Workload (classes per week)" icon={Users} height={300}>
+ <HBarChart
+ data={analytics.teacherLoad}
+ color={CHART_COLORS.navy}
+ hint="Add classes in the Schedule tab to see workload."
+ />
+ </ChartCard>
+ <ChartCard title="Weekly Class Density" icon={CalendarDays} height={300}>
+ <VBarChart
+ data={analytics.weeklyDensity}
+ color={CHART_COLORS.green}
+ valueLabel="Classes"
+ />
+ </ChartCard>
+ <ChartCard title="Students per Program" icon={GraduationCap} height={260}>
+ <DonutChart
+ data={analytics.studentsPerProgram}
+ hint="Enroll students to see program distribution."
+ />
+ </ChartCard>
+ <ChartCard title="Students per Semester" icon={LayoutGrid} height={260}>
+ <VBarChart
+ data={analytics.studentsPerSemester}
+ color={CHART_COLORS.rust}
+ valueLabel="Students"
+ />
+ </ChartCard>
+ </div>
+
+ <SectionCard title="How these numbers work" icon={BarChart3} className="text-xs text-muted-foreground">
+ <p>
+ Performance is the average of all entered marks as a percentage, graded on the
+ Bangladesh UGC 4.00 scale (A+ ≥ 80%, A ≥ 75% … D ≥ 40%). Pass rate counts entries
+ at D or above. Attendance analytics will join this page once the attendance module ships.
+ </p>
+ </SectionCard>
+ </>
+ )}
  </TabsContent>
 
  {/* ===== Schedule ===== */}
