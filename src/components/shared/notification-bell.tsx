@@ -49,13 +49,13 @@ function typeIcon(type: string) {
     case "extra_class":
       return { Icon: PlusCircle, cls: "text-amber-500" };
     case "assignment":
-      return { Icon: ClipboardList, cls: "text-indigo-600" };
+      return { Icon: ClipboardList, cls: "text-violet-600" };
     case "result":
       return { Icon: Award, cls: "text-amber-600" };
     case "notice":
-      return { Icon: Megaphone, cls: "text-indigo-600" };
+      return { Icon: Megaphone, cls: "text-violet-600" };
     default:
-      return { Icon: Info, cls: "text-indigo-600" };
+      return { Icon: Info, cls: "text-violet-600" };
   }
 }
 
@@ -166,7 +166,7 @@ export function NotificationBell({ className }: { className?: string }) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 min-h-11 rounded-full px-3 text-xs text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 sm:min-h-0"
+            className="h-8 min-h-11 rounded-full px-3 text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400 sm:min-h-0"
             onClick={markAllRead}
             disabled={unreadCount === 0}
           >
@@ -196,7 +196,7 @@ export function NotificationBell({ className }: { className?: string }) {
                     onClick={() => markRead(n.id)}
                     className={cn(
                       "flex w-full items-start gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-accent/60",
-                      !n.isRead && "bg-indigo-50/50 dark:bg-indigo-950/20"
+                      !n.isRead && "bg-violet-50/50 dark:bg-violet-950/20"
                     )}
                   >
                     <span
@@ -210,7 +210,7 @@ export function NotificationBell({ className }: { className?: string }) {
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1.5">
                         {!n.isRead && (
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" aria-hidden />
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500" aria-hidden />
                         )}
                         <span className="truncate text-sm font-medium">{n.title}</span>
                       </span>
@@ -233,7 +233,7 @@ export function NotificationBell({ className }: { className?: string }) {
             <div className="p-2">
               <Button
                 variant="ghost"
-                className="w-full min-h-11 rounded-xl text-sm text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+                className="w-full min-h-11 rounded-xl text-sm text-violet-600 hover:text-violet-700 dark:text-violet-400"
                 onClick={markAllRead}
               >
                 Mark all read

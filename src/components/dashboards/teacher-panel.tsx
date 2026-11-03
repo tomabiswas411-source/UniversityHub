@@ -115,7 +115,7 @@ function FadeIn({ index = 0, className, children }: { index?: number; className?
 
 /* Styled long-list scroller */
 const SCROLL =
-  "max-h-96 overflow-y-auto pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-indigo-300/70 dark:[&::-webkit-scrollbar-thumb]:bg-indigo-800/60";
+  "max-h-96 overflow-y-auto pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-violet-300/70 dark:[&::-webkit-scrollbar-thumb]:bg-violet-800/60";
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong. Please try again.";
@@ -495,7 +495,7 @@ export function TeacherPanel() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 to-amber-600 p-5 text-white shadow-lg shadow-indigo-500/25 sm:p-6"
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-600 p-5 text-white shadow-lg shadow-violet-500/25 sm:p-6"
       >
         <div className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
         <div className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-amber-300/20 blur-2xl" />
@@ -568,7 +568,7 @@ export function TeacherPanel() {
               <div className="space-y-3">
                 {todays.map((s, i) => (
                   <FadeIn key={s.id} index={i} className="flex flex-wrap items-center gap-3 rounded-xl border bg-muted/30 p-3">
-                    <div className="flex h-11 w-20 shrink-0 flex-col items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-amber-600 text-white shadow-md shadow-indigo-500/30">
+                    <div className="flex h-11 w-20 shrink-0 flex-col items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-md shadow-violet-500/30">
                       <span className="flex items-center gap-1 text-xs font-bold">
                         <Clock className="h-3 w-3" />
                         {s.startTime}
@@ -588,7 +588,7 @@ export function TeacherPanel() {
                         "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
                         s.classType === "lab"
                           ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
-                          : "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+                          : "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
                       )}
                     >
                       {s.classType === "lab" ? "Lab" : "Theory"}
@@ -804,7 +804,7 @@ export function TeacherPanel() {
                             {due.text}
                           </span>
                           {a.maxMarks != null && (
-                            <span className="rounded-full bg-indigo-100 px-2 py-0.5 font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+                            <span className="rounded-full bg-violet-100 px-2 py-0.5 font-semibold text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
                               {a.maxMarks} marks
                             </span>
                           )}
@@ -925,7 +925,7 @@ export function TeacherPanel() {
             icon={ClipboardCheck}
             action={
               rCourse ? (
-                <Badge variant="outline" className="border-indigo-300 text-indigo-700 dark:border-indigo-800 dark:text-indigo-300">
+                <Badge variant="outline" className="border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300">
                   {rCourse.code} · {rCourse.name}
                 </Badge>
               ) : undefined

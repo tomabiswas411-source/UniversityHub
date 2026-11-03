@@ -110,7 +110,7 @@ export function LoginView({ navigate }: LoginViewProps) {
           animate={{ opacity: 1, scale: 1 }}
           className="text-center bg-card rounded-3xl border p-8 shadow-lg"
         >
-          <div className="w-16 h-16 mx-auto rounded-3xl bg-gradient-to-br from-indigo-500 to-amber-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 mb-4">
+          <div className="w-16 h-16 mx-auto rounded-3xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center shadow-lg shadow-violet-500/30 mb-4">
             <BadgeCheck className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-xl font-bold mb-1">Already logged in</h1>
@@ -120,7 +120,7 @@ export function LoginView({ navigate }: LoginViewProps) {
           <div className="flex flex-col gap-2">
             <Button
               onClick={() => navigate("dashboard")}
-              className="bg-gradient-to-r from-indigo-500 to-amber-600 hover:from-indigo-600 hover:to-amber-700 text-white"
+              className="bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white"
             >
               Go to Dashboard
             </Button>
@@ -137,8 +137,8 @@ export function LoginView({ navigate }: LoginViewProps) {
             className="text-center mb-6"
           >
             <div className="relative w-fit mx-auto mb-4">
-              <div className="absolute inset-0 rounded-3xl bg-indigo-500/25 blur-xl" />
-              <div className="relative w-16 h-16 rounded-3xl bg-gradient-to-br from-indigo-500 to-amber-600 flex items-center justify-center shadow-xl shadow-indigo-500/30">
+              <div className="absolute inset-0 rounded-3xl bg-violet-500/25 blur-xl" />
+              <div className="relative w-16 h-16 rounded-3xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center shadow-xl shadow-violet-500/30">
                 <GraduationCap className="w-8 h-8 text-white" />
               </div>
             </div>
@@ -154,7 +154,7 @@ export function LoginView({ navigate }: LoginViewProps) {
             transition={{ delay: 0.08 }}
             className="bg-card rounded-3xl border shadow-xl overflow-hidden"
           >
-            <div className="h-1.5 bg-gradient-to-r from-indigo-500 via-amber-500 to-indigo-500" />
+            <div className="h-1.5 bg-gradient-to-r from-violet-500 via-fuchsia-500 to-violet-500" />
             <div className="p-5 sm:p-6">
               {error && (
                 <div className="mb-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-400">
@@ -220,7 +220,7 @@ export function LoginView({ navigate }: LoginViewProps) {
                     <Button
                       type="submit"
                       disabled={staffLoading}
-                      className="w-full h-11 bg-gradient-to-r from-indigo-500 to-amber-600 hover:from-indigo-600 hover:to-amber-700 text-white shadow-lg shadow-indigo-500/25"
+                      className="w-full h-11 bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white shadow-lg shadow-violet-500/25"
                     >
                       {staffLoading ? (
                         <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -285,7 +285,7 @@ export function LoginView({ navigate }: LoginViewProps) {
                     <Button
                       type="submit"
                       disabled={studentLoading || !uniSlug}
-                      className="w-full h-11 bg-gradient-to-r from-indigo-500 to-amber-600 hover:from-indigo-600 hover:to-amber-700 text-white shadow-lg shadow-indigo-500/25"
+                      className="w-full h-11 bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white shadow-lg shadow-violet-500/25"
                     >
                       {studentLoading ? (
                         <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -304,7 +304,7 @@ export function LoginView({ navigate }: LoginViewProps) {
           </motion.div>
 
           <div className="mt-5 text-center">
-            <Badge variant="outline" className="text-xs border-indigo-300 text-indigo-700 dark:text-indigo-400">
+            <Badge variant="outline" className="text-xs border-violet-300 text-violet-700 dark:text-violet-400">
               🔒 Sessions are encrypted & httpOnly-secured
             </Badge>
           </div>

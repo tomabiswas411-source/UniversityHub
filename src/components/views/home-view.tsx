@@ -116,7 +116,7 @@ function SectionHeading({
 }) {
   return (
     <div className="mx-auto mb-6 max-w-2xl text-center sm:mb-8">
-      <span className="text-[11px] font-bold uppercase tracking-[0.22em] text-indigo-600 dark:text-indigo-400">
+      <span className="text-[11px] font-bold uppercase tracking-[0.22em] text-violet-600 dark:text-violet-400">
         {eyebrow}
       </span>
       <h2 className="mt-1.5 text-2xl font-extrabold tracking-tight sm:text-3xl">
@@ -149,7 +149,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
       </p>
       <Button
         onClick={onRetry}
-        className="mt-5 h-11 rounded-xl bg-gradient-to-r from-indigo-500 to-amber-600 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-600 hover:to-amber-700"
+        className="mt-5 h-11 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-600 text-white shadow-lg shadow-violet-500/25 hover:from-violet-600 hover:to-fuchsia-700"
       >
         <RefreshCcw className="h-4 w-4" /> Try again
       </Button>
@@ -167,9 +167,9 @@ function EmptyState({
   hint?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-dashed border-indigo-200/70 px-6 py-12 text-center dark:border-indigo-900/60">
-      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/15 to-amber-600/15 dark:from-indigo-500/20 dark:to-amber-600/20">
-        <Icon className="h-7 w-7 text-indigo-600 dark:text-indigo-400" />
+    <div className="rounded-2xl border border-dashed border-violet-200/70 px-6 py-12 text-center dark:border-violet-900/60">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500/15 to-fuchsia-600/15 dark:from-violet-500/20 dark:to-fuchsia-600/20">
+        <Icon className="h-7 w-7 text-violet-600 dark:text-violet-400" />
       </div>
       <p className="mt-3 font-semibold">{title}</p>
       {hint ? (
@@ -357,11 +357,11 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
   const { universities, stats } = data;
 
   const statCards: { key: string; label: string; icon: LucideIcon; value: number; grad: string }[] = [
-    { key: "universities", label: "Universities", icon: Building2, value: stats.universities, grad: "from-indigo-500 to-amber-600" },
-    { key: "departments", label: "Departments", icon: Network, value: stats.departments, grad: "from-amber-500 to-indigo-600" },
-    { key: "teachers", label: "Teachers", icon: Users, value: stats.teachers, grad: "from-indigo-600 to-amber-500" },
-    { key: "students", label: "Students", icon: GraduationCap, value: stats.students, grad: "from-amber-600 to-indigo-500" },
-    { key: "schedules", label: "Class Schedules", icon: CalendarDays, value: stats.schedules, grad: "from-indigo-500 via-indigo-600 to-amber-600" },
+    { key: "universities", label: "Universities", icon: Building2, value: stats.universities, grad: "from-violet-500 to-fuchsia-600" },
+    { key: "departments", label: "Departments", icon: Network, value: stats.departments, grad: "from-violet-500 to-fuchsia-500" },
+    { key: "teachers", label: "Teachers", icon: Users, value: stats.teachers, grad: "from-violet-600 to-fuchsia-500" },
+    { key: "students", label: "Students", icon: GraduationCap, value: stats.students, grad: "from-fuchsia-500 to-pink-500" },
+    { key: "schedules", label: "Class Schedules", icon: CalendarDays, value: stats.schedules, grad: "from-violet-500 via-violet-600 to-fuchsia-600" },
   ];
 
   return (
@@ -373,12 +373,12 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
           <motion.div
             animate={{ y: [0, -14, 0] }}
             transition={{ repeat: Infinity, duration: 7, ease: "easeInOut" }}
-            className="absolute -top-10 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-indigo-400/20 blur-3xl dark:bg-indigo-500/10"
+            className="absolute -top-10 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-violet-400/20 blur-3xl dark:bg-violet-500/10"
           />
           <motion.div
             animate={{ y: [0, 12, 0] }}
             transition={{ repeat: Infinity, duration: 9, ease: "easeInOut" }}
-            className="absolute right-[8%] top-24 h-44 w-44 rounded-full bg-amber-400/15 blur-3xl dark:bg-amber-500/10"
+            className="absolute right-[8%] top-24 h-44 w-44 rounded-full bg-fuchsia-400/15 blur-3xl dark:bg-fuchsia-500/10"
           />
         </div>
 
@@ -391,7 +391,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
           <motion.div variants={riseIn}>
             <Badge
               variant="outline"
-              className="rounded-full border-indigo-200/70 bg-indigo-50/60 px-3.5 py-1.5 text-xs font-semibold text-indigo-700 dark:border-indigo-800/70 dark:bg-indigo-950/40 dark:text-indigo-300"
+              className="rounded-full border-violet-200/70 bg-violet-50/60 px-3.5 py-1.5 text-xs font-semibold text-violet-700 dark:border-violet-800/70 dark:bg-violet-950/40 dark:text-violet-300"
             >
               <GraduationCap className="h-3.5 w-3.5" />
               Academic Management Platform
@@ -400,7 +400,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
 
           <motion.h1
             variants={riseIn}
-            className="mt-5 bg-gradient-to-r from-indigo-600 via-amber-600 to-indigo-600 bg-clip-text text-4xl font-extrabold leading-tight tracking-tight text-transparent sm:text-6xl"
+            className="mt-5 bg-gradient-to-r from-violet-600 via-fuchsia-600 to-violet-600 bg-clip-text text-4xl font-extrabold leading-tight tracking-tight text-transparent sm:text-6xl"
           >
             UniversityHub
           </motion.h1>
@@ -423,7 +423,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                   .getElementById("universities")
                   ?.scrollIntoView({ behavior: "smooth", block: "start" })
               }
-              className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-500 to-amber-600 px-7 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-600 hover:to-amber-700 sm:w-auto"
+              className="h-11 w-full rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-600 px-7 text-white shadow-lg shadow-violet-500/25 hover:from-violet-600 hover:to-fuchsia-700 sm:w-auto"
             >
               Explore Departments
               <ArrowRight className="h-4 w-4" />
@@ -431,7 +431,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
             <Button
               onClick={() => navigate("login")}
               variant="outline"
-              className="h-11 w-full rounded-xl border-indigo-200/80 px-7 hover:bg-indigo-50 hover:text-indigo-700 dark:border-indigo-800/70 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-300 sm:w-auto"
+              className="h-11 w-full rounded-xl border-violet-200/80 px-7 hover:bg-violet-50 hover:text-violet-700 dark:border-violet-800/70 dark:hover:bg-violet-950/40 dark:hover:text-violet-300 sm:w-auto"
             >
               Login Portal
             </Button>
@@ -446,7 +446,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                 key={b.label}
                 className="inline-flex min-h-[36px] items-center gap-1.5 rounded-full border bg-background/70 px-3.5 py-1.5 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur"
               >
-                <b.icon className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                <b.icon className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
                 {b.label}
               </span>
             ))}
@@ -474,15 +474,15 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                   : ""
               }
             >
-              <Card className="h-full gap-0 rounded-2xl border-indigo-100/80 py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-indigo-500/10 dark:border-indigo-900/50">
+              <Card className="h-full gap-0 rounded-2xl border-violet-100/80 py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-violet-500/10 dark:border-violet-900/50">
                 <CardContent className="flex h-full items-center gap-3.5 p-4">
                   <div
-                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${s.grad} text-white shadow-lg shadow-indigo-500/25`}
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${s.grad} text-white shadow-lg shadow-violet-500/25`}
                   >
                     <s.icon className="h-6 w-6" strokeWidth={2.1} />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-2xl font-extrabold leading-tight">
+                    <div className="font-display text-2xl font-extrabold leading-tight">
                       <AnimatedNumber value={s.value} />
                     </div>
                     <div className="truncate text-xs font-medium text-muted-foreground">
@@ -534,16 +534,16 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                       selectUniversity(u.slug, !selected);
                     }
                   }}
-                  className={`group cursor-pointer rounded-2xl border bg-card p-5 text-left shadow-sm transition-all outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                  className={`group cursor-pointer rounded-2xl border bg-card p-5 text-left shadow-sm transition-all outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
                     selected
-                      ? "border-indigo-400 shadow-lg shadow-indigo-500/20 ring-2 ring-indigo-500 dark:border-indigo-600"
-                      : "border-indigo-100/80 hover:border-indigo-300 hover:shadow-lg hover:shadow-indigo-500/10 dark:border-indigo-900/50 dark:hover:border-indigo-700"
+                      ? "border-violet-400 shadow-lg shadow-violet-500/20 ring-2 ring-violet-500 dark:border-violet-600"
+                      : "border-violet-100/80 hover:border-violet-300 hover:shadow-lg hover:shadow-violet-500/10 dark:border-violet-900/50 dark:hover:border-violet-700"
                   }`}
                 >
                   <div className="flex items-start gap-4">
                     <div className="relative shrink-0">
-                      <div className="absolute inset-0 rounded-2xl bg-indigo-500/25 blur-md transition-colors group-hover:bg-indigo-500/40" />
-                      <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-amber-600 text-base font-extrabold text-white shadow-lg shadow-indigo-500/30">
+                      <div className="absolute inset-0 rounded-2xl bg-violet-500/25 blur-md transition-colors group-hover:bg-violet-500/40" />
+                      <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-base font-extrabold text-white shadow-lg shadow-violet-500/30">
                         {uniMonogram(u)}
                       </div>
                     </div>
@@ -553,7 +553,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                         {u.planName ? (
                           <Badge
                             variant="secondary"
-                            className="shrink-0 rounded-full bg-indigo-100/80 text-[11px] font-semibold text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300"
+                            className="shrink-0 rounded-full bg-violet-100/80 text-[11px] font-semibold text-violet-800 dark:bg-violet-950/60 dark:text-violet-300"
                           >
                             {u.planName}
                           </Badge>
@@ -580,8 +580,8 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                       }}
                       className={`h-10 min-h-[44px] rounded-xl px-4 font-semibold text-white ${
                         selected
-                          ? "bg-gradient-to-r from-indigo-600 to-amber-700 shadow-md shadow-indigo-600/25"
-                          : "bg-gradient-to-r from-indigo-500 to-amber-600 shadow-md shadow-indigo-500/25 hover:from-indigo-600 hover:to-amber-700"
+                          ? "bg-gradient-to-r from-violet-600 to-fuchsia-700 shadow-md shadow-violet-600/25"
+                          : "bg-gradient-to-r from-violet-500 to-fuchsia-600 shadow-md shadow-violet-500/25 hover:from-violet-600 hover:to-fuchsia-700"
                       }`}
                     >
                       {selected ? "Viewing" : "Enter University"}
@@ -651,10 +651,10 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                         variants={riseIn}
                         whileHover={{ y: -4 }}
                       >
-                        <Card className="h-full gap-0 rounded-2xl border-indigo-100/80 py-0 shadow-sm transition-shadow hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-500/10 dark:border-indigo-900/50 dark:hover:border-indigo-800">
+                        <Card className="h-full gap-0 rounded-2xl border-violet-100/80 py-0 shadow-sm transition-shadow hover:border-violet-200 hover:shadow-lg hover:shadow-violet-500/10 dark:border-violet-900/50 dark:hover:border-violet-800">
                           <CardContent className="flex h-full flex-col p-5">
                             <div className="flex items-center gap-3">
-                              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-amber-600 text-sm font-extrabold text-white shadow-md shadow-indigo-500/25">
+                              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-sm font-extrabold text-white shadow-md shadow-violet-500/25">
                                 {dept.shortName.slice(0, 4).toUpperCase()}
                               </div>
                               <h4 className="min-w-0 flex-1 truncate font-bold">
@@ -667,15 +667,15 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                             </p>
                             <div className="mt-3 flex flex-wrap gap-1.5">
                               <span className="inline-flex items-center gap-1 rounded-full bg-secondary/70 px-2.5 py-1 text-[11px] font-medium">
-                                <Users className="h-3 w-3 text-indigo-600 dark:text-indigo-400" />
+                                <Users className="h-3 w-3 text-violet-600 dark:text-violet-400" />
                                 {dept._count?.teachers ?? 0} teachers
                               </span>
                               <span className="inline-flex items-center gap-1 rounded-full bg-secondary/70 px-2.5 py-1 text-[11px] font-medium">
-                                <GraduationCap className="h-3 w-3 text-indigo-600 dark:text-indigo-400" />
+                                <GraduationCap className="h-3 w-3 text-violet-600 dark:text-violet-400" />
                                 {dept._count?.students ?? 0} students
                               </span>
                               <span className="inline-flex items-center gap-1 rounded-full bg-secondary/70 px-2.5 py-1 text-[11px] font-medium">
-                                <CalendarDays className="h-3 w-3 text-indigo-600 dark:text-indigo-400" />
+                                <CalendarDays className="h-3 w-3 text-violet-600 dark:text-violet-400" />
                                 {dept._count?.schedules ?? 0} classes/week
                               </span>
                             </div>
@@ -683,7 +683,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
                               onClick={() =>
                                 navigate("department", { dept: dept.id })
                               }
-                              className="mt-4 h-11 w-full rounded-xl bg-gradient-to-r from-indigo-500 to-amber-600 font-semibold text-white shadow-md shadow-indigo-500/25 hover:from-indigo-600 hover:to-amber-700"
+                              className="mt-4 h-11 w-full rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-600 font-semibold text-white shadow-md shadow-violet-500/25 hover:from-violet-600 hover:to-fuchsia-700"
                             >
                               View Department
                               <ArrowRight className="h-4 w-4" />
@@ -720,9 +720,9 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
               variants={riseIn}
               whileHover={{ y: -4, scale: 1.01 }}
             >
-              <Card className="group h-full gap-0 rounded-2xl border-indigo-100/80 py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-indigo-500/10 dark:border-indigo-900/50">
+              <Card className="group h-full gap-0 rounded-2xl border-violet-100/80 py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-violet-500/10 dark:border-violet-900/50">
                 <CardContent className="p-5">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-amber-600 text-white shadow-lg shadow-indigo-500/25 transition-transform group-hover:scale-110">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-lg shadow-violet-500/25 transition-transform group-hover:scale-110">
                     <f.icon className="h-6 w-6" strokeWidth={2.1} />
                   </div>
                   <h3 className="mt-4 font-bold">{f.title}</h3>

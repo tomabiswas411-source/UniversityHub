@@ -8,13 +8,14 @@ import { DAY_LABELS, DAYS_OF_WEEK } from "@/types";
 
 /* ============================================================
    Shared building blocks for all role dashboards.
-   Design language: "Aurora Royale" — violet → fuchsia → amber
+   Design language: "Royal Violet" — violet → fuchsia brand
+   gradient · amber/emerald/rose reserved for semantics only.
    ============================================================ */
 
 export const GRADIENT_BTN =
-  "bg-gradient-to-r from-indigo-600 to-amber-600 hover:from-indigo-700 hover:to-amber-700 text-white shadow-lg shadow-indigo-500/25";
+  "bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white shadow-lg shadow-violet-500/25";
 export const GRADIENT_ICON =
-  "bg-gradient-to-br from-indigo-500 to-amber-600 text-white shadow-md shadow-indigo-500/30";
+  "bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-md shadow-violet-500/30";
 
 /* ---------------- Stat card ---------------- */
 export function StatCard({
@@ -33,8 +34,8 @@ export function StatCard({
   delay?: number;
 }) {
   const tones: Record<string, string> = {
-    violet: "from-indigo-500 to-indigo-700 shadow-indigo-500/30",
-    fuchsia: "from-amber-500 to-amber-700 shadow-amber-500/30",
+    violet: "from-violet-500 to-violet-700 shadow-violet-500/30",
+    fuchsia: "from-fuchsia-500 to-fuchsia-700 shadow-fuchsia-500/30",
     amber: "from-amber-400 to-amber-600 shadow-amber-500/30",
     emerald: "from-emerald-500 to-emerald-700 shadow-emerald-500/30",
     rose: "from-rose-500 to-rose-700 shadow-rose-500/30",
@@ -107,8 +108,8 @@ export function SectionCard({
       <div className="flex items-center justify-between gap-3 border-b px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2">
           {Icon && (
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-950/50">
-              <Icon className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-violet-100 to-fuchsia-100 dark:from-violet-950/60 dark:to-fuchsia-950/60">
+              <Icon className="h-4 w-4 text-violet-600 dark:text-violet-300" />
             </span>
           )}
           <h3 className="text-sm font-bold sm:text-base">{title}</h3>
@@ -156,7 +157,7 @@ export function TimetableGrid({
                 className={cn(
                   "px-2 py-2.5 text-center font-bold",
                   isToday(d)
-                    ? "bg-gradient-to-r from-indigo-100 to-amber-100 text-indigo-700 dark:from-indigo-950/60 dark:to-amber-950/60 dark:text-indigo-300"
+                    ? "bg-gradient-to-r from-violet-100 to-fuchsia-100 text-violet-700 dark:from-violet-950/60 dark:to-fuchsia-950/40 dark:text-violet-200"
                     : "bg-muted/60 text-muted-foreground"
                 )}
               >
@@ -194,7 +195,7 @@ export function TimetableGrid({
                     className={cn(
                       "border-l border-border/50 p-1 align-top",
                       slot.isBreak && "bg-amber-50/50 dark:bg-amber-950/10",
-                      isToday(day) && "bg-indigo-50/50 dark:bg-indigo-950/20"
+                      isToday(day) && "bg-violet-50/60 dark:bg-violet-950/25"
                     )}
                   >
                     {cell.map((s) => (
@@ -203,8 +204,8 @@ export function TimetableGrid({
                         className={cn(
                           "mb-1 rounded-lg px-2 py-1.5 text-[11px] leading-tight last:mb-0 sm:text-xs",
                           s.classType === "lab"
-                            ? "bg-gradient-to-br from-amber-100 to-amber-50 text-amber-900 dark:from-amber-950/70 dark:to-amber-900/30 dark:text-amber-200"
-                            : "bg-gradient-to-br from-indigo-100 to-indigo-50 text-indigo-900 dark:from-indigo-950/70 dark:to-indigo-900/30 dark:text-indigo-200"
+                            ? "bg-gradient-to-br from-amber-100 to-amber-50 text-amber-900 dark:from-amber-950/60 dark:to-amber-900/20 dark:text-amber-200"
+                            : "bg-gradient-to-br from-violet-100 to-violet-50 text-violet-900 dark:from-violet-950/70 dark:to-violet-900/30 dark:text-violet-200"
                         )}
                       >
                         <p className="font-bold">{s.courseCode}</p>
@@ -245,7 +246,7 @@ export function ChangeTypeBadge({ type }: { type: string }) {
 /* ---------------- Category badge (notices) ---------------- */
 export function CategoryBadge({ category }: { category: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    academic: { label: "Academic", cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300" },
+    academic: { label: "Academic", cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300" },
     exam: { label: "Exam", cls: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" },
     event: { label: "Event", cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300" },
     general: { label: "General", cls: "bg-muted text-muted-foreground" },
@@ -270,7 +271,7 @@ export function ExamTypeBadge({ examType }: { examType: string }) {
     assignment: "Assignment",
   };
   return (
-    <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+    <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
       {labels[examType] ?? examType}
     </span>
   );
@@ -280,7 +281,7 @@ export function ExamTypeBadge({ examType }: { examType: string }) {
 export function PanelLoader({ label = "Loading…" }: { label?: string }) {
   return (
     <div className="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground">
-      <span className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+      <span className="h-5 w-5 animate-spin rounded-full border-2 border-violet-600 border-t-transparent dark:border-violet-400" />
       {label}
     </div>
   );

@@ -72,8 +72,8 @@ export function PwaProvider() {
 
   return (
     <div className="fixed bottom-20 left-1/2 z-50 w-[min(420px,92vw)] -translate-x-1/2 md:bottom-5">
-      <div className="glass-card flex items-center gap-3 rounded-2xl p-3 shadow-xl shadow-indigo-500/10">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-amber-600 text-white shadow-md">
+      <div className="glass-card flex items-center gap-3 rounded-2xl p-3 shadow-xl shadow-violet-500/10">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-md">
           <BellRing className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
@@ -82,7 +82,7 @@ export function PwaProvider() {
             App-like experience · offline shell · instant alerts
           </p>
         </div>
-        <Button size="sm" className="h-9 shrink-0 rounded-xl bg-gradient-to-r from-indigo-600 to-amber-600 text-white hover:from-indigo-700 hover:to-amber-700" onClick={doInstall}>
+        <Button size="sm" className="h-9 shrink-0 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:to-fuchsia-700" onClick={doInstall}>
           <Download className="mr-1 h-4 w-4" /> Install
         </Button>
         <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full" onClick={dismiss} aria-label="Dismiss install prompt">

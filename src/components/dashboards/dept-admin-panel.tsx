@@ -288,7 +288,7 @@ function NoticeCategoryBadge({ category }: { category: NoticeDTO["category"] }) 
   const map: Record<NoticeDTO["category"], { label: string; cls: string }> = {
     academic: {
       label: "Academic",
-      cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300",
+      cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
     },
     exam: {
       label: "Exam",
@@ -325,7 +325,7 @@ function AudienceBadge({ audience }: { audience: NoticeDTO["audience"] }) {
   const map: Record<NoticeDTO["audience"], { label: string; cls: string }> = {
     all: {
       label: "Everyone",
-      cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300",
+      cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
     },
     students: {
       label: "Students",
@@ -353,7 +353,7 @@ function RoomTypeBadge({ type }: { type: RoomDTO["type"] }) {
   const map: Record<RoomDTO["type"], { label: string; cls: string }> = {
     classroom: {
       label: "Classroom",
-      cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300",
+      cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
     },
     lab: {
       label: "Lab",
@@ -694,7 +694,7 @@ export function DeptAdminPanel() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
       >
-        <header className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 via-amber-600 to-indigo-600 p-5 text-white shadow-lg shadow-indigo-500/25 sm:p-6">
+        <header className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-violet-600 p-5 text-white shadow-lg shadow-violet-500/25 sm:p-6">
           <div
             aria-hidden
             className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl"
@@ -797,8 +797,8 @@ export function DeptAdminPanel() {
                       key={qc.label}
                       className="flex items-center gap-2 rounded-xl border p-2.5"
                     >
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-950/50">
-                        <qc.icon className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-950/50">
+                        <qc.icon className="h-4 w-4 text-violet-600 dark:text-violet-400" />
                       </span>
                       <div className="min-w-0">
                         <p className="text-lg font-bold leading-none">{qc.value}</p>
@@ -889,8 +889,8 @@ export function DeptAdminPanel() {
                   transition={{ delay: Math.min(i * 0.03, 0.2), duration: 0.25 }}
                   className="flex items-center gap-3 rounded-xl border p-3"
                 >
-                  <div className="flex h-11 w-14 shrink-0 flex-col items-center justify-center rounded-lg bg-gradient-to-br from-indigo-100 to-amber-100 dark:from-indigo-950/60 dark:to-amber-950/60">
-                    <span className="text-[10px] font-bold uppercase text-indigo-700 dark:text-indigo-300">
+                  <div className="flex h-11 w-14 shrink-0 flex-col items-center justify-center rounded-lg bg-gradient-to-br from-amber-100 to-amber-50 dark:from-amber-950/40 dark:to-amber-950/20">
+                    <span className="text-[10px] font-bold uppercase text-violet-700 dark:text-violet-300">
                       {DAY_LABELS[s.dayOfWeek].slice(0, 3)}
                     </span>
                     <span className="text-[11px] font-semibold">{s.startTime}</span>
@@ -1110,7 +1110,7 @@ export function DeptAdminPanel() {
                         </p>
                         <div className="mt-1 flex flex-wrap gap-1">
                           {prog && (
-                            <Badge className="bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+                            <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
                               {prog}
                             </Badge>
                           )}
@@ -1193,7 +1193,7 @@ export function DeptAdminPanel() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <Badge
-                        className="bg-indigo-100 font-mono text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+                        className="bg-violet-100 font-mono text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
                       >
                         {c.code}
                       </Badge>
@@ -1234,7 +1234,7 @@ export function DeptAdminPanel() {
                         className={cn(
                           c.type === "lab"
                             ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
-                            : "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+                            : "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
                         )}
                       >
                         {c.type === "lab" ? "Lab" : "Theory"}
@@ -1348,8 +1348,8 @@ export function DeptAdminPanel() {
                     key={r.id}
                     className="flex items-center gap-3 rounded-xl border p-3"
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-950/50">
-                      <DoorOpen className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-950/50">
+                      <DoorOpen className="h-4 w-4 text-violet-600 dark:text-violet-400" />
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold">{r.roomNumber}</p>
@@ -2808,18 +2808,18 @@ function AddScheduleDialog({
   );
 
   async function handleSave() {
-    if (
-      !form.programId ||
-      !form.semester ||
-      !form.courseId ||
-      !form.teacherId ||
-      !form.dayOfWeek ||
-      !form.timeSlotId ||
-      !form.roomId
-    ) {
+    const missingLabels: string[] = [];
+    if (!form.programId) missingLabels.push("program");
+    if (!form.semester) missingLabels.push("semester");
+    if (!form.courseId) missingLabels.push("course");
+    if (!form.teacherId) missingLabels.push("teacher");
+    if (!form.dayOfWeek) missingLabels.push("day");
+    if (!form.timeSlotId) missingLabels.push("time slot");
+    if (!form.roomId) missingLabels.push("room");
+    if (missingLabels.length > 0) {
       toast({
         title: "Missing information",
-        description: "Program, semester, course, teacher, day, time slot and room are all required.",
+        description: `Please choose: ${missingLabels.join(", ")}.`,
         variant: "destructive",
       });
       return;
@@ -2880,7 +2880,10 @@ function AddScheduleDialog({
             </Field>
           </div>
           <Field label="Course" required>
+            {/* Keyed by program+semester so the Radix select remounts and
+                never shows a stale course after the filter changes. */}
             <Select
+              key={`${form.programId}|${form.semester}`}
               value={form.courseId || undefined}
               onValueChange={(v) => setForm((f) => ({ ...f, courseId: v }))}
               disabled={!form.programId}

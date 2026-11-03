@@ -52,7 +52,7 @@ export function DashboardView({
         animate={{ opacity: 1, y: 0 }}
         className="mx-auto max-w-md py-16 text-center"
       >
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-amber-600 shadow-xl shadow-indigo-500/30 glow-aurora">
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-violet-500 to-fuchsia-600 shadow-xl shadow-violet-500/30 glow-aurora">
           <LogIn className="h-8 w-8 text-white" />
         </div>
         <h1 className="mb-1 text-xl font-bold">Login required</h1>
@@ -81,10 +81,10 @@ export function DashboardView({
         animate={{ opacity: 1, y: 0 }}
         className="relative overflow-hidden rounded-3xl border bg-card p-5 shadow-sm sm:p-6"
       >
-        <div className="aurora-blob -right-16 -top-20 h-56 w-56 bg-indigo-400/40 dark:bg-indigo-600/20" />
+        <div className="aurora-blob -right-16 -top-20 h-56 w-56 bg-violet-400/40 dark:bg-violet-600/20" />
         <div className="aurora-blob -left-10 -bottom-10 h-40 w-40 bg-amber-400/30 dark:bg-amber-600/15" />
         <div className="relative flex flex-wrap items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-amber-600 text-white shadow-lg shadow-indigo-500/30">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-lg shadow-violet-500/30">
             {meta && meta.icon ? <meta.icon className="h-6 w-6" /> : <GraduationCap className="h-6 w-6" />}
           </div>
           <div className="min-w-0 flex-1">

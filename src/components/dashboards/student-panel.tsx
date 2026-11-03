@@ -118,7 +118,7 @@ const CHANGE_BORDER: Record<string, string> = {
 const EVENT_BADGE: Record<string, string> = {
   holiday: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
   exam: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300",
-  event: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300",
+  event: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
   class: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
 };
 
@@ -127,7 +127,7 @@ function gradeBadgeCls(grade: string | null): string {
   if (grade.startsWith("A+"))
     return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
   if (grade.startsWith("A"))
-    return "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300";
+    return "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300";
   if (grade.startsWith("B"))
     return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
   if (grade.startsWith("F"))
@@ -349,7 +349,7 @@ export function StudentPanel() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 to-amber-600 p-5 text-white shadow-lg shadow-indigo-500/25 sm:p-7"
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-600 p-5 text-white shadow-lg shadow-violet-500/25 sm:p-7"
         aria-label="Student profile summary"
       >
         <div
@@ -388,7 +388,7 @@ export function StudentPanel() {
           </div>
           <div
             aria-hidden
-            className="hidden h-20 w-20 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-indigo-500 text-2xl font-extrabold shadow-xl ring-4 ring-white/30 md:flex"
+            className="hidden h-20 w-20 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-2xl font-extrabold shadow-xl ring-4 ring-white/30 md:flex"
           >
             {initials(fullName)}
           </div>
@@ -480,7 +480,7 @@ export function StudentPanel() {
                       <div className="flex flex-col items-center">
                         <span
                           aria-hidden
-                          className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 to-amber-500 shadow"
+                          className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow"
                         />
                         {i < todayList.length - 1 && (
                           <span aria-hidden className="mt-1 w-px flex-1 bg-border" />
@@ -622,7 +622,7 @@ export function StudentPanel() {
                             onClick={() =>
                               setExpandedNotices((prev) => ({ ...prev, [n.id]: !prev[n.id] }))
                             }
-                            className="mt-1 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+                            className="mt-1 text-xs font-semibold text-violet-600 hover:underline dark:text-violet-400"
                           >
                             {isExpanded ? "Show less" : "Show more"}
                           </button>
@@ -672,7 +672,7 @@ export function StudentPanel() {
                           <h4 className="min-w-0 text-sm font-bold leading-snug">{a.title}</h4>
                           <Badge
                             variant="outline"
-                            className="shrink-0 border-indigo-300 text-indigo-700 dark:border-indigo-800 dark:text-indigo-300"
+                            className="shrink-0 border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300"
                           >
                             {a.courseCode ?? "Course"}
                           </Badge>

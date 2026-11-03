@@ -63,7 +63,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
       transition={{ duration: 0.4, ease: "easeOut" }}
       className={`sticky top-0 z-50 w-full border-b transition-all duration-300 ${
         scrolled
-          ? "bg-background/80 backdrop-blur-xl border-indigo-200/50 dark:border-indigo-900/50 shadow-sm"
+          ? "bg-background/80 backdrop-blur-xl border-violet-200/50 dark:border-violet-900/50 shadow-sm"
           : "bg-transparent border-transparent"
       }`}
     >
@@ -75,13 +75,13 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
           aria-label="Go to home"
         >
           <div className="relative">
-            <div className="absolute inset-0 rounded-2xl bg-indigo-500/25 blur-md group-hover:bg-indigo-500/40 transition-colors" />
-            <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 to-amber-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 group-hover:scale-105 transition-transform">
+            <div className="absolute inset-0 rounded-2xl bg-violet-500/25 blur-md group-hover:bg-violet-500/40 transition-colors" />
+            <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center shadow-lg shadow-violet-500/30 group-hover:scale-105 transition-transform">
               <GraduationCap className="w-5.5 h-5.5 text-white" strokeWidth={2.2} />
             </div>
           </div>
           <div className="text-left hidden min-[380px]:block">
-            <div className="font-bold text-lg leading-tight bg-gradient-to-r from-indigo-600 to-amber-600 bg-clip-text text-transparent">
+            <div className="font-display font-bold text-lg leading-tight bg-gradient-to-r from-violet-600 to-fuchsia-600 bg-clip-text text-transparent">
               UniversityHub
             </div>
             <div className="text-[10px] text-muted-foreground leading-tight">
@@ -91,15 +91,15 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
         </button>
 
         {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-1 bg-secondary/60 rounded-full px-2 py-1.5 border border-indigo-200/40 dark:border-indigo-900/40">
+        <nav className="hidden md:flex items-center gap-1 bg-secondary/60 rounded-full px-2 py-1.5 border border-violet-200/40 dark:border-violet-900/40">
           {NAV_ITEMS.map((item) => (
             <button
               key={item.view}
               onClick={() => navigate(item.view)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
+              className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
                 view === item.view
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
-                  : "text-foreground/70 hover:text-indigo-700 hover:bg-indigo-100/60 dark:hover:bg-indigo-900/30"
+                  ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-md shadow-violet-600/30"
+                  : "text-foreground/70 hover:text-violet-700 hover:bg-violet-500/10 dark:hover:text-violet-300 dark:hover:bg-violet-400/10"
               }`}
             >
               {item.label}
@@ -108,10 +108,10 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
           {user && (
             <button
               onClick={() => navigate("dashboard")}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
+              className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
                 view === "dashboard"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
-                  : "text-foreground/70 hover:text-indigo-700 hover:bg-indigo-100/60 dark:hover:bg-indigo-900/30"
+                  ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-md shadow-violet-600/30"
+                  : "text-foreground/70 hover:text-violet-700 hover:bg-violet-500/10 dark:hover:text-violet-300 dark:hover:bg-violet-400/10"
               }`}
             >
               Dashboard
@@ -139,11 +139,11 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="outline-none ring-indigo-500 focus-visible:ring-2 rounded-full"
+                  className="outline-none ring-violet-500 focus-visible:ring-2 rounded-full"
                   aria-label="Account menu"
                 >
-                  <Avatar className="w-9 h-9 border-2 border-indigo-500/60 shadow-md shadow-indigo-500/20">
-                    <AvatarFallback className="bg-gradient-to-br from-indigo-500 to-amber-600 text-white text-xs font-bold">
+                  <Avatar className="w-9 h-9 border-2 border-violet-500/60 shadow-md shadow-violet-500/20">
+                    <AvatarFallback className="bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white text-xs font-bold">
                       {initials || "U"}
                     </AvatarFallback>
                   </Avatar>
@@ -176,7 +176,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
           ) : (
             <Button
               onClick={() => navigate("login")}
-              className="rounded-full bg-gradient-to-r from-indigo-500 to-amber-600 hover:from-indigo-600 hover:to-amber-700 text-white shadow-lg shadow-indigo-500/25 px-4 sm:px-5"
+              className="rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white shadow-lg shadow-violet-500/25 px-4 sm:px-5"
             >
               Login
             </Button>

@@ -634,7 +634,7 @@ export function SuperAdminPanel() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
       >
-        <header className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 via-amber-600 to-indigo-600 p-5 text-white shadow-lg shadow-indigo-500/25 sm:p-7">
+        <header className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-violet-600 p-5 text-white shadow-lg shadow-violet-500/25 sm:p-7">
           <div
             aria-hidden
             className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl"
@@ -808,7 +808,7 @@ export function SuperAdminPanel() {
 
                     <div className="mt-3 flex flex-wrap items-center gap-1.5">
                       {u.shortName && (
-                        <Badge className="bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+                        <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
                           {u.shortName}
                         </Badge>
                       )}
@@ -963,7 +963,7 @@ export function SuperAdminPanel() {
                       </div>
 
                       {/* price + limits summary */}
-                      <div className="mt-3 rounded-xl bg-gradient-to-r from-indigo-50 to-amber-50 p-3 text-center dark:from-indigo-950/40 dark:to-amber-950/40">
+                      <div className="mt-3 rounded-xl bg-gradient-to-r from-violet-50 to-fuchsia-50 p-3 text-center dark:from-violet-950/40 dark:to-fuchsia-950/40">
                         {isFree ? (
                           <p className="text-xl font-extrabold text-amber-600">
                             ৳0 <span className="text-xs font-medium">forever</span>

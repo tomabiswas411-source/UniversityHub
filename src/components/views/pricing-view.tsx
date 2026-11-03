@@ -56,15 +56,15 @@ export function PricingView({ navigate }: PricingViewProps) {
         animate={{ opacity: 1, y: 0 }}
         className="text-center mb-8"
       >
-        <Badge className="mb-3 bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border-0">
+        <Badge className="mb-3 bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 border-0">
           <Sparkles className="w-3 h-3 mr-1" /> Subscription Plans
         </Badge>
-        <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-indigo-600 to-amber-600 bg-clip-text text-transparent">
+        <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-violet-600 to-fuchsia-600 bg-clip-text text-transparent">
           Simple, Scalable Pricing
         </h1>
         <p className="text-muted-foreground mt-2 max-w-xl mx-auto text-sm sm:text-base">
           Per-university subscription based on departments & students.
-          <span className="font-semibold text-indigo-700 dark:text-indigo-400">
+          <span className="font-semibold text-violet-700 dark:text-violet-400">
             {" "}
             Currently free for early adopters
           </span>{" "}
@@ -72,12 +72,12 @@ export function PricingView({ navigate }: PricingViewProps) {
         </p>
 
         {/* Billing toggle */}
-        <div className="inline-flex items-center gap-1 mt-5 bg-secondary/70 rounded-full p-1 border border-indigo-200/40 dark:border-indigo-900/40">
+        <div className="inline-flex items-center gap-1 mt-5 bg-secondary/70 rounded-full p-1 border border-violet-200/40 dark:border-violet-900/40">
           <button
             onClick={() => setYearly(false)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
+            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
               !yearly
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
+                ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-md shadow-violet-600/25"
                 : "text-muted-foreground"
             }`}
           >
@@ -85,9 +85,9 @@ export function PricingView({ navigate }: PricingViewProps) {
           </button>
           <button
             onClick={() => setYearly(true)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
+            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
               yearly
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
+                ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-md shadow-violet-600/25"
                 : "text-muted-foreground"
             }`}
           >
@@ -129,7 +129,7 @@ export function PricingView({ navigate }: PricingViewProps) {
               >
                 {isRecommended && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
-                    <Badge className="bg-gradient-to-r from-indigo-500 to-amber-600 text-white border-0 shadow-lg shadow-indigo-500/30">
+                    <Badge className="bg-gradient-to-r from-violet-500 to-fuchsia-600 text-white border-0 shadow-lg shadow-violet-500/30">
                       ⭐ Most Popular
                     </Badge>
                   </div>
@@ -137,12 +137,12 @@ export function PricingView({ navigate }: PricingViewProps) {
                 <Card
                   className={`h-full rounded-3xl overflow-hidden transition-shadow ${
                     isRecommended
-                      ? "border-2 border-indigo-500 shadow-xl shadow-indigo-500/20"
+                      ? "border-2 border-violet-500 shadow-xl shadow-violet-500/20"
                       : "hover:shadow-lg"
                   }`}
                 >
                   {isRecommended && (
-                    <div className="h-1.5 bg-gradient-to-r from-indigo-500 via-amber-500 to-indigo-500" />
+                    <div className="h-1.5 bg-gradient-to-r from-violet-500 via-fuchsia-500 to-violet-500" />
                   )}
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
@@ -155,7 +155,7 @@ export function PricingView({ navigate }: PricingViewProps) {
                       {plan.tagline}
                     </p>
                     <div className="pt-3">
-                      <span className="text-4xl font-extrabold tracking-tight">
+                      <span className="font-display text-4xl font-extrabold tracking-tight">
                         ৳{price === 0 ? "0" : price.toLocaleString()}
                       </span>
                       <span className="text-sm text-muted-foreground ml-1">
@@ -165,21 +165,21 @@ export function PricingView({ navigate }: PricingViewProps) {
                   </CardHeader>
                   <CardContent className="space-y-2.5 text-sm">
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      <Building2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <Building2 className="w-4 h-4 text-violet-600 shrink-0" />
                       {formatLimit(plan.maxDepartments)} departments
                     </div>
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      <Users className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <Users className="w-4 h-4 text-violet-600 shrink-0" />
                       {formatLimit(plan.maxTeachers)} teachers
                     </div>
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      <GraduationCap className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <GraduationCap className="w-4 h-4 text-violet-600 shrink-0" />
                       {formatLimit(plan.maxStudents)} students
                     </div>
                     <div className="pt-2 border-t my-2" />
                     {plan.features.map((f) => (
                       <div key={f} className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <Check className="w-4 h-4 text-violet-600 shrink-0 mt-0.5" />
                         <span className="text-muted-foreground">{f}</span>
                       </div>
                     ))}
@@ -188,8 +188,8 @@ export function PricingView({ navigate }: PricingViewProps) {
                     <Button
                       className={`w-full h-11 rounded-xl ${
                         isRecommended
-                          ? "bg-gradient-to-r from-indigo-500 to-amber-600 hover:from-indigo-600 hover:to-amber-700 text-white shadow-lg shadow-indigo-500/25"
-                          : "bg-indigo-600/10 text-indigo-700 hover:bg-indigo-600/20 dark:text-indigo-400"
+                          ? "bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white shadow-lg shadow-violet-500/25"
+                          : "bg-violet-600/10 text-violet-700 hover:bg-violet-600/20 dark:text-violet-400"
                       }`}
                       onClick={() => navigate("login")}
                     >

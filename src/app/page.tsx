@@ -42,11 +42,11 @@ function AppShell() {
 
   if (booting || !initialized) {
     return (
-      <div className="min-h-screen flex flex-col bg-gradient-to-b from-indigo-50/60 via-background to-background dark:from-indigo-950/20">
+      <div className="min-h-screen flex flex-col bg-gradient-to-b from-violet-50/60 via-background to-background dark:from-violet-950/20">
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <div className="relative">
-            <div className="absolute inset-0 rounded-3xl bg-indigo-500/20 blur-2xl animate-pulse" />
-            <div className="relative w-16 h-16 rounded-3xl bg-gradient-to-br from-indigo-500 to-amber-600 flex items-center justify-center shadow-xl shadow-indigo-500/30">
+            <div className="absolute inset-0 rounded-3xl bg-violet-500/20 blur-2xl animate-pulse" />
+            <div className="relative w-16 h-16 rounded-3xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center shadow-xl shadow-violet-500/30">
               <GraduationCap className="w-8 h-8 text-white" />
             </div>
           </div>
@@ -60,14 +60,14 @@ function AppShell() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-indigo-50/60 via-background to-background dark:from-indigo-950/20">
+    <div className="min-h-screen flex flex-col bg-gradient-to-b from-violet-50/60 via-background to-background dark:from-violet-950/20">
       <SiteHeader view={view} navigate={navigate} />
 
       <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 pb-24 md:pb-8">
         <Suspense
           fallback={
             <div className="flex items-center justify-center py-24">
-              <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+              <Loader2 className="w-8 h-8 animate-spin text-violet-600" />
             </div>
           }
         >
@@ -92,7 +92,7 @@ export default function Page() {
     <Suspense
       fallback={
         <div className="min-h-screen flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+          <Loader2 className="w-8 h-8 animate-spin text-violet-600" />
         </div>
       }
     >

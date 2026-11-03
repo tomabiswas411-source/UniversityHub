@@ -136,10 +136,10 @@ interface CourseSkin {
 
 const COURSE_SKINS: CourseSkin[] = [
   {
-    wrap: "bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-200/80 dark:border-indigo-800/60",
-    text: "text-indigo-800 dark:text-indigo-200",
-    sub: "text-indigo-700/80 dark:text-indigo-300/80",
-    dot: "bg-indigo-500",
+    wrap: "bg-violet-50/80 dark:bg-violet-950/40 border-violet-200/80 dark:border-violet-800/60",
+    text: "text-violet-800 dark:text-violet-200",
+    sub: "text-violet-700/80 dark:text-violet-300/80",
+    dot: "bg-violet-500",
   },
   {
     wrap: "bg-amber-50/80 dark:bg-amber-950/40 border-amber-200/80 dark:border-amber-800/60",
@@ -148,16 +148,16 @@ const COURSE_SKINS: CourseSkin[] = [
     dot: "bg-amber-500",
   },
   {
-    wrap: "bg-amber-50/80 dark:bg-amber-950/40 border-amber-200/80 dark:border-amber-800/60",
-    text: "text-amber-800 dark:text-amber-200",
-    sub: "text-amber-700/80 dark:text-amber-300/80",
-    dot: "bg-amber-500",
+    wrap: "bg-fuchsia-50/80 dark:bg-fuchsia-950/40 border-fuchsia-200/80 dark:border-fuchsia-800/60",
+    text: "text-fuchsia-800 dark:text-fuchsia-200",
+    sub: "text-fuchsia-700/80 dark:text-fuchsia-300/80",
+    dot: "bg-fuchsia-500",
   },
   {
-    wrap: "bg-orange-50/80 dark:bg-orange-950/40 border-orange-200/80 dark:border-orange-800/60",
-    text: "text-orange-800 dark:text-orange-200",
-    sub: "text-orange-700/80 dark:text-orange-300/80",
-    dot: "bg-orange-500",
+    wrap: "bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-200/80 dark:border-emerald-800/60",
+    text: "text-emerald-800 dark:text-emerald-200",
+    sub: "text-emerald-700/80 dark:text-emerald-300/80",
+    dot: "bg-emerald-500",
   },
   {
     wrap: "bg-purple-50/80 dark:bg-purple-950/40 border-purple-200/80 dark:border-purple-800/60",
@@ -296,7 +296,7 @@ const NOTICE_CATEGORIES: Record<
   academic: {
     label: "Academic",
     icon: BookOpen,
-    chip: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300",
+    chip: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
   },
   general: {
     label: "General",
@@ -372,9 +372,9 @@ function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-dashed border-indigo-200/70 px-6 py-12 text-center dark:border-indigo-900/60">
-      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/15 to-amber-600/15 dark:from-indigo-500/20 dark:to-amber-600/20">
-        <Icon className="h-7 w-7 text-indigo-600 dark:text-indigo-400" />
+    <div className="rounded-2xl border border-dashed border-violet-200/70 px-6 py-12 text-center dark:border-violet-900/60">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500/15 to-fuchsia-600/15 dark:from-violet-500/20 dark:to-fuchsia-600/20">
+        <Icon className="h-7 w-7 text-violet-600 dark:text-violet-400" />
       </div>
       <p className="mt-3 font-semibold">{title}</p>
       {hint ? (
@@ -403,7 +403,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
       </p>
       <Button
         onClick={onRetry}
-        className="mt-5 h-11 rounded-xl bg-gradient-to-r from-indigo-500 to-amber-600 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-600 hover:to-amber-700"
+        className="mt-5 h-11 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-600 text-white shadow-lg shadow-violet-500/25 hover:from-violet-600 hover:to-fuchsia-700"
       >
         <RefreshCcw className="h-4 w-4" /> Try again
       </Button>
@@ -767,7 +767,7 @@ export function DepartmentView({
           action={
             <Button
               onClick={() => navigate("home")}
-              className="h-11 rounded-xl bg-gradient-to-r from-indigo-500 to-amber-600 px-6 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-600 hover:to-amber-700"
+              className="h-11 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-600 px-6 text-white shadow-lg shadow-violet-500/25 hover:from-violet-600 hover:to-fuchsia-700"
             >
               <ArrowLeft className="h-4 w-4" /> All Universities
             </Button>
@@ -820,17 +820,17 @@ export function DepartmentView({
         <Button
           variant="ghost"
           onClick={() => navigate("home")}
-          className="-ml-2 mb-3 h-10 rounded-lg text-muted-foreground hover:text-indigo-700 dark:hover:text-indigo-300"
+          className="-ml-2 mb-3 h-10 rounded-lg text-muted-foreground hover:text-violet-700 dark:hover:text-violet-300"
         >
           <ArrowLeft className="h-4 w-4" /> All Universities
         </Button>
 
-        <Card className="gap-0 overflow-hidden rounded-2xl border-indigo-100/80 py-0 shadow-md shadow-indigo-500/5 dark:border-indigo-900/50">
+        <Card className="gap-0 overflow-hidden rounded-2xl border-violet-100/80 py-0 shadow-md shadow-violet-500/5 dark:border-violet-900/50">
           <CardContent className="p-4 sm:p-6">
             <div className="flex items-start gap-4">
               <div className="relative shrink-0">
-                <div className="absolute inset-0 rounded-2xl bg-indigo-500/25 blur-md" />
-                <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-amber-600 text-lg font-extrabold text-white shadow-lg shadow-indigo-500/30">
+                <div className="absolute inset-0 rounded-2xl bg-violet-500/25 blur-md" />
+                <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-lg font-extrabold text-white shadow-lg shadow-violet-500/30">
                   {department.shortName.slice(0, 4).toUpperCase()}
                 </div>
               </div>
@@ -840,12 +840,12 @@ export function DepartmentView({
                 </h1>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                   <span className="inline-flex items-center gap-1">
-                    <Building2 className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                    <Building2 className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
                     <span className="truncate">{department.universityName}</span>
                   </span>
                   {department.building ? (
                     <span className="inline-flex items-center gap-1">
-                      <MapPin className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                      <MapPin className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
                       <span className="truncate">{department.building}</span>
                     </span>
                   ) : null}
@@ -862,7 +862,7 @@ export function DepartmentView({
               {headerChips.map((chip) => (
                 <span
                   key={chip.label}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-indigo-100/80 bg-indigo-50/60 px-3 py-1.5 text-xs font-semibold text-indigo-800 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-violet-100/80 bg-violet-50/60 px-3 py-1.5 text-xs font-semibold text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
                 >
                   <chip.icon className="h-3.5 w-3.5" />
                   {chip.value} {chip.label}
@@ -876,7 +876,7 @@ export function DepartmentView({
       {/* ------------------------------ CONTROLS ------------------------------ */}
       <motion.div
         variants={riseIn}
-        className="sticky top-16 z-30 -mx-3 border-b bg-background/85 px-3 py-2.5 backdrop-blur-md sm:static sm:mx-0 sm:rounded-2xl sm:border sm:border-indigo-100/80 sm:px-4 sm:py-3 sm:backdrop-blur-0 dark:sm:border-indigo-900/50"
+        className="sticky top-16 z-30 -mx-3 border-b bg-background/85 px-3 py-2.5 backdrop-blur-md sm:static sm:mx-0 sm:rounded-2xl sm:border sm:border-violet-100/80 sm:px-4 sm:py-3 sm:backdrop-blur-0 dark:sm:border-violet-900/50"
       >
         <div className="flex flex-wrap items-center gap-2">
           {programs.length > 0 ? (
@@ -919,10 +919,10 @@ export function DepartmentView({
           )}
 
           {refreshing ? (
-            <Loader2 className="h-4 w-4 animate-spin text-indigo-600 dark:text-indigo-400" />
+            <Loader2 className="h-4 w-4 animate-spin text-violet-600 dark:text-violet-400" />
           ) : null}
 
-          <div className="ml-auto flex items-center gap-1 rounded-xl border border-indigo-100/80 bg-secondary/50 p-1 dark:border-indigo-900/60">
+          <div className="ml-auto flex items-center gap-1 rounded-xl border border-violet-100/80 bg-secondary/50 p-1 dark:border-violet-900/60">
             {VIEW_MODES.map((m) => (
               <Tooltip key={m.key}>
                 <TooltipTrigger asChild>
@@ -934,8 +934,8 @@ export function DepartmentView({
                     className={cn(
                       "flex h-9 w-11 items-center justify-center rounded-lg transition-all sm:h-8 sm:w-9",
                       viewMode === m.key
-                        ? "bg-gradient-to-r from-indigo-500 to-amber-600 text-white shadow-md shadow-indigo-500/25"
-                        : "text-muted-foreground hover:bg-indigo-100/60 hover:text-indigo-700 dark:hover:bg-indigo-900/40 dark:hover:text-indigo-300"
+                        ? "bg-gradient-to-r from-violet-500 to-fuchsia-600 text-white shadow-md shadow-violet-500/25"
+                        : "text-muted-foreground hover:bg-violet-100/60 hover:text-violet-700 dark:hover:bg-violet-900/40 dark:hover:text-violet-300"
                     )}
                   >
                     <m.icon className="h-4 w-4" />
@@ -972,8 +972,8 @@ export function DepartmentView({
       {/* ------------------------------ TODAY ------------------------------ */}
       <motion.div variants={riseIn}>
         {todayDow === "friday" || todaySchedules.length === 0 ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-indigo-100/80 bg-card p-4 dark:border-indigo-900/50">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/15 to-amber-600/15 text-xl dark:from-indigo-500/20 dark:to-amber-600/20">
+          <div className="flex items-center gap-3 rounded-2xl border border-violet-100/80 bg-card p-4 dark:border-violet-900/50">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/15 to-fuchsia-600/15 text-xl dark:from-violet-500/20 dark:to-fuchsia-600/20">
               🎉
             </div>
             <div className="min-w-0">
@@ -987,7 +987,7 @@ export function DepartmentView({
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-indigo-500 to-amber-600 p-4 text-white shadow-lg shadow-indigo-500/25">
+          <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-violet-500 to-fuchsia-600 p-4 text-white shadow-lg shadow-violet-500/25">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/15">
               <CalendarDays className="h-6 w-6" />
             </div>
@@ -1047,7 +1047,7 @@ export function DepartmentView({
                       </span>
                     </div>
                     <p className="mt-2 text-sm font-bold">
-                      <span className="text-indigo-700 dark:text-indigo-300">
+                      <span className="text-violet-700 dark:text-violet-300">
                         {c.courseCode}
                       </span>{" "}
                       · {c.courseName}
@@ -1106,7 +1106,7 @@ export function DepartmentView({
                 >
                   {/* ---------- GRID MODE ---------- */}
                   {viewMode === "grid" ? (
-                    <div className="overflow-x-auto rounded-2xl border border-indigo-100/80 bg-card shadow-sm dark:border-indigo-900/50">
+                    <div className="overflow-x-auto rounded-2xl border border-violet-100/80 bg-card shadow-sm dark:border-violet-900/50">
                       <table className="w-full min-w-[840px] border-collapse text-sm">
                         <thead>
                           <tr>
@@ -1119,13 +1119,13 @@ export function DepartmentView({
                                 className={cn(
                                   "border-b px-2 py-3 text-center text-xs font-bold",
                                   d === todayDow
-                                    ? "bg-indigo-50/70 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300"
+                                    ? "bg-violet-50/70 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300"
                                     : "text-muted-foreground"
                                 )}
                               >
                                 {DAY_LABELS[d]}
                                 {d === todayDow ? (
-                                  <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-indigo-500 align-middle" />
+                                  <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle" />
                                 ) : null}
                               </th>
                             ))}
@@ -1163,7 +1163,7 @@ export function DepartmentView({
                                       className={cn(
                                         "border-b border-l px-1.5 py-1.5 align-top",
                                         day === todayDow &&
-                                          "bg-indigo-50/40 dark:bg-indigo-950/20"
+                                          "bg-violet-50/40 dark:bg-violet-950/20"
                                       )}
                                     >
                                       {items.map((sched) => (
@@ -1199,7 +1199,7 @@ export function DepartmentView({
                                 className={cn(
                                   "flex h-8 items-center rounded-lg px-3 text-sm font-bold",
                                   day === todayDow
-                                    ? "bg-gradient-to-r from-indigo-500 to-amber-600 text-white shadow-md shadow-indigo-500/25"
+                                    ? "bg-gradient-to-r from-violet-500 to-fuchsia-600 text-white shadow-md shadow-violet-500/25"
                                     : "bg-secondary/70"
                                 )}
                               >
@@ -1209,7 +1209,7 @@ export function DepartmentView({
                                 {items.length} class{items.length !== 1 ? "es" : ""}
                               </span>
                               {day === todayDow ? (
-                                <Badge className="rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                                <Badge className="rounded-full bg-violet-100 text-[10px] font-bold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
                                   TODAY
                                 </Badge>
                               ) : null}
@@ -1242,12 +1242,12 @@ export function DepartmentView({
                                 {DAY_LABELS[day]}
                               </h3>
                               {day === todayDow ? (
-                                <Badge className="rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                                <Badge className="rounded-full bg-violet-100 text-[10px] font-bold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
                                   TODAY
                                 </Badge>
                               ) : null}
                             </div>
-                            <div className="divide-y overflow-hidden rounded-xl border border-indigo-100/80 bg-card shadow-sm dark:border-indigo-900/50">
+                            <div className="divide-y overflow-hidden rounded-xl border border-violet-100/80 bg-card shadow-sm dark:border-violet-900/50">
                               {items.map((sched) => (
                                 <ListRow
                                   key={sched.id}
@@ -1271,7 +1271,7 @@ export function DepartmentView({
       {/* ------------------------------ NOTICES ------------------------------ */}
       <motion.section variants={riseIn}>
         <div className="mb-4 flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-amber-600 text-white shadow-md shadow-indigo-500/25">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-md shadow-violet-500/25">
             <Info className="h-5 w-5" />
           </div>
           <h2 className="text-lg font-bold sm:text-xl">Notices</h2>
@@ -1298,7 +1298,7 @@ export function DepartmentView({
               const long = n.content.length > 180;
               return (
                 <motion.div key={n.id} whileHover={{ y: -2 }}>
-                  <Card className="h-full gap-0 rounded-2xl border-indigo-100/80 py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-indigo-500/10 dark:border-indigo-900/50">
+                  <Card className="h-full gap-0 rounded-2xl border-violet-100/80 py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-violet-500/10 dark:border-violet-900/50">
                     <CardContent className="flex h-full flex-col p-4 sm:p-5">
                       <div className="flex items-start gap-3">
                         <span
@@ -1345,7 +1345,7 @@ export function DepartmentView({
                             variant="ghost"
                             size="sm"
                             onClick={() => setOpenNotice(n)}
-                            className="-mr-2 h-8 shrink-0 text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-300"
+                            className="-mr-2 h-8 shrink-0 text-violet-600 hover:bg-violet-50 hover:text-violet-700 dark:hover:bg-violet-950/40 dark:hover:text-violet-300"
                           >
                             Read more <ArrowRight className="h-3.5 w-3.5" />
                           </Button>
@@ -1363,7 +1363,7 @@ export function DepartmentView({
       {/* ------------------------------ TEACHERS ------------------------------ */}
       <motion.section variants={riseIn}>
         <div className="mb-4 flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-amber-600 text-white shadow-md shadow-indigo-500/25">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-md shadow-violet-500/25">
             <Users className="h-5 w-5" />
           </div>
           <h2 className="text-lg font-bold sm:text-xl">Faculty Members</h2>
@@ -1387,14 +1387,14 @@ export function DepartmentView({
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {teachers.map((t) => (
               <motion.div key={t.id} whileHover={{ y: -3 }}>
-                <Card className="h-full gap-0 rounded-2xl border-indigo-100/80 py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-indigo-500/10 dark:border-indigo-900/50">
+                <Card className="h-full gap-0 rounded-2xl border-violet-100/80 py-0 shadow-sm transition-shadow hover:shadow-lg hover:shadow-violet-500/10 dark:border-violet-900/50">
                   <CardContent className="flex h-full flex-col p-4 sm:p-5">
                     <div className="flex items-center gap-3">
-                      <Avatar className="h-12 w-12 border-2 border-indigo-500/40 shadow-md shadow-indigo-500/15">
+                      <Avatar className="h-12 w-12 border-2 border-violet-500/40 shadow-md shadow-violet-500/15">
                         {t.photoURL ? (
                           <AvatarImage src={t.photoURL} alt={t.fullName} />
                         ) : null}
-                        <AvatarFallback className="bg-gradient-to-br from-indigo-500 to-amber-600 text-sm font-bold text-white">
+                        <AvatarFallback className="bg-gradient-to-br from-violet-500 to-fuchsia-600 text-sm font-bold text-white">
                           {teacherInitials(t.fullName)}
                         </AvatarFallback>
                       </Avatar>
@@ -1405,7 +1405,7 @@ export function DepartmentView({
                         {t.designation ? (
                           <Badge
                             variant="secondary"
-                            className="mt-1 max-w-full rounded-full bg-indigo-100/80 text-[10px] font-semibold text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300"
+                            className="mt-1 max-w-full rounded-full bg-violet-100/80 text-[10px] font-semibold text-violet-800 dark:bg-violet-950/60 dark:text-violet-300"
                           >
                             <span className="truncate">{t.designation}</span>
                           </Badge>
@@ -1420,25 +1420,25 @@ export function DepartmentView({
                     <div className="mt-3 space-y-1.5 text-xs text-muted-foreground">
                       {t.officeRoom ? (
                         <p className="flex items-center gap-1.5">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                          <MapPin className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-400" />
                           <span className="truncate">{t.officeRoom}</span>
                         </p>
                       ) : null}
                       {t.email ? (
                         <a
                           href={`mailto:${t.email}`}
-                          className="flex min-h-[20px] items-center gap-1.5 transition-colors hover:text-indigo-600 dark:hover:text-indigo-300"
+                          className="flex min-h-[20px] items-center gap-1.5 transition-colors hover:text-violet-600 dark:hover:text-violet-300"
                         >
-                          <Mail className="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                          <Mail className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-400" />
                           <span className="truncate">{t.email}</span>
                         </a>
                       ) : null}
                       {t.phone ? (
                         <a
                           href={`tel:${t.phone}`}
-                          className="flex min-h-[20px] items-center gap-1.5 transition-colors hover:text-indigo-600 dark:hover:text-indigo-300"
+                          className="flex min-h-[20px] items-center gap-1.5 transition-colors hover:text-violet-600 dark:hover:text-violet-300"
                         >
-                          <Phone className="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                          <Phone className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-400" />
                           <span className="truncate">{t.phone}</span>
                         </a>
                       ) : null}
