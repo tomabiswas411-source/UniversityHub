@@ -34,6 +34,9 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { timeAgo } from "@/components/shared/notification-bell";
 import { QRAttendanceCard } from "@/components/dashboards/qr-attendance-card";
+import { RoomFinder } from "@/components/dashboards/teacher-room-finder";
+import { TeacherStudentsTab } from "@/components/dashboards/teacher-students-tab";
+import { TeacherDocumentsTab } from "@/components/dashboards/teacher-documents-tab";
 import {
  ChangeTypeBadge,
  CategoryBadge,
@@ -98,6 +101,7 @@ import type {
  CourseDTO,
  NoticeDTO,
  ResultDTO,
+ RoomDTO,
  ScheduleChangeDTO,
  ScheduleDTO,
  TimeSlotDTO,
@@ -106,8 +110,8 @@ import { DAYS_OF_WEEK, DAY_LABELS } from "@/types";
 
 /* ============================================================
  TeacherPanel — "Aurora Royale" teacher cockpit
- Tabs: My Schedule · Attendance · Class Changes · Assignments ·
- Results · Notices · Insights
+ Tabs: My Schedule · Attendance · Class Changes · Students ·
+ Assignments · Results · Notices · Documents · Insights
 ============================================================ */
 
 type ResultRow = ResultDTO & {
@@ -115,7 +119,7 @@ type ResultRow = ResultDTO & {
 };
 type StudentRow = { id: string; fullName: string; rollNumber: string | null; studentIdNumber: string };
 type AssignmentRow = AssignmentDTO & { course?: { code: string; name: string } };
-type ChangeFormType = "cancelled" | "rescheduled" | "extra_class";
+type ChangeFormType = "cancelled" | "rescheduled" | "room_changed" | "time_changed" | "extra_class";
 
 const EXAM_LABELS: Record<string, string> = { ct1: "CT-1", ct2: "CT-2", midterm: "Midterm", final: "Final" };
 
@@ -212,7 +216,9 @@ export function TeacherPanel() {
  const [schedules, setSchedules] = useState<ScheduleDTO[]>([]);
  const [courses, setCourses] = useState<CourseDTO[]>([]);
  const [changes, setChanges] = useState<ScheduleChangeDTO[]>([]);
- const [stats, setStats] = useState({ totalClasses: 0, todayClasses: 0, totalCourses: 0 });
+ const [rooms, setRooms] = useState<RoomDTO[]>([]);
+ const [timeSlots, setTimeSlots] = useState<TimeSlotDTO[]>([]);
+ const [stats, setStats] = useState({ totalClasses: 0, todayClasses: 0, totalCourses: 0, myStudents: 0 });
  const [activeTab, setActiveTab] = useState("schedule");
 
  /* ---------------- insights (Day 42, lazy-loaded) ---------------- */
@@ -440,12 +446,23 @@ export function TeacherPanel() {
  schedules: ScheduleDTO[];
  courses: CourseDTO[];
  changes: ScheduleChangeDTO[];
- stats: { totalClasses: number; todayClasses: number; totalCourses: number };
+ rooms: RoomDTO[];
+ timeSlots: TimeSlotDTO[];
+ stats: { totalClasses: number; todayClasses: number; totalCourses: number; myStudents: number };
  }>("/api/teacher/overview");
  setSchedules(data.schedules);
  setCourses(data.courses);
  setChanges(data.changes);
- setStats(data.stats ?? { totalClasses: data.schedules.length, todayClasses: 0, totalCourses: data.courses.length });
+ setRooms(data.rooms ?? []);
+ setTimeSlots(data.timeSlots ?? []);
+ setStats(
+ data.stats ?? {
+ totalClasses: data.schedules.length,
+ todayClasses: 0,
+ totalCourses: data.courses.length,
+ myStudents: 0,
+ }
+ );
  } catch (err) {
  toast({ title: "Failed to load dashboard", description: errMsg(err), variant: "destructive" });
  } finally {
@@ -509,9 +526,21 @@ export function TeacherPanel() {
  const [ccScheduleId, setCcScheduleId] = useState("");
  const [ccType, setCcType] = useState<ChangeFormType>("cancelled");
  const [ccDay, setCcDay] = useState("");
+ const [ccSlot, setCcSlot] = useState("keep"); // "keep" | timeSlotId
+ const [ccRoom, setCcRoom] = useState("keep"); // "keep" | roomId
  const [ccDate, setCcDate] = useState(() => todayISO());
  const [ccReason, setCcReason] = useState("");
  const [ccSubmitting, setCcSubmitting] = useState(false);
+
+ const ccSchedule = useMemo(
+ () => schedules.find((s) => s.id === ccScheduleId) ?? null,
+ [schedules, ccScheduleId]
+ );
+ const showDay = ccType === "rescheduled" || ccType === "extra_class";
+ const showSlot = ccType === "rescheduled" || ccType === "time_changed" || ccType === "extra_class";
+ const showRoom = ccType !== "cancelled";
+ const slotOptional = ccType === "rescheduled";
+ const roomOptional = ccType !== "room_changed";
 
  async function submitChange(e: FormEvent<HTMLFormElement>) {
  e.preventDefault();
@@ -519,8 +548,16 @@ export function TeacherPanel() {
  toast({ title: "Pick a class", description: "Select which class you want to change.", variant: "destructive" });
  return;
  }
- if (ccType !== "cancelled" && !ccDay) {
+ if (showDay && !ccDay) {
  toast({ title: "Pick a day", description: "Choose the day for this class change.", variant: "destructive" });
+ return;
+ }
+ if (showSlot && !slotOptional && ccSlot === "keep") {
+ toast({ title: "Pick a time slot", description: "Choose the new time slot.", variant: "destructive" });
+ return;
+ }
+ if (showRoom && !roomOptional && ccRoom === "keep") {
+ toast({ title: "Pick a new room", description: "Use the free-room finder below to choose a room.", variant: "destructive" });
  return;
  }
  if (!ccReason.trim()) {
@@ -535,12 +572,18 @@ export function TeacherPanel() {
  reason: ccReason.trim(),
  };
  if (ccDate) body.effectiveDate = ccDate;
- if (ccType !== "cancelled") body.newDay = ccDay;
+ if (ccType !== "cancelled") {
+ if (showDay) body.newDay = ccDay;
+ if (ccSlot !== "keep") body.newTimeSlotId = ccSlot;
+ if (ccRoom !== "keep") body.newRoomId = ccRoom;
+ }
  const data = await apiPost<{ change: ScheduleChangeDTO; notified: number }>("/api/teacher/class-change", body);
  setChanges((prev) => [data.change, ...prev]);
  toast({ title: "Change announced", description: `Notified ${data.notified ?? 0} students.` });
  setCcType("cancelled");
  setCcDay("");
+ setCcSlot("keep");
+ setCcRoom("keep");
  setCcReason("");
  } catch (err) {
  toast({ title: "Couldn't submit change", description: errMsg(err), variant: "destructive" });
@@ -795,18 +838,20 @@ export function TeacherPanel() {
  <StatCard icon={CalendarClock} label="Today's Classes" value={stats.todayClasses} sub={dayLabel(today) ?? "Today"} tone="amber" delay={0} />
  <StatCard icon={CalendarDays} label="Weekly Classes" value={stats.totalClasses} sub="This week" tone="violet" delay={0.06} />
  <StatCard icon={BookOpen} label="Courses" value={stats.totalCourses} sub="Assigned to you" tone="fuchsia" delay={0.12} />
- <StatCard icon={History} label="Change History" value={changes.length} sub="Schedule changes" tone="rose" delay={0.18} />
+ <StatCard icon={Users} label="My Students" value={stats.myStudents} sub="Across your batches" tone="emerald" delay={0.18} />
  </div>
 
  {/* ---------- tabs ---------- */}
  <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
- <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+ <TabsList className="grid h-auto w-full grid-cols-3 gap-1 sm:grid-cols-5">
  <TabsTrigger value="schedule" className="py-1.5">My Schedule</TabsTrigger>
  <TabsTrigger value="attendance" className="py-1.5">Attendance</TabsTrigger>
  <TabsTrigger value="changes" className="py-1.5">Class Changes</TabsTrigger>
+ <TabsTrigger value="students" className="py-1.5">Students</TabsTrigger>
  <TabsTrigger value="assignments" className="py-1.5">Assignments</TabsTrigger>
  <TabsTrigger value="results" className="py-1.5">Results</TabsTrigger>
  <TabsTrigger value="notices" className="py-1.5">Notices</TabsTrigger>
+ <TabsTrigger value="documents" className="py-1.5">Documents</TabsTrigger>
  <TabsTrigger value="insights" className="py-1.5">Insights</TabsTrigger>
  </TabsList>
 
@@ -1093,22 +1138,32 @@ export function TeacherPanel() {
 
  <div className="space-y-1.5">
  <Label htmlFor="cc-type">Change type</Label>
- <Select value={ccType} onValueChange={(v) => setCcType(v as ChangeFormType)}>
+ <Select value={ccType} onValueChange={(v) => { setCcType(v as ChangeFormType); setCcSlot("keep"); setCcRoom("keep"); }}>
  <SelectTrigger id="cc-type">
  <SelectValue />
  </SelectTrigger>
  <SelectContent>
  <SelectItem value="cancelled">Cancelled</SelectItem>
- <SelectItem value="rescheduled">Rescheduled (to another day)</SelectItem>
+ <SelectItem value="rescheduled">Rescheduled (another day / time)</SelectItem>
+ <SelectItem value="room_changed">Room Change</SelectItem>
+ <SelectItem value="time_changed">Time Change</SelectItem>
  <SelectItem value="extra_class">Extra Class</SelectItem>
  </SelectContent>
  </Select>
- <p className="text-xs text-muted-foreground">Time &amp; room changes are managed by your Department Head.</p>
  </div>
 
- {ccType !== "cancelled" && (
+ {ccSchedule && ccType !== "cancelled" && (
+ <div className="rounded-xl border bg-muted/30 p-3 text-xs">
+ <p className="font-semibold">Current: {ccSchedule.courseCode}</p>
+ <p className="mt-0.5 text-muted-foreground">
+ {dayLabel(ccSchedule.dayOfWeek)} · {ccSchedule.startTime}–{ccSchedule.endTime} · Room {ccSchedule.roomNumber}
+ </p>
+ </div>
+ )}
+
+ {showDay && (
  <div className="space-y-1.5">
- <Label htmlFor="cc-day">{ccType === "extra_class" ? "Extra class day" : "New day"}</Label>
+ <Label htmlFor="cc-day">{ccType === "extra_class" ? "Extra class day" : "New day"} *</Label>
  <Select value={ccDay} onValueChange={setCcDay}>
  <SelectTrigger id="cc-day">
  <SelectValue placeholder="Pick a day" />
@@ -1121,10 +1176,64 @@ export function TeacherPanel() {
  ))}
  </SelectContent>
  </Select>
- {ccType === "rescheduled" && (
- <p className="text-xs text-muted-foreground">
- Class time stays the same — exact time changes need your Department Head.
- </p>
+ </div>
+ )}
+
+ {showSlot && (
+ <div className="space-y-1.5">
+ <Label htmlFor="cc-slot">New time {slotOptional ? "(optional)" : "*"}</Label>
+ <Select value={ccSlot} onValueChange={setCcSlot}>
+ <SelectTrigger id="cc-slot">
+ <SelectValue placeholder="Pick a time slot" />
+ </SelectTrigger>
+ <SelectContent>
+ {slotOptional && (
+ <SelectItem value="keep">
+ Keep current time ({ccSchedule?.startTime ?? "—"})
+ </SelectItem>
+ )}
+ {timeSlots.map((t) => (
+ <SelectItem key={t.id} value={t.id}>
+ {t.label} · {t.startTime}–{t.endTime}
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ </div>
+ )}
+
+ {showRoom && (
+ <div className="space-y-1.5">
+ <Label htmlFor="cc-room">New room {roomOptional ? "(optional)" : "*"}</Label>
+ <Select value={ccRoom} onValueChange={setCcRoom}>
+ <SelectTrigger id="cc-room">
+ <SelectValue placeholder="Pick a room" />
+ </SelectTrigger>
+ <SelectContent>
+ {roomOptional && (
+ <SelectItem value="keep">
+ Keep current room ({ccSchedule?.roomNumber ?? "—"})
+ </SelectItem>
+ )}
+ {rooms.map((r) => (
+ <SelectItem key={r.id} value={r.id}>
+ Room {r.roomNumber}
+ {r.building ? ` · ${r.building}` : ""} · cap {r.capacity}
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ {ccSchedule && (
+ <div className="pt-1">
+ <RoomFinder
+ key={`${ccScheduleId}-${ccType}`}
+ initialDay={ccDay || ccSchedule.dayOfWeek}
+ initialSlot={ccSlot !== "keep" ? ccSlot : ccSchedule.timeSlotId}
+ selectedRoomId={ccRoom !== "keep" ? ccRoom : null}
+ onSelectRoom={(roomId) => setCcRoom(roomId)}
+ timeSlots={timeSlots}
+ />
+ </div>
  )}
  </div>
  )}
@@ -1192,6 +1301,16 @@ export function TeacherPanel() {
  )}
  </SectionCard>
  </FadeIn>
+ </TabsContent>
+
+ {/* ============ STUDENTS (full control) ============ */}
+ <TabsContent value="students">
+ <TeacherStudentsTab courses={courses} />
+ </TabsContent>
+
+ {/* ============ DOCUMENTS (downloads) ============ */}
+ <TabsContent value="documents">
+ <TeacherDocumentsTab courses={courses} schedules={schedules} />
  </TabsContent>
 
  {/* ============ ASSIGNMENTS ============ */}

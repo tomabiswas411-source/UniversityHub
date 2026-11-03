@@ -7,7 +7,7 @@ import { percentToGrade, resultPct } from "@/lib/grades";
 
 /**
  * Teacher actions API.
- * GET /api/teacher/overview → own schedules + courses + stats
+ * GET /api/teacher/overview → own schedules + courses + rooms + timeSlots + stats
  * GET /api/teacher/attendance?scheduleId=&date= → roster + existing marks
  * POST /api/teacher/attendance → bulk save (upsert per student)
  * GET /api/teacher/notices → own posted notices
@@ -19,7 +19,12 @@ import { percentToGrade, resultPct } from "@/lib/grades";
  * DELETE /api/teacher/assignments?id=
  * GET /api/teacher/results?courseId=&examType= → results for a course
  * POST /api/teacher/results → bulk save
- * POST /api/teacher/class-change → cancel/reschedule/room/extra + auto notice + fan-out
+ * POST /api/teacher/class-change → cancel/reschedule/room/time/extra + auto notice + fan-out
+ * GET /api/teacher/free-rooms?day=&timeSlotId= → room availability finder
+ * GET /api/teacher/students?courseId=|programId=&semester=&q= → batch roster + attendance %
+ * POST /api/teacher/students-move → move selected students to a semester (batch promote/hold)
+ * POST /api/teacher/students-status → activate / deactivate selected students
+ * GET /api/teacher/export?type=... → server-built CSV documents (COST GUARD: one small JSON)
  */
 
 const ATT_STATUSES = ["present", "absent", "late", "excused"] as const;
@@ -309,7 +314,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  }
 
  if (action === "overview") {
- const [schedules, courses, changes] = await Promise.all([
+ const [schedules, courses, changes, rooms, timeSlots] = await Promise.all([
  db.schedule.findMany({
  where: { teacherId: session.userId, isActive: true },
  orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
@@ -327,19 +332,50 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  orderBy: { createdAt: "desc" },
  take: 20,
  }),
+ db.room.findMany({
+ where: { departmentId: session.departmentId!, isActive: true },
+ orderBy: { roomNumber: "asc" },
+ }),
+ db.timeSlot.findMany({
+ where: { departmentId: session.departmentId!, isActive: true },
+ orderBy: { slotOrder: "asc" },
+ }),
  ]);
  const today = new Date()
  .toLocaleDateString("en-US", { weekday: "long" })
  .toLowerCase();
  const todayClasses = schedules.filter((s) => s.dayOfWeek === today).length;
+
+ // Distinct (program, semester) batches taught → student reach (COST GUARD:
+ // one indexed count query instead of loading student rows)
+ const pairs = [
+ ...new Set(schedules.map((s) => `${s.programId}|${s.semester}`)),
+ ].map((p) => {
+ const [programId, semester] = p.split("|");
+ return { programId, semester: Number(semester) };
+ });
+ const myStudents = pairs.length
+ ? await db.user.count({
+ where: {
+ departmentId: session.departmentId!,
+ role: "student",
+ isActive: true,
+ OR: pairs,
+ },
+ })
+ : 0;
+
  return {
  schedules,
  courses,
  changes,
+ rooms,
+ timeSlots,
  stats: {
  totalClasses: schedules.length,
  todayClasses: DAYS.includes(today) ? todayClasses : 0,
  totalCourses: courses.length,
+ myStudents,
  },
  };
  }
@@ -390,6 +426,385 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  orderBy: { rollNumber: "asc" },
  });
  return { results, students, course };
+ }
+
+ if (action === "students") {
+ // Batch roster with attendance % — scope: courseId OR programId+semester
+ const courseId = searchParams.get("courseId");
+ const programIdParam = searchParams.get("programId");
+ const semesterParam = searchParams.get("semester");
+ const q = (searchParams.get("q") ?? "").trim().slice(0, 60);
+
+ let scopeProgramId = programIdParam;
+ let scopeSemester = semesterParam ? Number(semesterParam) : null;
+ if (courseId) {
+ const course = await db.course.findUnique({ where: { id: courseId } });
+ if (!course) throw new ApiError(404, "Course not found");
+ assertDepartmentAccess(session, course.departmentId);
+ scopeProgramId = course.programId;
+ scopeSemester = course.semester;
+ }
+
+ // Programs list (tiny) powers the batch selector in the UI
+ const programs = await db.program.findMany({
+ where: { departmentId: session.departmentId!, isActive: true },
+ select: { id: true, name: true, shortName: true, semesterCount: true },
+ orderBy: { shortName: "asc" },
+ });
+
+ if (!scopeProgramId || !scopeSemester) {
+ return { students: [], attendancePct: {}, programs, batch: null };
+ }
+
+ const where = {
+ departmentId: session.departmentId!,
+ role: "student" as const,
+ programId: scopeProgramId,
+ semester: scopeSemester,
+ ...(q
+ ? {
+ OR: [
+ { fullName: { contains: q } },
+ { rollNumber: { contains: q } },
+ { studentIdNumber: { contains: q } },
+ ],
+ }
+ : {}),
+ };
+
+ const [students, totals, presents] = await Promise.all([
+ db.user.findMany({
+ where,
+ select: {
+ id: true,
+ fullName: true,
+ rollNumber: true,
+ studentIdNumber: true,
+ section: true,
+ phone: true,
+ semester: true,
+ isActive: true,
+ programId: true,
+ },
+ orderBy: { rollNumber: "asc" },
+ take: 500,
+ }),
+ // Two grouped aggregates instead of N rows — COST GUARD
+ db.attendance.groupBy({
+ by: ["studentId"],
+ where: {
+ departmentId: session.departmentId!,
+ schedule: { programId: scopeProgramId, semester: scopeSemester },
+ },
+ _count: { studentId: true },
+ }),
+ db.attendance.groupBy({
+ by: ["studentId"],
+ where: {
+ departmentId: session.departmentId!,
+ status: { in: ["present", "late"] },
+ schedule: { programId: scopeProgramId, semester: scopeSemester },
+ },
+ _count: { studentId: true },
+ }),
+ ]);
+
+ const totalMap = new Map(totals.map((t) => [t.studentId, t._count.studentId]));
+ const presentMap = new Map(presents.map((p) => [p.studentId, p._count.studentId]));
+ const attendancePct: Record<string, number> = {};
+ for (const st of students) {
+ const total = totalMap.get(st.id) ?? 0;
+ const present = presentMap.get(st.id) ?? 0;
+ attendancePct[st.id] = total > 0 ? Math.round((present / total) * 100) : -1; // -1 = no data
+ }
+
+ return {
+ students,
+ attendancePct,
+ programs,
+ batch: { programId: scopeProgramId, semester: scopeSemester },
+ };
+ }
+
+ if (action === "free-rooms") {
+ // Room availability finder — one GET when the teacher opens the finder
+ // (COST GUARD: on-demand, never polled)
+ const day = searchParams.get("day");
+ const timeSlotId = searchParams.get("timeSlotId");
+ if (!day || !DAYS.includes(day)) throw new ApiError(400, "Valid day is required");
+ if (!timeSlotId) throw new ApiError(400, "timeSlotId is required");
+ assertDepartmentAccess(session, session.departmentId!);
+
+ const [rooms, bookings] = await Promise.all([
+ db.room.findMany({
+ where: { departmentId: session.departmentId!, isActive: true },
+ orderBy: { roomNumber: "asc" },
+ }),
+ db.schedule.findMany({
+ where: {
+ departmentId: session.departmentId!,
+ isActive: true,
+ dayOfWeek: day,
+ timeSlotId,
+ },
+ select: {
+ roomId: true,
+ courseCode: true,
+ teacherName: true,
+ semester: true,
+ },
+ }),
+ ]);
+ const bookedMap = new Map(bookings.map((b) => [b.roomId, b]));
+ return {
+ day,
+ timeSlotId,
+ freeCount: rooms.filter((r) => !bookedMap.has(r.id)).length,
+ rooms: rooms.map((r) => {
+ const b = bookedMap.get(r.id);
+ return {
+ id: r.id,
+ roomNumber: r.roomNumber,
+ building: r.building,
+ type: r.type,
+ capacity: r.capacity,
+ booked: b
+ ? { courseCode: b.courseCode, teacherName: b.teacherName, semester: b.semester }
+ : null,
+ };
+ }),
+ };
+ }
+
+ if (action === "export") {
+ // COST GUARD: CSV is built server-side as plain text and returned as one
+ // small JSON — the client turns it into a .csv Blob download. One request,
+ // one response, no paging, no polling. Excel opens it directly (UTF-8 BOM
+ // is added client-side for Bangla names).
+ const type = searchParams.get("type");
+ const esc = (v: unknown) => {
+ const s = String(v ?? "");
+ return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+ };
+ const toCsv = (rows: (string | number | null | undefined)[][]) =>
+ rows.map((r) => r.map(esc).join(",")).join("\n");
+ let filename = "export.csv";
+ let csv = "";
+
+ if (type === "schedule") {
+ const rows = await db.schedule.findMany({
+ where: { teacherId: session.userId, isActive: true },
+ include: { program: { select: { shortName: true } } },
+ orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+ });
+ filename = `my-weekly-schedule-${todayStr()}.csv`;
+ csv = toCsv([
+ ["Day", "Start", "End", "Course Code", "Course Name", "Type", "Room", "Program", "Semester"],
+ ...rows.map((s) => [
+ s.dayOfWeek, s.startTime, s.endTime, s.courseCode, s.courseName,
+ s.classType, s.roomNumber, s.program?.shortName ?? "", s.semester,
+ ]),
+ ]);
+ } else if (type === "students") {
+ const courseId = searchParams.get("courseId");
+ const programIdParam = searchParams.get("programId");
+ const semesterParam = searchParams.get("semester");
+ let scopeProgramId = programIdParam;
+ let scopeSemester = semesterParam ? Number(semesterParam) : null;
+ let label = "batch";
+ if (courseId) {
+ const course = await db.course.findUnique({
+ where: { id: courseId },
+ include: { program: { select: { shortName: true } } },
+ });
+ if (!course) throw new ApiError(404, "Course not found");
+ assertDepartmentAccess(session, course.departmentId);
+ scopeProgramId = course.programId;
+ scopeSemester = course.semester;
+ label = `${course.code}-sem${course.semester}`;
+ } else if (scopeProgramId && scopeSemester) {
+ const prog = await db.program.findUnique({ where: { id: scopeProgramId } });
+ label = `${prog?.shortName ?? "prog"}-sem${scopeSemester}`;
+ } else {
+ throw new ApiError(400, "Provide courseId or programId+semester");
+ }
+ if (!scopeProgramId || !scopeSemester) throw new ApiError(400, "Scope required");
+ const [students, prog] = await Promise.all([
+ db.user.findMany({
+ where: {
+ departmentId: session.departmentId!,
+ role: "student",
+ programId: scopeProgramId,
+ semester: scopeSemester,
+ },
+ select: {
+ rollNumber: true, studentIdNumber: true, fullName: true,
+ section: true, phone: true, semester: true, isActive: true,
+ },
+ orderBy: { rollNumber: "asc" },
+ }),
+ db.program.findUnique({ where: { id: scopeProgramId }, select: { shortName: true } }),
+ ]);
+ filename = `students-${label}-${todayStr()}.csv`;
+ csv = toCsv([
+ ["Roll", "Student ID", "Name", "Program", "Semester", "Section", "Phone", "Status"],
+ ...students.map((s) => [
+ s.rollNumber ?? "", s.studentIdNumber ?? "", s.fullName,
+ prog?.shortName ?? "", s.semester ?? "", s.section ?? "", s.phone ?? "",
+ s.isActive ? "Active" : "Inactive",
+ ]),
+ ]);
+ } else if (type === "attendance-matrix") {
+ // Excel-style master sheet: one row per student, one column per class date
+ const scheduleId = searchParams.get("scheduleId");
+ if (!scheduleId) throw new ApiError(400, "scheduleId is required");
+ const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
+ if (!schedule) throw new ApiError(404, "Schedule not found");
+ if (session.role === "teacher" && schedule.teacherId !== session.userId) {
+ throw new ApiError(403, "You can only export your own classes");
+ }
+ assertDepartmentAccess(session, schedule.departmentId);
+ const [students, marks] = await Promise.all([
+ db.user.findMany({
+ where: {
+ departmentId: schedule.departmentId, role: "student", isActive: true,
+ programId: schedule.programId, semester: schedule.semester,
+ },
+ select: { id: true, fullName: true, rollNumber: true, studentIdNumber: true },
+ orderBy: { rollNumber: "asc" },
+ }),
+ db.attendance.findMany({
+ where: { scheduleId },
+ select: { studentId: true, date: true, status: true },
+ }),
+ ]);
+ const dates = [...new Set(marks.map((m) => m.date))].sort();
+ const cell = new Map<string, string>();
+ for (const m of marks) cell.set(`${m.studentId}|${m.date}`, m.status);
+ const letter: Record<string, string> = { present: "P", absent: "A", late: "L", excused: "E" };
+ const rows: (string | number)[][] = [
+ ["Roll", "Student ID", "Name", ...dates, "Present", "Total", "Attendance %"],
+ ];
+ for (const st of students) {
+ const cells = dates.map((d) => letter[cell.get(`${st.id}|${d}`) ?? ""] ?? "-");
+ const presentCount = cells.filter((c) => c === "P" || c === "L").length;
+ const markedCount = cells.filter((c) => c !== "-").length;
+ rows.push([
+ st.rollNumber ?? "", st.studentIdNumber ?? "", st.fullName,
+ ...cells,
+ presentCount, markedCount,
+ markedCount > 0 ? `${Math.round((presentCount / markedCount) * 100)}%` : "-",
+ ]);
+ }
+ filename = `attendance-master-${schedule.courseCode}-${todayStr()}.csv`;
+ csv = toCsv(rows);
+ } else if (type === "attendance-day") {
+ // One class · one date — classic day sheet
+ const scheduleId = searchParams.get("scheduleId");
+ const date = searchParams.get("date") ?? todayStr();
+ if (!scheduleId) throw new ApiError(400, "scheduleId is required");
+ const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
+ if (!schedule) throw new ApiError(404, "Schedule not found");
+ if (session.role === "teacher" && schedule.teacherId !== session.userId) {
+ throw new ApiError(403, "You can only export your own classes");
+ }
+ assertDepartmentAccess(session, schedule.departmentId);
+ const [students, marks] = await Promise.all([
+ db.user.findMany({
+ where: {
+ departmentId: schedule.departmentId, role: "student", isActive: true,
+ programId: schedule.programId, semester: schedule.semester,
+ },
+ select: { id: true, fullName: true, rollNumber: true, studentIdNumber: true },
+ orderBy: { rollNumber: "asc" },
+ }),
+ db.attendance.findMany({
+ where: { scheduleId, date },
+ select: { studentId: true, status: true, markedByName: true },
+ }),
+ ]);
+ const markMap = new Map(marks.map((m) => [m.studentId, m]));
+ filename = `attendance-${schedule.courseCode}-${date}.csv`;
+ csv = toCsv([
+ ["Roll", "Student ID", "Name", "Status", "Marked By"],
+ ...students.map((st) => {
+ const m = markMap.get(st.id);
+ return [
+ st.rollNumber ?? "", st.studentIdNumber ?? "", st.fullName,
+ m ? m.status.toUpperCase() : "NOT_MARKED", m?.markedByName ?? "",
+ ];
+ }),
+ ]);
+ } else if (type === "results") {
+ const courseId = searchParams.get("courseId");
+ if (!courseId) throw new ApiError(400, "courseId is required");
+ const course = await db.course.findUnique({ where: { id: courseId } });
+ if (!course) throw new ApiError(404, "Course not found");
+ assertDepartmentAccess(session, course.departmentId);
+ const results = await db.result.findMany({
+ where: { courseId, enteredBy: session.userId },
+ include: { student: { select: { fullName: true, rollNumber: true, studentIdNumber: true } } },
+ orderBy: [{ examType: "asc" }, { createdAt: "asc" }],
+ });
+ filename = `results-${course.code}-${todayStr()}.csv`;
+ csv = toCsv([
+ ["Roll", "Student ID", "Name", "Exam", "Marks", "Max", "Grade", "Remarks"],
+ ...results.map((r) => [
+ r.student?.rollNumber ?? "", r.student?.studentIdNumber ?? "",
+ r.student?.fullName ?? "", r.examType, r.marks, r.maxMarks, r.grade ?? "", r.remarks ?? "",
+ ]),
+ ]);
+ } else if (type === "assignments") {
+ const rows = await db.assignment.findMany({
+ where: { teacherId: session.userId, isActive: true },
+ include: { course: { select: { code: true, name: true } } },
+ orderBy: { createdAt: "desc" },
+ });
+ filename = `assignments-${todayStr()}.csv`;
+ csv = toCsv([
+ ["Course", "Title", "Due Date", "Max Marks", "Created"],
+ ...rows.map((a) => [
+ a.course?.code ?? "", a.title,
+ a.dueDate ? a.dueDate.toISOString().slice(0, 10) : "",
+ a.maxMarks ?? "", a.createdAt.toISOString().slice(0, 10),
+ ]),
+ ]);
+ } else if (type === "changes") {
+ const rows = await db.scheduleChange.findMany({
+ where: { teacherId: session.userId, isActive: true },
+ orderBy: { createdAt: "desc" },
+ take: 500,
+ });
+ filename = `class-change-history-${todayStr()}.csv`;
+ csv = toCsv([
+ ["Requested At", "Type", "Course", "Original", "New", "Effective Date", "Reason", "By"],
+ ...rows.map((c) => [
+ c.createdAt.toISOString().slice(0, 16).replace("T", " "), c.changeType,
+ c.courseCode,
+ `${c.originalDay ?? ""} ${c.originalStartTime ?? ""} ${c.originalRoomNumber ?? ""}`.trim(),
+ [c.newDay, c.newStartTime, c.newRoomNumber].filter(Boolean).join(" ") || "—",
+ c.effectiveDate, c.reason, c.changedByName,
+ ]),
+ ]);
+ } else if (type === "notices") {
+ const rows = await db.notice.findMany({
+ where: { departmentId: session.departmentId!, postedBy: session.userId },
+ orderBy: { createdAt: "desc" },
+ take: 500,
+ });
+ filename = `my-notices-${todayStr()}.csv`;
+ csv = toCsv([
+ ["Date", "Title", "Category", "Audience", "Pinned", "Content"],
+ ...rows.map((n) => [
+ n.createdAt.toISOString().slice(0, 10), n.title, n.category,
+ n.audience, n.isPinned ? "Yes" : "No", n.content,
+ ]),
+ ]);
+ } else {
+ throw new ApiError(400, "Unknown export type");
+ }
+
+ return { filename, csv };
  }
 
  throw new ApiError(404, "Unknown action");
@@ -684,6 +1099,35 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (rm) newRoomNumber = rm.roomNumber;
  }
 
+ // Room clash guard — the effective (day, slot, room) triple must be free.
+ // The room finder helps the teacher pick a free room; this is the server-side
+ // safety net so two classes can never land on the same room at once.
+ if (changeType !== "cancelled") {
+ const effDay = newDay ?? schedule.dayOfWeek;
+ const effSlotId = newTimeSlotId ?? schedule.timeSlotId;
+ const effRoomId = newRoomId ?? schedule.roomId;
+ if (changeType === "extra_class" && !newTimeSlotId) {
+ throw new ApiError(400, "Pick a time slot for the extra class");
+ }
+ const clash = await db.schedule.findFirst({
+ where: {
+ departmentId: schedule.departmentId,
+ isActive: true,
+ dayOfWeek: effDay,
+ timeSlotId: effSlotId,
+ roomId: effRoomId,
+ NOT: { id: schedule.id },
+ },
+ select: { courseCode: true, teacherName: true, roomNumber: true },
+ });
+ if (clash) {
+ throw new ApiError(
+ 409,
+ `Room ${clash.roomNumber} is already booked at that time by ${clash.courseCode} (${clash.teacherName}). Pick a free room from the finder.`
+ );
+ }
+ }
+
  const change = await db.scheduleChange.create({
  data: {
  departmentId: schedule.departmentId,
@@ -886,6 +1330,79 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  });
  }
  return { saved };
+ }
+
+ // ---------- Student batch controls: move to semester ----------
+ if (action === "students-move") {
+ // Covers all batch cases: promote all (select all), hold (no-op not sent),
+ // promote/demote individuals, repeat a year — the UI sends an explicit list.
+ const { studentIds, toSemester } = body as { studentIds?: string[]; toSemester?: number };
+ if (!Array.isArray(studentIds) || studentIds.length === 0) {
+ throw new ApiError(400, "Select at least one student");
+ }
+ const target = Number(toSemester);
+ if (!Number.isInteger(target) || target < 1 || target > 12) {
+ throw new ApiError(400, "Target semester must be between 1 and 12");
+ }
+ const students = await db.user.findMany({
+ where: {
+ id: { in: studentIds.slice(0, 500) },
+ departmentId: session.departmentId!,
+ role: "student",
+ },
+ select: {
+ id: true,
+ semester: true,
+ program: { select: { shortName: true, semesterCount: true } },
+ },
+ });
+ if (students.length === 0) throw new ApiError(404, "No students found in your department");
+ const over = students.filter((s) => s.program && target > s.program.semesterCount);
+ if (over.length > 0) {
+ throw new ApiError(
+ 400,
+ `Target semester ${target} exceeds program length (${over[0].program?.semesterCount} semesters) for ${over.length} student(s)`
+ );
+ }
+ const moved = students.filter((s) => s.semester !== target);
+ if (moved.length === 0) {
+ return { moved: 0, toSemester: target, alreadyThere: students.length };
+ }
+ await db.user.updateMany({
+ where: { id: { in: moved.map((s) => s.id) } },
+ data: { semester: target },
+ });
+ // Gentle fan-out notification (one createMany — COST GUARD)
+ await db.notification.createMany({
+ data: moved.map((s) => ({
+ userId: s.id,
+ title: "Semester updated",
+ body: `You have been moved to semester ${target}${target > (s.semester ?? 0) ? " — promoted" : ""}. Check your new routine and courses.`,
+ type: "general",
+ link: "/?view=dashboard",
+ })),
+ });
+ return { moved: moved.length, toSemester: target, alreadyThere: students.length - moved.length };
+ }
+
+ // ---------- Student batch controls: activate / deactivate ----------
+ if (action === "students-status") {
+ const { studentIds, isActive } = body as { studentIds?: string[]; isActive?: boolean };
+ if (!Array.isArray(studentIds) || studentIds.length === 0) {
+ throw new ApiError(400, "Select at least one student");
+ }
+ if (typeof isActive !== "boolean") {
+ throw new ApiError(400, "isActive must be true or false");
+ }
+ const result = await db.user.updateMany({
+ where: {
+ id: { in: studentIds.slice(0, 500) },
+ departmentId: session.departmentId!,
+ role: "student",
+ },
+ data: { isActive },
+ });
+ return { updated: result.count, isActive };
  }
 
  throw new ApiError(404, "Unknown action");
