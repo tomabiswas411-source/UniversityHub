@@ -124,6 +124,21 @@ export async function POST(req: NextRequest) {
       throw new ApiError(400, "Invalid QR code");
     }
 
+    // ---- DEVICE GUARD (mandatory): a scan without a verifiable device
+    // cannot be trusted — one phone = one student per class-date.
+    const deviceId =
+      typeof body.deviceId === "string" &&
+      body.deviceId.length >= 8 &&
+      body.deviceId.length <= 64
+        ? body.deviceId.slice(0, 64)
+        : null;
+    if (!deviceId) {
+      throw new ApiError(
+        403,
+        "Device verification required — open the attendance link again"
+      );
+    }
+
     const s = await db.attendanceSession.findUnique({
       where: { token },
       select: {
@@ -152,9 +167,17 @@ export async function POST(req: NextRequest) {
     // Cohort check — the student must belong to this class batch
     const me = await db.user.findUnique({
       where: { id: session.userId },
-      select: { departmentId: true, programId: true, semester: true },
+      select: {
+        departmentId: true,
+        programId: true,
+        semester: true,
+        isActive: true,
+      },
     });
     if (!me) throw new ApiError(401, "Account not found");
+    if (!me.isActive) {
+      throw new ApiError(403, "Account deactivated");
+    }
     if (
       me.departmentId !== s.departmentId ||
       me.programId !== s.schedule.programId ||
@@ -185,21 +208,20 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- DEVICE GUARD: one phone = one student per class-date ----
-    const deviceId =
-      typeof body.deviceId === "string" && body.deviceId.length >= 8 && body.deviceId.length <= 64
-        ? body.deviceId.slice(0, 64)
-        : null;
-    if (deviceId) {
-      const clash = await db.attendance.findFirst({
-        where: { scheduleId: s.scheduleId, date: s.date, deviceId, studentId: { not: session.userId } },
-        select: { studentId: true },
-      });
-      if (clash) {
-        throw new ApiError(
-          403,
-          "This phone has already checked in for another student of this class. Each student must use their own device."
-        );
-      }
+    const clash = await db.attendance.findFirst({
+      where: {
+        scheduleId: s.scheduleId,
+        date: s.date,
+        deviceId,
+        studentId: { not: session.userId },
+      },
+      select: { studentId: true },
+    });
+    if (clash) {
+      throw new ApiError(
+        403,
+        "This phone has already checked in for another student of this class. Each student must use their own device."
+      );
     }
 
     const key = {
@@ -219,41 +241,75 @@ export async function POST(req: NextRequest) {
       if (existing.status === "present") {
         return { ok: true, already: true, status: "present" };
       }
-      // teacher pre-marked something else → correct it to present
-      await db.attendance.update({
-        where: key,
-        data: {
-          status: "present",
-          markedByName: "QR self check-in",
-          ...(deviceId ? { deviceId } : {}),
-          ...(distance != null ? { distanceM: Math.round(distance) } : {}),
-        },
-      });
+      // teacher pre-marked something else → correct it to present.
+      // presentCount must be bumped too — the pre-mark never counted as
+      // a QR check-in, so the live counter would otherwise undercount.
+      try {
+        await db.$transaction([
+          db.attendance.update({
+            where: key,
+            data: {
+              status: "present",
+              markedByName: "QR self check-in",
+              deviceId,
+              ...(distance != null ? { distanceM: Math.round(distance) } : {}),
+            },
+          }),
+          db.attendanceSession.update({
+            where: { id: s.id },
+            data: { presentCount: { increment: 1 } },
+          }),
+        ]);
+      } catch (err) {
+        // Lost a race (another scan landed first) → friendly duplicate msg
+        if (
+          typeof err === "object" &&
+          err !== null &&
+          (err as { code?: string }).code === "P2002"
+        ) {
+          throw new ApiError(403, "This phone has already checked in");
+        }
+        throw err;
+      }
       return { ok: true, already: false, status: "present", corrected: true };
     }
 
     // First scan → create the present row + bump the tiny counter (atomic)
-    const [,] = await db.$transaction([
-      db.attendance.create({
-        data: {
-          departmentId: s.departmentId,
-          scheduleId: s.scheduleId,
-          courseId: s.courseId,
-          studentId: session.userId,
-          date: s.date,
-          status: "present",
-          markedBy: s.teacherId,
-          markedByName: "QR self check-in",
-          courseCode: s.schedule.courseCode,
-          ...(deviceId ? { deviceId } : {}),
-          ...(distance != null ? { distanceM: Math.round(distance) } : {}),
-        },
-      }),
-      db.attendanceSession.update({
-        where: { id: s.id },
-        data: { presentCount: { increment: 1 } },
-      }),
-    ]);
+    try {
+      await db.$transaction([
+        db.attendance.create({
+          data: {
+            departmentId: s.departmentId,
+            scheduleId: s.scheduleId,
+            courseId: s.courseId,
+            studentId: session.userId,
+            date: s.date,
+            status: "present",
+            markedBy: s.teacherId,
+            markedByName: "QR self check-in",
+            courseCode: s.schedule.courseCode,
+            deviceId,
+            ...(distance != null ? { distanceM: Math.round(distance) } : {}),
+          },
+        }),
+        db.attendanceSession.update({
+          where: { id: s.id },
+          data: { presentCount: { increment: 1 } },
+        }),
+      ]);
+    } catch (err) {
+      // P2002 = a concurrent scan (same student OR same device) won the
+      // unique-index race → answer with the friendly duplicate message
+      // instead of a 500.
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        (err as { code?: string }).code === "P2002"
+      ) {
+        throw new ApiError(403, "This phone has already checked in");
+      }
+      throw err;
+    }
 
     return { ok: true, already: false, status: "present" };
   });

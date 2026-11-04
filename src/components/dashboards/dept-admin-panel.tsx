@@ -235,6 +235,8 @@ interface SchedulePayload {
 interface ScheduleEditPayload {
  dayOfWeek: DayOfWeek;
  timeSlotId: string;
+ /** optional room move — applied together with the day/slot change */
+ roomId?: string;
 }
 
 type DeleteTarget = {
@@ -475,6 +477,9 @@ export function DeptAdminPanel() {
  const [notices, setNotices] = useState<NoticeDTO[]>([]);
  const [schedules, setSchedules] = useState<ScheduleDTO[]>([]);
  const [analytics, setAnalytics] = useState<DeptAnalytics | null>(null);
+ // Analytics load failure vs "still loading" — without this the tab spins forever
+ const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+ const [analyticsRetrying, setAnalyticsRetrying] = useState(false);
 
  /* -------- dialogs -------- */
  const [teacherOpen, setTeacherOpen] = useState(false);
@@ -512,10 +517,12 @@ export function DeptAdminPanel() {
  if (!silent) setLoading(true);
  try {
  const q = `?departmentId=${departmentId}`;
- const [ov, st, an] = await Promise.all([
+ const [ov, st, anRes] = await Promise.all([
  apiGet<ManageOverview>(`/api/manage/overview${q}`),
  apiGet<DeptStatsDTO>(`/api/manage/stats${q}`),
- apiGet<DeptAnalytics>(`/api/manage/analytics${q}`).catch(() => null),
+ apiGet<DeptAnalytics>(`/api/manage/analytics${q}`)
+ .then((v) => ({ ok: true as const, v }))
+ .catch((e: unknown) => ({ ok: false as const, e })),
  ]);
  setTeachers(ov.teachers ?? []);
  setStudents(ov.students ?? []);
@@ -526,7 +533,8 @@ export function DeptAdminPanel() {
  setNotices(ov.notices ?? []);
  setSchedules(ov.schedules ?? []);
  setStats(st ?? null);
- setAnalytics(an);
+ setAnalytics(anRes.ok ? anRes.v : null);
+ setAnalyticsError(anRes.ok ? null : errMsg(anRes.e));
  } catch (err) {
  toast({
  title: "Failed to load department data",
@@ -543,6 +551,17 @@ export function DeptAdminPanel() {
  useEffect(() => {
  void load();
  }, [load]);
+
+ /** Silent reload triggered from the analytics error card. */
+ async function retryAnalytics() {
+ if (analyticsRetrying) return;
+ setAnalyticsRetrying(true);
+ try {
+ await load(true);
+ } finally {
+ setAnalyticsRetrying(false);
+ }
+ }
 
  /* ---------------- generic save / delete ---------------- */
 
@@ -894,7 +913,25 @@ export function DeptAdminPanel() {
 
  {/* ===== Analytics (Day 41) ===== */}
  <TabsContent value="analytics" className="space-y-4">
- {!analytics ? (
+ {!analytics && analyticsError ? (
+ <SectionCard
+ title="Analytics unavailable"
+ icon={BarChart3}
+ className="text-sm text-muted-foreground"
+ >
+ <div className="flex flex-col items-center gap-3 py-6 text-center">
+ <p>{analyticsError}</p>
+ <Button
+ className={cn("h-10", GRADIENT_BTN)}
+ onClick={() => void retryAnalytics()}
+ disabled={analyticsRetrying}
+ >
+ {analyticsRetrying && <Loader2 className="h-4 w-4 animate-spin" />}
+ Retry
+ </Button>
+ </div>
+ </SectionCard>
+ ) : !analytics ? (
  <PanelLoader label="Crunching department numbers…" />
  ) : (
  <>
@@ -1864,6 +1901,7 @@ export function DeptAdminPanel() {
  onOpenChange={setEditClassOpen}
  schedule={editingSchedule}
  slots={sortedSlots}
+ rooms={rooms}
  onSubmit={(payload) =>
  saveEntity("schedules", payload, editingSchedule?.id ?? null, {
  add: "Class updated",
@@ -3157,10 +3195,10 @@ function AddScheduleDialog({
  <SelectValue placeholder="Select slot" />
  </SelectTrigger>
  <SelectContent>
- {slots.map((sl) => (
+ {/* Break slots are not schedulable — keep classes out of breaks */}
+ {slots.filter((sl) => !sl.isBreak).map((sl) => (
  <SelectItem key={sl.id} value={sl.id}>
  {sl.startTime} – {sl.endTime} · {sl.label}
- {sl.isBreak ? " (Break)" : ""}
  </SelectItem>
  ))}
  </SelectContent>
@@ -3200,29 +3238,33 @@ function AddScheduleDialog({
  );
 }
 
-/* ---------------- Edit class (day / slot only) ---------------- */
+/* ---------------- Edit class (day / slot / room) ---------------- */
 
 function EditScheduleDialog({
  open,
  onOpenChange,
  schedule,
  slots,
+ rooms,
  onSubmit,
 }: {
  open: boolean;
  onOpenChange: (v: boolean) => void;
  schedule: ScheduleDTO | null;
  slots: TimeSlotDTO[];
+ rooms?: RoomDTO[];
  onSubmit: (payload: ScheduleEditPayload) => Promise<boolean>;
 }) {
  const [day, setDay] = useState<string>("");
  const [slotId, setSlotId] = useState<string>("");
+ const [roomId, setRoomId] = useState<string>("");
  const [saving, setSaving] = useState(false);
 
  useEffect(() => {
  if (open && schedule) {
  setDay(schedule.dayOfWeek);
  setSlotId(schedule.timeSlotId);
+ setRoomId(schedule.roomId ?? "");
  }
  }, [open, schedule]);
 
@@ -3236,7 +3278,12 @@ function EditScheduleDialog({
  return;
  }
  setSaving(true);
- const ok = await onSubmit({ dayOfWeek: day as DayOfWeek, timeSlotId: slotId });
+ const payload: ScheduleEditPayload = {
+ dayOfWeek: day as DayOfWeek,
+ timeSlotId: slotId,
+ };
+ if (roomId) payload.roomId = roomId;
+ const ok = await onSubmit(payload);
  setSaving(false);
  if (ok) onOpenChange(false);
  }
@@ -3248,8 +3295,8 @@ function EditScheduleDialog({
  <DialogTitle>Edit Class Time</DialogTitle>
  <DialogDescription>
  {schedule
- ? `Move ${schedule.courseCode} to another day or time slot. Conflicts are rejected by the server.`
- : "Move this class to another day or time slot."}
+ ? `Move ${schedule.courseCode} to another day, time slot or room. Conflicts are rejected by the server.`
+ : "Move this class to another day, time slot or room."}
  </DialogDescription>
  </DialogHeader>
  <div className="grid grid-cols-1 gap-3">
@@ -3273,7 +3320,8 @@ function EditScheduleDialog({
  <SelectValue placeholder="Select slot" />
  </SelectTrigger>
  <SelectContent>
- {slots.map((sl) => (
+ {/* Break slots are not schedulable; keep the current slot visible */}
+ {slots.filter((sl) => !sl.isBreak || sl.id === slotId).map((sl) => (
  <SelectItem key={sl.id} value={sl.id}>
  {sl.startTime} – {sl.endTime} · {sl.label}
  {sl.isBreak ? " (Break)" : ""}
@@ -3282,12 +3330,33 @@ function EditScheduleDialog({
  </SelectContent>
  </Select>
  </Field>
+ {rooms && rooms.length > 0 && (
+ <Field label="Room">
+ <Select value={roomId || undefined} onValueChange={setRoomId}>
+ <SelectTrigger className="w-full">
+ <SelectValue placeholder="Select room" />
+ </SelectTrigger>
+ <SelectContent>
+ {rooms.map((r) => (
+ <SelectItem key={r.id} value={r.id}>
+ {r.roomNumber}
+ {r.building ? ` · ${r.building}` : ""}
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ </Field>
+ )}
  </div>
  <DialogFooter className="gap-2">
  <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
  Cancel
  </Button>
- <Button className={cn("h-10", GRADIENT_BTN)} onClick={() => void handleSave()} disabled={saving}>
+ <Button
+ className={cn("h-10", GRADIENT_BTN)}
+ onClick={() => void handleSave()}
+ disabled={saving || !day || !slotId}
+ >
  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
  Save changes
  </Button>

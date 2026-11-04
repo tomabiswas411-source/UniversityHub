@@ -2,6 +2,16 @@ import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import type { PlanDTO, UniversityDTO } from "@/types";
 
+/** Plan.features is a JSON string column — malformed data must not 500. */
+function safeParseFeatures(raw: string | null | undefined): string[] {
+ try {
+ const parsed: unknown = JSON.parse(raw || "[]");
+ return Array.isArray(parsed) ? (parsed as string[]) : [];
+ } catch {
+ return [];
+ }
+}
+
 /** GET /api/portal — public platform data: universities, plans, stats */
 export async function GET() {
  return handle(async () => {
@@ -70,7 +80,7 @@ export async function GET() {
  maxDepartments: p.maxDepartments,
  maxStudents: p.maxStudents,
  maxTeachers: p.maxTeachers,
- features: JSON.parse(p.features || "[]"),
+ features: safeParseFeatures(p.features),
  isActive: p.isActive,
  sortOrder: p.sortOrder,
  }));

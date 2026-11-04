@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
  GraduationCap,
@@ -43,6 +43,10 @@ export function LoginView({ navigate }: LoginViewProps) {
  const [studentLoading, setStudentLoading] = useState(false);
  const [error, setError] = useState<string | null>(null);
  const [showPassword, setShowPassword] = useState(false);
+ /* students are the majority — open on the Student tab */
+ const [tab, setTab] = useState("student");
+ const [uniError, setUniError] = useState<string | null>(null);
+ const [uniLoading, setUniLoading] = useState(true);
 
  // staff form
  const [email, setEmail] = useState("");
@@ -53,14 +57,25 @@ export function LoginView({ navigate }: LoginViewProps) {
  const [studentId, setStudentId] = useState("");
  const [roll, setRoll] = useState("");
 
- useEffect(() => {
+ const loadUniversities = useCallback(() => {
+ setUniError(null);
+ setUniLoading(true);
  apiGet<{ universities: UniversityDTO[] }>("/api/portal")
  .then((d) => {
  setUniversities(d.universities);
- if (d.universities.length > 0) setUniSlug(d.universities[0].slug);
+ if (d.universities.length > 0) {
+ setUniSlug((prev) => prev || d.universities[0].slug);
+ }
  })
- .catch(() => {});
+ .catch(() => {
+ setUniError("Couldn't load universities. Check your connection and retry.");
+ })
+ .finally(() => setUniLoading(false));
  }, []);
+
+ useEffect(() => {
+ loadUniversities();
+ }, [loadUniversities]);
 
  async function staffLogin(e: React.FormEvent) {
  e.preventDefault();
@@ -162,13 +177,13 @@ export function LoginView({ navigate }: LoginViewProps) {
  </div>
  )}
 
- <Tabs defaultValue="staff">
+ <Tabs value={tab} onValueChange={(v) => { setTab(v); setError(null); }}>
  <TabsList className="grid grid-cols-2 w-full mb-5">
- <TabsTrigger value="staff" className="gap-1.5">
- <ShieldCheck className="w-4 h-4" /> Staff
- </TabsTrigger>
  <TabsTrigger value="student" className="gap-1.5">
  <GraduationCap className="w-4 h-4" /> Student
+ </TabsTrigger>
+ <TabsTrigger value="staff" className="gap-1.5">
+ <ShieldCheck className="w-4 h-4" /> Staff
  </TabsTrigger>
  </TabsList>
 
@@ -254,6 +269,21 @@ export function LoginView({ navigate }: LoginViewProps) {
  </SelectContent>
  </Select>
  </div>
+ {uniError && (
+ <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+ <span>{uniError}</span>
+ <Button
+ type="button"
+ variant="outline"
+ size="sm"
+ className="h-7 shrink-0 px-2 text-xs"
+ onClick={loadUniversities}
+ disabled={uniLoading}
+ >
+ {uniLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Retry"}
+ </Button>
+ </div>
+ )}
  <div className="space-y-2">
  <Label htmlFor="sid">ID Number</Label>
  <div className="relative">
@@ -261,6 +291,8 @@ export function LoginView({ navigate }: LoginViewProps) {
  <Input
  id="sid"
  required
+ inputMode="numeric"
+ autoComplete="off"
  placeholder="e.g. 2103001"
  className="pl-9 h-11"
  value={studentId}
@@ -275,7 +307,9 @@ export function LoginView({ navigate }: LoginViewProps) {
  <Input
  id="roll"
  required
- placeholder="e.g. 2103001"
+ inputMode="numeric"
+ autoComplete="off"
+ placeholder="e.g. 05"
  className="pl-9 h-11"
  value={roll}
  onChange={(e) => setRoll(e.target.value)}

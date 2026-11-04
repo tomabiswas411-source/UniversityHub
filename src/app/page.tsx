@@ -18,12 +18,29 @@ import { Loader2, GraduationCap } from "lucide-react";
 
 export type AppView = "home" | "department" | "login" | "pricing" | "dashboard" | "attend";
 
+/* Every ?view= value the app understands — anything else in the URL
+   falls back to "home" instead of rendering a blank page. */
+const KNOWN_VIEWS: readonly AppView[] = [
+ "home",
+ "department",
+ "login",
+ "pricing",
+ "dashboard",
+ "attend",
+];
+
+function parseView(raw: string | null): AppView {
+ return raw != null && (KNOWN_VIEWS as readonly string[]).includes(raw)
+ ? (raw as AppView)
+ : "home";
+}
+
 function AppShell() {
  const searchParams = useSearchParams();
  const router = useRouter();
  const { refresh, initialized } = useAuthStore();
 
- const view = (searchParams.get("view") as AppView) || "home";
+ const view = parseView(searchParams.get("view"));
  const deptId = searchParams.get("dept");
 
  const [booting, setBooting] = useState(true);
@@ -101,7 +118,7 @@ function AppShell() {
  </Suspense>
  </main>
 
- <SiteFooter />
+ <SiteFooter navigate={navigate} />
  <MobileNav view={view} navigate={navigate} />
  </div>
  );

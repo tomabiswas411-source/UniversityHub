@@ -125,21 +125,37 @@ function useDownloader() {
  return { busyKey, run };
 }
 
+/** Per-card control state for the Documents tab. Lives in the parent
+ *  panel so switching tabs doesn't reset the teacher's selections. */
+export type DocumentsScopeState = {
+  studentCourseId: string;
+  matrixScheduleId: string;
+  dayScheduleId: string;
+  dayDate: string;
+  resultsCourseId: string;
+};
+
 export function TeacherDocumentsTab({
  courses,
  schedules,
+ scope,
+ onScopeChange,
 }: {
  courses: CourseDTO[];
  schedules: ScheduleDTO[];
+ /** Lifted control state — owned by the parent panel. */
+ scope: DocumentsScopeState;
+ /** Patch-style updater so call sites stay one-liners. */
+ onScopeChange: (patch: Partial<DocumentsScopeState>) => void;
 }) {
  const { busyKey, run } = useDownloader();
 
- /* per-card control state */
- const [studentCourseId, setStudentCourseId] = useState(courses[0]?.id ?? "");
- const [matrixScheduleId, setMatrixScheduleId] = useState(schedules[0]?.id ?? "");
- const [dayScheduleId, setDayScheduleId] = useState(schedules[0]?.id ?? "");
- const [dayDate, setDayDate] = useState(todayISO());
- const [resultsCourseId, setResultsCourseId] = useState(courses[0]?.id ?? "");
+ /* per-card control state (lifted; first option pre-highlighted) */
+ const studentCourseId = scope.studentCourseId || courses[0]?.id || "";
+ const matrixScheduleId = scope.matrixScheduleId || schedules[0]?.id || "";
+ const dayScheduleId = scope.dayScheduleId || schedules[0]?.id || "";
+ const dayDate = scope.dayDate || todayISO();
+ const resultsCourseId = scope.resultsCourseId || courses[0]?.id || "";
 
  return (
  <div className="mt-4 space-y-4">
@@ -170,9 +186,9 @@ export function TeacherDocumentsTab({
  disabled={!studentCourseId}
  >
  <div className="space-y-1.5">
- <Label className="text-xs">Course batch</Label>
- <Select value={studentCourseId} onValueChange={setStudentCourseId}>
- <SelectTrigger className="h-9">
+ <Label htmlFor="doc-student-course" className="text-xs">Course batch</Label>
+ <Select value={studentCourseId} onValueChange={(v) => onScopeChange({ studentCourseId: v })}>
+ <SelectTrigger id="doc-student-course" className="h-9">
  <SelectValue placeholder="Pick a course" />
  </SelectTrigger>
  <SelectContent>
@@ -195,9 +211,9 @@ export function TeacherDocumentsTab({
  disabled={!matrixScheduleId}
  >
  <div className="space-y-1.5">
- <Label className="text-xs">Class</Label>
- <Select value={matrixScheduleId} onValueChange={setMatrixScheduleId}>
- <SelectTrigger className="h-9">
+ <Label htmlFor="doc-matrix-class" className="text-xs">Class</Label>
+ <Select value={matrixScheduleId} onValueChange={(v) => onScopeChange({ matrixScheduleId: v })}>
+ <SelectTrigger id="doc-matrix-class" className="h-9">
  <SelectValue placeholder="Pick a class" />
  </SelectTrigger>
  <SelectContent>
@@ -221,9 +237,9 @@ export function TeacherDocumentsTab({
  >
  <div className="grid grid-cols-2 gap-2">
  <div className="space-y-1.5">
- <Label className="text-xs">Class</Label>
- <Select value={dayScheduleId} onValueChange={setDayScheduleId}>
- <SelectTrigger className="h-9">
+ <Label htmlFor="doc-day-class" className="text-xs">Class</Label>
+ <Select value={dayScheduleId} onValueChange={(v) => onScopeChange({ dayScheduleId: v })}>
+ <SelectTrigger id="doc-day-class" className="h-9">
  <SelectValue placeholder="Class" />
  </SelectTrigger>
  <SelectContent>
@@ -236,8 +252,15 @@ export function TeacherDocumentsTab({
  </Select>
  </div>
  <div className="space-y-1.5">
- <Label className="text-xs">Date</Label>
- <Input type="date" value={dayDate} max={todayISO()} onChange={(e) => setDayDate(e.target.value)} className="h-9" />
+ <Label htmlFor="doc-day-date" className="text-xs">Date</Label>
+ <Input
+ id="doc-day-date"
+ type="date"
+ value={dayDate}
+ max={todayISO()}
+ onChange={(e) => onScopeChange({ dayDate: e.target.value })}
+ className="h-9"
+ />
  </div>
  </div>
  </DocCard>
@@ -251,9 +274,9 @@ export function TeacherDocumentsTab({
  disabled={!resultsCourseId}
  >
  <div className="space-y-1.5">
- <Label className="text-xs">Course</Label>
- <Select value={resultsCourseId} onValueChange={setResultsCourseId}>
- <SelectTrigger className="h-9">
+ <Label htmlFor="doc-results-course" className="text-xs">Course</Label>
+ <Select value={resultsCourseId} onValueChange={(v) => onScopeChange({ resultsCourseId: v })}>
+ <SelectTrigger id="doc-results-course" className="h-9">
  <SelectValue placeholder="Pick a course" />
  </SelectTrigger>
  <SelectContent>

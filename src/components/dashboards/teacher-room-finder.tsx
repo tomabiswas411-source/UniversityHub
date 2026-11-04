@@ -11,7 +11,7 @@
  when the finder is visible, never polled.
 ============================================================ */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, DoorOpen, Loader2, RefreshCw, Search } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiGet } from "@/lib/api-client";
@@ -63,23 +63,29 @@ export function RoomFinder({
  const [data, setData] = useState<FreeRoomsResponse | null>(null);
  const [loading, setLoading] = useState(false);
  const [q, setQ] = useState("");
+ /* Stale-response guard: rapid day/slot switching fires overlapping
+    GETs — only the newest response may render. */
+ const reqSeq = useRef(0);
 
  const load = useCallback(async () => {
  if (!day || !slotId) return;
+ const seq = ++reqSeq.current;
  setLoading(true);
  try {
  const res = await apiGet<FreeRoomsResponse>(
  `/api/teacher/free-rooms?day=${encodeURIComponent(day)}&timeSlotId=${encodeURIComponent(slotId)}`
  );
+ if (seq !== reqSeq.current) return; // stale — newer (day, slot) picked
  setData(res);
  } catch (err) {
+ if (seq !== reqSeq.current) return;
  toast({
  title: "Couldn't check rooms",
  description: err instanceof Error ? err.message : "Please try again.",
  variant: "destructive",
  });
  } finally {
- setLoading(false);
+ if (seq === reqSeq.current) setLoading(false);
  }
  }, [day, slotId]);
 
@@ -126,9 +132,9 @@ export function RoomFinder({
 
  <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
  <div className="space-y-1">
- <Label className="text-xs">Day</Label>
+ <Label htmlFor="rf-day" className="text-xs">Day</Label>
  <Select value={day} onValueChange={setDay}>
- <SelectTrigger className="h-9">
+ <SelectTrigger id="rf-day" className="h-9">
  <SelectValue placeholder="Pick a day" />
  </SelectTrigger>
  <SelectContent>
@@ -141,9 +147,9 @@ export function RoomFinder({
  </Select>
  </div>
  <div className="space-y-1">
- <Label className="text-xs">Time slot</Label>
+ <Label htmlFor="rf-slot" className="text-xs">Time slot</Label>
  <Select value={slotId} onValueChange={setSlotId}>
- <SelectTrigger className="h-9">
+ <SelectTrigger id="rf-slot" className="h-9">
  <SelectValue placeholder="Pick a slot" />
  </SelectTrigger>
  <SelectContent>

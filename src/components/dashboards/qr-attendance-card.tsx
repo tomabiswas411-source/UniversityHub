@@ -103,12 +103,34 @@ export function QRAttendanceCard({
   const [exporting, setExporting] = useState(false);
   const [summary, setSummary] = useState<{ present: number; absent: number; total: number } | null>(null);
   const qrBoxRef = useRef<HTMLDivElement | null>(null);
+  /* Mirror of `session` for async callbacks that must not clobber a
+     freshly-created local session (stale resume / supersede logic). */
+  const sessionRef = useRef(session);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   /* Start a QR window */
   const startSession = useCallback(async () => {
     if (!scheduleId) return;
     setStarting(true);
     try {
+      // Supersede safely: if a previous window for this class+date
+      // expired WITHOUT being finalized, close it out first so students
+      // who never scan the new code still get their absent record from
+      // the old window (the server also auto-finalizes superseded
+      // sessions on creation — this keeps the roster fresh right away).
+      if (session && phase === "expired") {
+        try {
+          await apiPost<{ absentMarked: number; absentTotal: number }> (
+            "/api/teacher/attendance-finalize",
+            { sessionId: session.id }
+          );
+          onRosterRefresh();
+        } catch {
+          /* best-effort — never block the new window on this */
+        }
+      }
       // One-time position fix when location check is on (HTTPS required;
       // Vercel serves over HTTPS so this works in real classrooms).
       let coords: { lat: number; lng: number } | null = null;
@@ -174,7 +196,7 @@ export function QRAttendanceCard({
     } finally {
       setStarting(false);
     }
-  }, [scheduleId, date, duration, geoOn, geoRadius]);
+  }, [scheduleId, date, duration, geoOn, geoRadius, session, phase, onRosterRefresh]);
 
   /* Countdown — 1s local tick; server remains the authority */
   useEffect(() => {
@@ -188,23 +210,26 @@ export function QRAttendanceCard({
   }, [phase, session]);
 
   /* Resume — if the teacher reloads the page mid-session, pick the
-     still-active window back up from the server (QR rebuilt locally). */
-  const resumedRef = useRef(false);
-  /* arm the resume effect whenever the class changes (must run BEFORE
-     the resume effect on the same render pass) */
+     still-active window back up from the server (QR rebuilt locally).
+     Keyed on class AND date; stale responses are dropped when the
+     teacher has already moved on or started a local session. */
+  const resumedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    resumedRef.current = false;
-  }, [scheduleId]);
-  useEffect(() => {
-    if (!scheduleId || resumedRef.current) return;
-    resumedRef.current = true;
+    if (!scheduleId || !date) return;
+    const key = `${scheduleId}|${date}`;
+    if (resumedKeyRef.current === key) return;
+    resumedKeyRef.current = key;
+    let cancelled = false;
     (async () => {
       try {
-        const d = await apiGet<{ sessions: { id: string; token: string; presentCount: number; closed: boolean; expiresAt: string }[] }>(
-          `/api/attendance/session?scheduleId=${encodeURIComponent(scheduleId)}`
-        );
+        const d = await apiGet<{
+          sessions: { id: string; token: string; date: string; presentCount: number; closed: boolean; expiresAt: string }[];
+        }>(`/api/attendance/session?scheduleId=${encodeURIComponent(scheduleId)}`);
+        // Stale guards: class/date changed again while fetching, or the
+        // teacher already opened a session locally — never clobber it.
+        if (cancelled || sessionRef.current) return;
         const live = d.sessions.find(
-          (s) => !s.closed && new Date(s.expiresAt).getTime() > Date.now()
+          (s) => s.date === date && !s.closed && new Date(s.expiresAt).getTime() > Date.now()
         );
         if (!live) return;
         const shareUrl = `${window.location.origin}/?view=attend&k=${live.token}`;
@@ -214,6 +239,7 @@ export function QRAttendanceCard({
           errorCorrectionLevel: "M",
           color: { dark: "#1c2a1f", light: "#ffffff" },
         });
+        if (cancelled || sessionRef.current) return; // re-check after the QR build
         const exp = new Date(live.expiresAt).getTime();
         setSession({ id: live.id, token: live.token, url: shareUrl, exp });
         setQrData(dataUrl);
@@ -224,7 +250,10 @@ export function QRAttendanceCard({
         /* resume is best-effort only */
       }
     })();
-  }, [scheduleId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [scheduleId, date]);
 
   /* Live poll — 3s tiny fetch, ONLY while active; self-stops otherwise */
   useEffect(() => {
@@ -521,17 +550,19 @@ export function QRAttendanceCard({
           <div className="flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
             <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
             <div className="min-w-0">
-              <p className="text-sm font-bold text-amber-800 dark:text-amber-300">The check-in window has ended</p>
+              <p className="text-sm font-bold text-amber-800 dark:text-amber-300">
+                Window expired — students who didn&apos;t scan are still unmarked
+              </p>
               <p className="text-xs text-amber-700/90 dark:text-amber-400/80">
-                {scanned} of {totalStudents} students scanned. Close the session to mark the rest absent
-                (they get an automatic notification), or start a fresh QR for latecomers.
+                {scanned} of {totalStudents} scanned so far. Mark the rest absent now (they get an
+                automatic notification), or open a fresh QR window for latecomers.
               </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" className={cn(GRADIENT_BTN, "h-9")} onClick={() => void finalize()} disabled={closing}>
               {closing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCheck className="mr-2 h-4 w-4" />}
-              Close & mark rest absent
+              Mark rest absent
             </Button>
             <Button variant="outline" size="sm" className="h-9" onClick={() => void startSession()} disabled={starting}>
               {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}

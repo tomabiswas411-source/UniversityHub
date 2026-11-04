@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
-import { ApiError } from "@/lib/session";
+import { ApiError, requireSession } from "@/lib/session";
 import type {
  CourseDTO,
  DepartmentDTO,
@@ -24,6 +24,7 @@ function todayStr(): string {
 /**
  * GET /api/department?id=...&programId=...&semester=...
  * Public department detail: info, programs, teachers, notices, routine.
+ * Hidden when the department OR its parent university is deactivated.
  */
 export async function GET(req: NextRequest) {
  return handle(async () => {
@@ -37,10 +38,12 @@ export async function GET(req: NextRequest) {
  const department = await db.department.findUnique({
  where: { id },
  include: {
- university: { select: { id: true, name: true, slug: true, shortName: true } },
+ university: {
+ select: { id: true, name: true, slug: true, shortName: true, isActive: true },
+ },
  },
  });
- if (!department || !department.isActive) {
+ if (!department || !department.isActive || !department.university.isActive) {
  throw new ApiError(404, "Department not found");
  }
 
@@ -255,5 +258,183 @@ export async function GET(req: NextRequest) {
  changes,
  courses,
  };
+ });
+}
+
+/* ============================================================
+ Super-admin department CRUD — used by the Super Admin panel.
+ POST /api/department { universityId, name, shortName?, code?, ... }
+ PUT /api/department?id=... { name?, shortName?, code?, ... }
+ DELETE /api/department?id=... (safe delete — refuses when in use)
+ All three are super_admin-only, matching the admin panel usage.
+ ============================================================ */
+
+/** Trimmed string or null — treats "" / whitespace-only as absent. */
+function optStr(v: unknown): string | null {
+ if (typeof v !== "string") return null;
+ const s = v.trim();
+ return s ? s : null;
+}
+
+/** Guard: only super_admin may create/update/delete departments. */
+async function requireSuperAdmin() {
+ const session = await requireSession();
+ if (session.role !== "super_admin") {
+ throw new ApiError(403, "Super admin access required");
+ }
+ return session;
+}
+
+/** Names and codes are unique per university (case-insensitive). */
+async function assertNoDeptConflict(
+ universityId: string,
+ opts: { name: string; code: string; excludeId?: string }
+) {
+ const siblings = await db.department.findMany({
+ where: {
+ universityId,
+ ...(opts.excludeId ? { id: { not: opts.excludeId } } : {}),
+ },
+ select: { name: true, code: true },
+ });
+ const lowerName = opts.name.toLowerCase();
+ const lowerCode = opts.code.toLowerCase();
+ if (siblings.some((d) => d.name.toLowerCase() === lowerName)) {
+ throw new ApiError(
+ 409,
+ "A department with this name already exists in this university"
+ );
+ }
+ if (siblings.some((d) => d.code.toLowerCase() === lowerCode)) {
+ throw new ApiError(
+ 409,
+ "A department with this code already exists in this university"
+ );
+ }
+}
+
+export async function POST(req: NextRequest) {
+ return handle(async () => {
+ await requireSuperAdmin();
+ const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+ const universityId =
+ typeof body.universityId === "string" ? body.universityId.trim() : "";
+ const name = optStr(body.name);
+ if (!universityId || !name) {
+ throw new ApiError(400, "universityId and name are required");
+ }
+
+ const university = await db.university.findUnique({
+ where: { id: universityId },
+ });
+ if (!university) throw new ApiError(404, "University not found");
+
+ // shortName/code are schema-required — derive a sensible default
+ const shortName =
+ optStr(body.shortName) ||
+ name.replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase() ||
+ "DEPT";
+ const code = optStr(body.code) || shortName.toUpperCase();
+
+ await assertNoDeptConflict(universityId, { name, code });
+
+ const department = await db.department.create({
+ data: {
+ universityId,
+ name,
+ shortName,
+ code,
+ description: optStr(body.description),
+ building: optStr(body.building),
+ contactEmail: optStr(body.contactEmail),
+ contactPhone: optStr(body.contactPhone),
+ },
+ });
+ return { department };
+ });
+}
+
+export async function PUT(req: NextRequest) {
+ return handle(async () => {
+ await requireSuperAdmin();
+ const { searchParams } = new URL(req.url);
+ const id = searchParams.get("id");
+ if (!id) throw new ApiError(400, "id query param is required");
+ const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+
+ const existing = await db.department.findUnique({ where: { id } });
+ if (!existing) throw new ApiError(404, "Department not found");
+
+ const data: Record<string, unknown> = {};
+ // Schema-required fields fall back to current values when cleared
+ const name = optStr(body.name) ?? existing.name;
+ const shortName = optStr(body.shortName) ?? existing.shortName;
+ const code = optStr(body.code) ?? existing.code;
+ if (name !== existing.name) data.name = name;
+ if (shortName !== existing.shortName) data.shortName = shortName;
+ if (code !== existing.code) data.code = code;
+
+ if (body.description !== undefined) data.description = optStr(body.description);
+ if (body.building !== undefined) data.building = optStr(body.building);
+ if (body.contactEmail !== undefined) data.contactEmail = optStr(body.contactEmail);
+ if (body.contactPhone !== undefined) data.contactPhone = optStr(body.contactPhone);
+ if (body.facebookURL !== undefined) data.facebookURL = optStr(body.facebookURL);
+ if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
+
+ const nameChanged = typeof data.name === "string" && data.name !== existing.name;
+ const codeChanged = typeof data.code === "string" && data.code !== existing.code;
+ if (nameChanged || codeChanged) {
+ await assertNoDeptConflict(existing.universityId, {
+ name: typeof data.name === "string" ? data.name : existing.name,
+ code: typeof data.code === "string" ? data.code : existing.code,
+ excludeId: id,
+ });
+ }
+
+ const department = await db.department.update({ where: { id }, data });
+ return { department };
+ });
+}
+
+export async function DELETE(req: NextRequest) {
+ return handle(async () => {
+ await requireSuperAdmin();
+ const { searchParams } = new URL(req.url);
+ const id = searchParams.get("id");
+ if (!id) throw new ApiError(400, "id query param is required");
+
+ const existing = await db.department.findUnique({ where: { id } });
+ if (!existing) throw new ApiError(404, "Department not found");
+
+ // Safe delete — refuse while the department still holds content that
+ // would be cascade-destroyed (users / courses / schedules / notices /
+ // programs / rooms / time slots).
+ const [users, courses, schedules, notices, programs, rooms, timeSlots] =
+ await Promise.all([
+ db.user.count({ where: { departmentId: id } }),
+ db.course.count({ where: { departmentId: id } }),
+ db.schedule.count({ where: { departmentId: id } }),
+ db.notice.count({ where: { departmentId: id } }),
+ db.program.count({ where: { departmentId: id } }),
+ db.room.count({ where: { departmentId: id } }),
+ db.timeSlot.count({ where: { departmentId: id } }),
+ ]);
+ const blocks: string[] = [];
+ if (users) blocks.push(`${users} user${users === 1 ? "" : "s"}`);
+ if (courses) blocks.push(`${courses} course${courses === 1 ? "" : "s"}`);
+ if (schedules) blocks.push(`${schedules} schedule${schedules === 1 ? "" : "s"}`);
+ if (notices) blocks.push(`${notices} notice${notices === 1 ? "" : "s"}`);
+ if (programs) blocks.push(`${programs} program${programs === 1 ? "" : "s"}`);
+ if (rooms) blocks.push(`${rooms} room${rooms === 1 ? "" : "s"}`);
+ if (timeSlots) blocks.push(`${timeSlots} time slot${timeSlots === 1 ? "" : "s"}`);
+ if (blocks.length > 0) {
+ throw new ApiError(
+ 409,
+ `Department has ${blocks.join(", ")} — reassign or deactivate instead`
+ );
+ }
+
+ await db.department.delete({ where: { id } });
+ return { deleted: true };
  });
 }

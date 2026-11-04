@@ -160,7 +160,20 @@ export function PricingView({ navigate }: PricingViewProps) {
  </Card>
  )}
 
- {!loading && !error && (
+ {!loading && !error && plans.length === 0 && (
+ <Card className="max-w-md mx-auto rounded-3xl">
+ <CardContent className="pt-6 pb-6 text-center">
+ <Sparkles className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+ <p className="text-base font-bold">No plans published yet</p>
+ <p className="mt-1 text-sm text-muted-foreground">
+ Subscription plans will appear here once published — early
+ adopter institutions currently get in free.
+ </p>
+ </CardContent>
+ </Card>
+ )}
+
+ {!loading && !error && plans.length > 0 && (
  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch">
  {plans.map((plan, idx) => {
  const isRecommended = plan.slug === recommendedSlug;
@@ -232,6 +245,15 @@ export function PricingView({ navigate }: PricingViewProps) {
  ))}
  </CardContent>
  <CardFooter>
+ {user ? (
+ /* Logged-in (staff) visitors don't pick plans here — send them to their dashboard instead */
+ <Button
+ className="w-full h-11 rounded-xl bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25"
+ onClick={() => navigate("dashboard")}
+ >
+ <LayoutDashboard className="w-4 h-4 mr-2" /> Go to Dashboard
+ </Button>
+ ) : (
  <Button
  className={`w-full h-11 rounded-xl ${
  isRecommended
@@ -242,6 +264,7 @@ export function PricingView({ navigate }: PricingViewProps) {
  >
  {plan.slug === "free" ? "Start Free" : "Request Access"}
  </Button>
+ )}
  </CardFooter>
  </Card>
  </motion.div>

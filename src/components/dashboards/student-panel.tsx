@@ -29,8 +29,7 @@ import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "@/hooks/use-toast";
-import { apiGet } from "@/lib/api-client";
+import { apiGet, apiPatch } from "@/lib/api-client";
 import { useAuthStore } from "@/store/auth-store";
 import {
  CategoryBadge,
@@ -49,12 +48,13 @@ import {
  MetricRing,
  PerfLineChart,
 } from "@/components/dashboards/analytics-charts";
-import { timeAgo } from "@/components/shared/notification-bell";
+import { timeAgo, typeIcon } from "@/components/shared/notification-bell";
 import type {
  AcademicCalendarDTO,
  AssignmentDTO,
  DayOfWeek,
  NoticeDTO,
+ NotificationDTO,
  ResultDTO,
  ScheduleChangeDTO,
  ScheduleDTO,
@@ -134,9 +134,16 @@ interface StudentAnalytics {
 /* ---------------- local helpers ---------------- */
 
 function currentDay(): DayOfWeek {
- return new Date()
- .toLocaleDateString("en-US", { weekday: "long" })
- .toLowerCase() as DayOfWeek;
+ // The API computes "today" on the server (Asia/Dhaka) — derive the
+ // same weekday in the browser so the "Today's Classes" timeline and
+ // stat card agree with the data no matter which timezone the
+ // student's phone is set to. Weekday strings match the schedule's
+ // dayOfWeek values ("saturday"…"friday").
+ const weekday = new Intl.DateTimeFormat("en-US", {
+ timeZone: "Asia/Dhaka",
+ weekday: "long",
+ }).format(new Date());
+ return weekday.toLowerCase() as DayOfWeek;
 }
 
 function fmtDate(iso: string): string {
@@ -264,13 +271,8 @@ export function StudentPanel() {
  const res = await apiGet<StudentDashboardData>("/api/student/dashboard");
  setData(res);
  } catch (err) {
- const message = err instanceof Error ? err.message : "Something went wrong";
- setError(message);
- toast({
- title: "Couldn't load your dashboard",
- description: message,
- variant: "destructive",
- });
+ // surfaced via the error card below — a toast on top of it is noise
+ setError(err instanceof Error ? err.message : "Something went wrong");
  } finally {
  setLoading(false);
  }
@@ -279,6 +281,67 @@ export function StudentPanel() {
  useEffect(() => {
  void load();
  }, [load]);
+
+ /* ---- notifications feed (Alerts tab + live unread count) ---- */
+ const [notifs, setNotifs] = useState<NotificationDTO[]>([]);
+ const [notifUnread, setNotifUnread] = useState<number | null>(null);
+ const [notifsLoading, setNotifsLoading] = useState(true);
+ const [notifsErr, setNotifsErr] = useState<string | null>(null);
+ const [markingAll, setMarkingAll] = useState(false);
+
+ const loadNotifications = useCallback(async () => {
+ setNotifsLoading(true);
+ setNotifsErr(null);
+ try {
+ const res = await apiGet<{
+ notifications: NotificationDTO[];
+ unreadCount: number;
+ }>("/api/notifications");
+ setNotifs(res.notifications);
+ setNotifUnread(res.unreadCount);
+ } catch (err) {
+ setNotifsErr(
+ err instanceof Error ? err.message : "Couldn't load notifications"
+ );
+ } finally {
+ setNotifsLoading(false);
+ }
+ }, []);
+
+ useEffect(() => {
+ void loadNotifications();
+ }, [loadNotifications]);
+
+ const markAllNotifsRead = useCallback(async () => {
+ setMarkingAll(true);
+ setNotifs((prev) => prev.map((n) => ({ ...n, isRead: true })));
+ setNotifUnread(0);
+ try {
+ await apiPatch("/api/notifications", { all: true });
+ await loadNotifications(); // re-sync with the server
+ } catch {
+ // optimistic — keep local state on failure
+ } finally {
+ setMarkingAll(false);
+ }
+ }, [loadNotifications]);
+
+ const markNotifRead = useCallback(
+ async (id: string) => {
+ const target = notifs.find((n) => n.id === id);
+ if (!target || target.isRead) return;
+ setNotifs((prev) =>
+ prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
+ );
+ setNotifUnread((c) => Math.max(0, (c ?? 0) - 1));
+ try {
+ await apiPatch("/api/notifications", { ids: [id] });
+ } catch {
+ // optimistic — silent
+ }
+ },
+ [notifs]
+ );
 
  /* ---- profile (API is source of truth, auth store as fallback) ---- */
  const profile = data?.profile ?? null;
@@ -446,7 +509,8 @@ export function StudentPanel() {
  <StatCard
  icon={CalendarClock}
  label="Today's Classes"
- value={data?.todayClasses ?? 0}
+ value={todayList.length}
+ sub={todayLabel}
  tone="amber"
  delay={0}
  />
@@ -477,7 +541,7 @@ export function StudentPanel() {
  <StatCard
  icon={Bell}
  label="Unread Alerts"
- value={data?.unreadCount ?? 0}
+ value={notifUnread ?? data?.unreadCount ?? 0}
  sub="See the Alerts tab"
  tone="rose"
  delay={0.15}
@@ -589,8 +653,16 @@ export function StudentPanel() {
  {(data?.schedules ?? []).length === 0 || (data?.timeSlots ?? []).length === 0 ? (
  <EmptyState
  icon={CalendarDays}
- title="No routine published yet"
- hint="Your weekly class routine will appear here once scheduled."
+ title={
+ (data?.schedules ?? []).length > 0
+ ? "Timetable is being prepared — check back soon."
+ : "No routine published yet"
+ }
+ hint={
+ (data?.schedules ?? []).length > 0
+ ? "Classes are scheduled — the weekly grid appears once time slots are set."
+ : "Your weekly class routine will appear here once scheduled."
+ }
  />
  ) : (
  <TimetableGrid schedules={data?.schedules ?? []} timeSlots={data?.timeSlots ?? []} />
@@ -648,7 +720,7 @@ export function StudentPanel() {
  hint="Department announcements will appear here."
  />
  ) : (
- <div className="max-h-96 divide-y overflow-y-auto pr-1">
+ <div className="max-h-[60vh] divide-y overflow-y-auto pr-1 sm:max-h-96">
  {(data?.notices ?? []).map((n) => {
  const isExpanded = !!expandedNotices[n.id];
  const showToggle =
@@ -1029,7 +1101,96 @@ export function StudentPanel() {
 
  {/* ===== Alerts ===== */}
  <TabsContent value="alerts" className="mt-4">
- <motion.div {...tabMotion}>
+ <motion.div {...tabMotion} className="space-y-6">
+ {/* Notifications — the list behind the "Unread Alerts" badge */}
+ <SectionCard
+ title="Notifications"
+ icon={Bell}
+ action={
+ <Button
+ variant="ghost"
+ size="sm"
+ className="h-8 rounded-full px-3 text-xs text-green hover:text-green"
+ onClick={() => void markAllNotifsRead()}
+ disabled={markingAll || (notifUnread ?? 0) === 0}
+ >
+ Mark all read
+ </Button>
+ }
+ >
+ {notifsLoading ? (
+ <p className="py-6 text-center text-sm text-muted-foreground">
+ Loading notifications…
+ </p>
+ ) : notifs.length === 0 && notifsErr ? (
+ <div className="flex flex-col items-center gap-3 py-6 text-center">
+ <p className="text-sm text-muted-foreground">{notifsErr}</p>
+ <Button
+ variant="outline"
+ size="sm"
+ onClick={() => void loadNotifications()}
+ >
+ <RefreshCw className="mr-2 h-4 w-4" aria-hidden /> Retry
+ </Button>
+ </div>
+ ) : notifs.length === 0 ? (
+ <EmptyState
+ icon={Bell}
+ title="No notifications yet"
+ hint="Class changes, results and announcements will ping you here."
+ />
+ ) : (
+ <div className="max-h-[60vh] divide-y overflow-y-auto pr-1 sm:max-h-96">
+ {notifs.map((n) => {
+ const { Icon, cls } = typeIcon(n.type);
+ return (
+ <button
+ key={n.id}
+ type="button"
+ onClick={() => void markNotifRead(n.id)}
+ title={n.isRead ? undefined : "Mark as read"}
+ className={cn(
+ "flex w-full items-start gap-3 py-3 text-left transition-colors first:pt-0 last:pb-0 hover:bg-accent/40",
+ !n.isRead && "bg-gold/5"
+ )}
+ >
+ <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background shadow-sm">
+ <Icon className={cn("h-4 w-4", cls)} aria-hidden />
+ </span>
+ <span className="min-w-0 flex-1">
+ <span className="flex items-center gap-1.5">
+ {!n.isRead && (
+ <span
+ className="h-1.5 w-1.5 shrink-0 rounded-full bg-gold"
+ aria-hidden
+ />
+ )}
+ <span
+ className={cn(
+ "truncate text-sm",
+ n.isRead
+ ? "font-medium text-muted-foreground"
+ : "font-semibold"
+ )}
+ >
+ {n.title}
+ </span>
+ </span>
+ <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+ {n.body}
+ </span>
+ <span className="mt-1 block text-[11px] text-muted-foreground/70">
+ {timeAgo(n.createdAt)}
+ </span>
+ </span>
+ {!n.isRead && <span className="sr-only">Unread</span>}
+ </button>
+ );
+ })}
+ </div>
+ )}
+ </SectionCard>
+
  <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
  <SectionCard
  title="Class Changes"
@@ -1049,7 +1210,7 @@ export function StudentPanel() {
  hint="Cancellations and reschedules will show up here."
  />
  ) : (
- <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
+ <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1 sm:max-h-96">
  {sortedChanges.map((c) => (
  <ChangeRow key={c.id} change={c} />
  ))}
@@ -1065,7 +1226,7 @@ export function StudentPanel() {
  hint="Exams, holidays and events will appear here."
  />
  ) : (
- <div className="max-h-96 divide-y overflow-y-auto pr-1">
+ <div className="max-h-[60vh] divide-y overflow-y-auto pr-1 sm:max-h-96">
  {sortedCalendar.map((e) => {
  const d = new Date(e.date);
  return (

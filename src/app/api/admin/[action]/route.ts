@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
+import { hashPassword } from "@/lib/auth";
 
 /**
  * Super Admin API.
@@ -68,7 +69,14 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
  if (action === "analytics") {
  // Day 43 — platform growth & revenue insights
- const [universities, plans, roleCounts, scheduleRows, recentUsers] =
+ // Month buckets for "new users per month" — 12 bounded count() queries
+ // instead of a take-limited findMany, which undercounts at scale.
+ const now = new Date();
+ const monthBuckets = Array.from({ length: 12 }, (_, i) => ({
+ start: new Date(now.getFullYear(), now.getMonth() - (11 - i), 1),
+ end: new Date(now.getFullYear(), now.getMonth() - (11 - i) + 1, 1),
+ }));
+ const [universities, plans, roleCounts, scheduleRows, userGrowthCounts] =
  await Promise.all([
  db.university.findMany({
  include: {
@@ -83,16 +91,20 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  orderBy: { createdAt: "asc" },
  }),
  db.plan.findMany({ orderBy: { sortOrder: "asc" } }),
- db.user.groupBy({ by: ["role"], _count: { role: true } }),
+ db.user.groupBy({
+ by: ["role"],
+ _count: { role: true },
+ where: { isActive: true },
+ }),
  // schedules live on departments — map them to universities here
  db.schedule.findMany({
  select: { department: { select: { universityId: true } } },
  }),
- db.user.findMany({
- select: { createdAt: true },
- orderBy: { createdAt: "desc" },
- take: 500,
- }),
+ Promise.all(
+ monthBuckets.map((b) =>
+ db.user.count({ where: { createdAt: { gte: b.start, lt: b.end } } })
+ )
+ ),
  ]);
 
  const schedulesByUni = new Map<string, number>();
@@ -103,7 +115,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
  // Growth: universities joined per month (last 8 months)
  const months: { label: string; value: number }[] = [];
- const now = new Date();
  for (let i = 7; i >= 0; i--) {
  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
  const label = d.toLocaleDateString("en-US", { month: "short" });
@@ -114,17 +125,13 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  months.push({ label, value: count });
  }
 
- // User growth per month
- const userMonths: { label: string; value: number }[] = [];
- for (let i = 5; i >= 0; i--) {
- const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
- const label = d.toLocaleDateString("en-US", { month: "short" });
- const count = recentUsers.filter((u) => {
- const c = new Date(u.createdAt);
- return c.getFullYear() === d.getFullYear() && c.getMonth() === d.getMonth();
- }).length;
- userMonths.push({ label, value: count });
- }
+ // User growth per month — new signups in each calendar month (last 12)
+ const userMonths: { label: string; value: number }[] = monthBuckets.map(
+ (b, i) => ({
+ label: b.start.toLocaleDateString("en-US", { month: "short" }),
+ value: userGrowthCounts[i],
+ })
+ );
 
  // Plan distribution + MRR
  const planDist = plans.map((p) => ({
@@ -262,6 +269,57 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  return { university };
  }
 
+ if (action === "users") {
+ // Provision a Department Head or Teacher account inside a department
+ const { name, email, password, departmentId, role } =
+ body as Record<string, string>;
+ const cleanName = typeof name === "string" ? name.trim() : "";
+ const cleanEmail = typeof email === "string" ? email.trim() : "";
+ if (!cleanName || !cleanEmail || !password || !departmentId) {
+ throw new ApiError(400, "name, email, password and departmentId are required");
+ }
+ if (role !== "dept_admin" && role !== "teacher") {
+ throw new ApiError(400, "role must be dept_admin or teacher");
+ }
+ if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+ throw new ApiError(400, "Please provide a valid email address");
+ }
+ if (password.length < 4) {
+ throw new ApiError(400, "Password must be at least 4 characters");
+ }
+
+ const department = await db.department.findUnique({
+ where: { id: departmentId },
+ });
+ if (!department) throw new ApiError(404, "Department not found");
+
+ // Per-university email uniqueness (User.@@unique([universityId, email]))
+ const existing = await db.user.findFirst({
+ where: { universityId: department.universityId, email: cleanEmail },
+ });
+ if (existing) {
+ throw new ApiError(
+ 409,
+ "A user with this email already exists in this university"
+ );
+ }
+
+ const hashed = await hashPassword(password);
+ const user = await db.user.create({
+ data: {
+ universityId: department.universityId,
+ departmentId: department.id,
+ role, // "dept_admin" | "teacher"
+ fullName: cleanName,
+ email: cleanEmail,
+ password: hashed,
+ isActive: true,
+ },
+ });
+ const { password: _pw, ...safeUser } = user;
+ return { user: safeUser };
+ }
+
  throw new ApiError(404, "Unknown action");
  });
 }
@@ -311,7 +369,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (!id) throw new ApiError(400, "id is required");
  const data: Record<string, unknown> = {};
  if (body.name !== undefined) data.name = String(body.name);
- if (body.tagline !== undefined) data.tagline = String(body.tagline);
+ if (body.tagline !== undefined)
+ data.tagline = body.tagline == null ? null : String(body.tagline);
  if (body.priceMonthly !== undefined)
  data.priceMonthly = Number(body.priceMonthly);
  if (body.priceYearly !== undefined)

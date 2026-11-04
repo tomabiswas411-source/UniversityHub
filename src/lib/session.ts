@@ -52,13 +52,36 @@ export async function getSession(): Promise<SessionPayload | null> {
  const token = cookieStore.get(SESSION_COOKIE)?.value;
  if (!token) return null;
 
- const { payload } = await jwtVerify(token, getSecretKey());
+ // Pin the algorithm — prevents algorithm-confusion attacks on the cookie JWT.
+ const { payload } = await jwtVerify(token, getSecretKey(), {
+ algorithms: ["HS256"],
+ });
+
+ // Validate the payload shape — a tampered/malformed token must never
+ // yield a half-valid session object (empty userId/role would bypass
+ // downstream permission checks in confusing ways).
+ const VALID_ROLES: UserRole[] = [
+ "super_admin",
+ "dept_admin",
+ "teacher",
+ "student",
+ ];
+ if (typeof payload.userId !== "string" || payload.userId.length === 0) {
+ throw new Error("Invalid session payload: userId");
+ }
+ if (
+ typeof payload.role !== "string" ||
+ !VALID_ROLES.includes(payload.role as UserRole)
+ ) {
+ throw new Error("Invalid session payload: role");
+ }
+
  return {
- userId: payload.userId as string,
+ userId: payload.userId,
  role: payload.role as UserRole,
  universityId: (payload.universityId as string | null) ?? null,
  departmentId: (payload.departmentId as string | null) ?? null,
- name: payload.name as string,
+ name: (payload.name as string) ?? "",
  programId: (payload.programId as string | null) ?? null,
  semester: (payload.semester as number | null) ?? null,
  };

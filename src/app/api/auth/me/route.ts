@@ -1,5 +1,5 @@
 import { handle } from "@/lib/api-helpers";
-import { getSession, clearSession } from "@/lib/session";
+import { getSession, clearSession, ApiError } from "@/lib/session";
 import { loadSessionUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -22,10 +22,15 @@ export async function GET() {
  }
 
  return { user: { ...user, universitySlug } };
- } catch {
- // stale/invalid session — clear cookie
+ } catch (err) {
+ // Only auth-class failures (user deleted/deactivated → ApiError 401)
+ // invalidate the cookie. Unexpected errors (DB outage etc.) must NOT
+ // clear a perfectly valid session — surface a 500 instead.
+ if (err instanceof ApiError) {
  await clearSession();
  return { user: null };
+ }
+ throw err;
  }
  });
 }

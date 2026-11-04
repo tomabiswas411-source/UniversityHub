@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { handle } from "@/lib/api-helpers";
+import { handle, getClientIp, rateLimit } from "@/lib/api-helpers";
 import { findStaffByEmail, verifyPassword, toSafeUser } from "@/lib/auth";
 import { createSession, ApiError } from "@/lib/session";
 
@@ -11,6 +11,9 @@ export async function POST(req: NextRequest) {
  if (!email || !password) {
  throw new ApiError(400, "Email and password are required");
  }
+
+ // Brute-force guard: 10 attempts / 5 min per IP+email pair.
+ rateLimit(`${getClientIp(req)}:${String(email).trim().toLowerCase()}`);
 
  const user = await findStaffByEmail(email);
  if (!user || !user.password) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
  Building2,
@@ -20,6 +20,7 @@ import {
  ShieldCheck,
  Trash2,
  TrendingUp,
+ UserPlus,
  Users,
 } from "lucide-react";
 
@@ -199,6 +200,20 @@ const EMPTY_DEPT_FORM: DeptFormState = {
  contactPhone: "",
 };
 
+interface ProvisionFormState {
+ name: string;
+ email: string;
+ password: string;
+ role: "dept_admin" | "teacher";
+}
+
+const EMPTY_PROVISION_FORM: ProvisionFormState = {
+ name: "",
+ email: "",
+ password: "",
+ role: "dept_admin",
+};
+
 interface PlanDraft {
  name: string;
  tagline: string;
@@ -342,6 +357,8 @@ export function SuperAdminPanel() {
  const [expandedId, setExpandedId] = useState<string | null>(null);
  const [detail, setDetail] = useState<DetailDept[] | null>(null);
  const [deptLoading, setDeptLoading] = useState(false);
+ // Monotonic request id — stale detail responses are ignored (expand A→B race)
+ const detailReqRef = useRef(0);
  const [deptDialogOpen, setDeptDialogOpen] = useState(false);
  const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
  const [deptForm, setDeptForm] = useState<DeptFormState>(EMPTY_DEPT_FORM);
@@ -349,11 +366,17 @@ export function SuperAdminPanel() {
  const [deleteDeptTarget, setDeleteDeptTarget] = useState<DetailDept | null>(null);
  const [deleting, setDeleting] = useState(false);
 
+ /* -------- provision dept head / teacher (per department) -------- */
+ const [provisionDept, setProvisionDept] = useState<DetailDept | null>(null);
+ const [provisionForm, setProvisionForm] = useState<ProvisionFormState>(EMPTY_PROVISION_FORM);
+ const [provisionSaving, setProvisionSaving] = useState(false);
+
  /* ---------------- analytics (Day 43, lazy) ---------------- */
  const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+ // Refetch every time the analytics tab is opened — never serve a stale cache.
  const loadAnalytics = useCallback(async () => {
- if (analytics || analyticsLoading) return;
+ if (analyticsLoading) return;
  setAnalyticsLoading(true);
  try {
  setAnalytics(await apiGet<PlatformAnalytics>("/api/admin/analytics"));
@@ -362,7 +385,7 @@ export function SuperAdminPanel() {
  } finally {
  setAnalyticsLoading(false);
  }
- }, [analytics, analyticsLoading]);
+ }, [analyticsLoading]);
 
  const handleTabChange = useCallback(
  (v: string) => {
@@ -400,20 +423,23 @@ export function SuperAdminPanel() {
  }, [load]);
 
  const fetchDetail = useCallback(async (id: string) => {
+ const reqId = ++detailReqRef.current;
  setDeptLoading(true);
  try {
  const res = await apiGet<UniversityDetailResponse>(
  `/api/admin/university?id=${id}`
  );
+ if (reqId !== detailReqRef.current) return; // stale — a newer request won
  setDetail(res.university?.departments ?? []);
  } catch (err) {
+ if (reqId !== detailReqRef.current) return;
  toast({
  title: "Failed to load departments",
  description: errMsg(err),
  variant: "destructive",
  });
  } finally {
- setDeptLoading(false);
+ if (reqId === detailReqRef.current) setDeptLoading(false);
  }
  }, []);
 
@@ -628,6 +654,73 @@ export function SuperAdminPanel() {
  });
  } finally {
  setDeleting(false);
+ }
+ }
+
+ /* ---------------- provision dept head / teacher ---------------- */
+
+ function openProvision(d: DetailDept) {
+ setProvisionDept(d);
+ setProvisionForm(EMPTY_PROVISION_FORM);
+ }
+
+ async function submitProvision() {
+ if (!provisionDept) return;
+ const name = provisionForm.name.trim();
+ const email = provisionForm.email.trim();
+ const password = provisionForm.password;
+ if (!name || !email || !password) {
+ toast({
+ title: "Missing information",
+ description: "Name, email and password are required.",
+ variant: "destructive",
+ });
+ return;
+ }
+ if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+ toast({
+ title: "Invalid email",
+ description: "Please enter a valid email address.",
+ variant: "destructive",
+ });
+ return;
+ }
+ if (password.length < 4) {
+ toast({
+ title: "Weak password",
+ description: "Password must be at least 4 characters.",
+ variant: "destructive",
+ });
+ return;
+ }
+ setProvisionSaving(true);
+ try {
+ await apiPost("/api/admin/users", {
+ name,
+ email,
+ password,
+ departmentId: provisionDept.id,
+ role: provisionForm.role,
+ });
+ toast({
+ title:
+ provisionForm.role === "dept_admin"
+ ? "Department Head added"
+ : "Teacher added",
+ description: `${name} can now sign in with email + password.`,
+ });
+ setProvisionDept(null);
+ const jobs: Array<Promise<void>> = [load(true)];
+ if (expandedId) jobs.push(fetchDetail(expandedId));
+ await Promise.all(jobs);
+ } catch (err) {
+ toast({
+ title: "Could not create account",
+ description: errMsg(err),
+ variant: "destructive",
+ });
+ } finally {
+ setProvisionSaving(false);
  }
  }
 
@@ -938,6 +1031,16 @@ export function SuperAdminPanel() {
  <DeptCountChips dept={d} />
  </div>
  <div className="flex shrink-0 gap-1">
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label={`Add head or teacher to ${d.name}`}
+ title="Add Head/Teacher"
+ className="h-10 w-10 sm:h-8 sm:w-8"
+ onClick={() => openProvision(d)}
+ >
+ <UserPlus className="h-4 w-4" />
+ </Button>
  <Button
  variant="ghost"
  size="icon"
@@ -1486,6 +1589,88 @@ export function SuperAdminPanel() {
  >
  {deptSaving && <Loader2 className="h-4 w-4 animate-spin" />}
  {editingDeptId ? "Save changes" : "Add department"}
+ </Button>
+ </DialogFooter>
+ </DialogContent>
+ </Dialog>
+
+ {/* ---------- provision dept head / teacher dialog ---------- */}
+ <Dialog
+ open={!!provisionDept}
+ onOpenChange={(open) => {
+ if (!open) setProvisionDept(null);
+ }}
+ >
+ <DialogContent className="sm:max-w-md">
+ <DialogHeader>
+ <DialogTitle>Add Head / Teacher</DialogTitle>
+ <DialogDescription>
+ {provisionDept
+ ? `Create a Department Head or Teacher account inside ${provisionDept.name}. They sign in with email + password.`
+ : "Create a staff account for this department."}
+ </DialogDescription>
+ </DialogHeader>
+ <div className="grid grid-cols-1 gap-3">
+ <Field label="Full name" required>
+ <Input
+ value={provisionForm.name}
+ placeholder="Dr. Ayesha Rahman"
+ onChange={(e) =>
+ setProvisionForm((f) => ({ ...f, name: e.target.value }))
+ }
+ />
+ </Field>
+ <Field label="Email" required>
+ <Input
+ type="email"
+ value={provisionForm.email}
+ placeholder="ayesha@university.edu"
+ onChange={(e) =>
+ setProvisionForm((f) => ({ ...f, email: e.target.value }))
+ }
+ />
+ </Field>
+ <Field label="Password" required>
+ <Input
+ type="password"
+ value={provisionForm.password}
+ placeholder="At least 4 characters"
+ onChange={(e) =>
+ setProvisionForm((f) => ({ ...f, password: e.target.value }))
+ }
+ />
+ </Field>
+ <Field label="Role">
+ <Select
+ value={provisionForm.role}
+ onValueChange={(v) =>
+ setProvisionForm((f) => ({
+ ...f,
+ role: v as ProvisionFormState["role"],
+ }))
+ }
+ >
+ <SelectTrigger className="w-full">
+ <SelectValue placeholder="Select role" />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="dept_admin">Department Head</SelectItem>
+ <SelectItem value="teacher">Teacher</SelectItem>
+ </SelectContent>
+ </Select>
+ </Field>
+ </div>
+ <DialogFooter className="gap-2">
+ <Button variant="outline" onClick={() => setProvisionDept(null)}>
+ Cancel
+ </Button>
+ <Button
+ className={cn("h-10", GRADIENT_BTN)}
+ onClick={() => void submitProvision()}
+ disabled={provisionSaving}
+ >
+ {provisionSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+ Create account
  </Button>
  </DialogFooter>
  </DialogContent>

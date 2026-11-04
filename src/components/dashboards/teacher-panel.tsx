@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
  AlertTriangle,
@@ -10,11 +10,13 @@ import {
  CalendarClock,
  CalendarDays,
  CheckCheck,
+ ChevronRight,
  ClipboardCheck,
  ClipboardList,
  Clock,
  GraduationCap,
  History,
+ ListChecks,
  Loader2,
  MapPin,
  Megaphone,
@@ -29,10 +31,6 @@ import {
  UserCheck,
  Users,
 } from "lucide-react";
-import {
-  ChevronRight,
-  ListChecks,
-} from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -41,8 +39,14 @@ import { timeAgo } from "@/components/shared/notification-bell";
 import { QRAttendanceCard } from "@/components/dashboards/qr-attendance-card";
 import { ClassActionDialog } from "@/components/dashboards/class-action-dialog";
 import { RoomFinder } from "@/components/dashboards/teacher-room-finder";
-import { TeacherStudentsTab } from "@/components/dashboards/teacher-students-tab";
-import { TeacherDocumentsTab } from "@/components/dashboards/teacher-documents-tab";
+import {
+ TeacherStudentsTab,
+ type StudentsScopeState,
+} from "@/components/dashboards/teacher-students-tab";
+import {
+ TeacherDocumentsTab,
+ type DocumentsScopeState,
+} from "@/components/dashboards/teacher-documents-tab";
 import {
  ChangeTypeBadge,
  CategoryBadge,
@@ -164,6 +168,28 @@ function todayISO(): string {
  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+/* The university runs on Asia/Dhaka time — the schedule "today", the
+   next-class highlight and change effective-dates all use it, so the
+   dashboard stays consistent no matter where the teacher travels. */
+const DHAKA_TZ = "Asia/Dhaka";
+
+/** Today's date (YYYY-MM-DD) in Asia/Dhaka. */
+function bdTodayISO(): string {
+ return new Intl.DateTimeFormat("en-CA", { timeZone: DHAKA_TZ }).format(new Date());
+}
+
+/** Current weekday ("monday"…) in Asia/Dhaka. */
+function bdWeekday(): string {
+ return new Intl.DateTimeFormat("en-US", { timeZone: DHAKA_TZ, weekday: "long" })
+ .format(new Date())
+ .toLowerCase();
+}
+
+/** A schedule change is "live" only once its effective date has arrived. */
+function isChangeEffective(effectiveDate: string): boolean {
+ return effectiveDate.slice(0, 10) <= bdTodayISO();
+}
+
 function fmtDate(value: string): string {
  const d = new Date(value.length === 10 ? `${value}T00:00:00` : value);
  if (Number.isNaN(d.getTime())) return value;
@@ -175,9 +201,29 @@ function dayLabel(day: string | null): string | null {
  return (DAY_LABELS as Record<string, string>)[day] ?? day;
 }
 
+/** "→ Fri 10:00 · Room 302" style summary of where a change moves the class. */
+function changeTargetSuffix(c: ScheduleChangeDTO | null | undefined): string | null {
+ if (!c || c.changeType === "cancelled") return null;
+ const parts: string[] = [];
+ if (c.changeType !== "room_changed") {
+ const day = c.newDay ? dayLabel(c.newDay) : null;
+ if (day) parts.push(day);
+ if (c.newStartTime) parts.push(c.newStartTime);
+ }
+ if (c.newRoomNumber) parts.push(`Room ${c.newRoomNumber}`);
+ return parts.length > 0 ? `→ ${parts.join(" · ")}` : null;
+}
+
+function hhmmToMinutes(t: string): number {
+ const [h, m] = t.split(":").map(Number);
+ return (h || 0) * 60 + (m || 0);
+}
+
 function dueChip(due: string | null): { text: string; cls: string } {
  if (!due) return { text: "No due date", cls: "bg-muted text-muted-foreground" };
- const d = new Date(`${due}T23:59:59`);
+ // Accept both "YYYY-MM-DD" and full ISO timestamps ("…T00:00:00.000Z") —
+ // appending T23:59:59 to a full ISO string would produce Invalid Date.
+ const d = new Date(due.length === 10 ? `${due}T23:59:59` : due);
  if (Number.isNaN(d.getTime())) return { text: due, cls: "bg-muted text-muted-foreground" };
  const diffDays = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
  if (diffDays < 0)
@@ -226,6 +272,32 @@ export function TeacherPanel() {
  const [timeSlots, setTimeSlots] = useState<TimeSlotDTO[]>([]);
  const [stats, setStats] = useState({ totalClasses: 0, todayClasses: 0, totalCourses: 0, myStudents: 0 });
  const [activeTab, setActiveTab] = useState("schedule");
+
+ /* ---------------- Students / Documents scope (lifted) ----------------
+ Kept here so switching between tabs doesn't wipe the teacher's
+ course/program selection, search text or row selection — the tabs
+ themselves keep doing the data fetching. */
+ const [studentsScope, setStudentsScope] = useState<StudentsScopeState>({
+ scopeMode: "course",
+ courseId: "",
+ programId: "",
+ semester: "1",
+ search: "",
+ selectedIds: [],
+ });
+ const patchStudentsScope = useCallback((patch: Partial<StudentsScopeState>) => {
+ setStudentsScope((prev) => ({ ...prev, ...patch }));
+ }, []);
+ const [documentsScope, setDocumentsScope] = useState<DocumentsScopeState>({
+ studentCourseId: "",
+ matrixScheduleId: "",
+ dayScheduleId: "",
+ dayDate: "",
+ resultsCourseId: "",
+ });
+ const patchDocumentsScope = useCallback((patch: Partial<DocumentsScopeState>) => {
+ setDocumentsScope((prev) => ({ ...prev, ...patch }));
+ }, []);
 
  /* ---------------- insights (Day 42, lazy-loaded) ---------------- */
  interface TeacherInsights {
@@ -282,9 +354,13 @@ export function TeacherPanel() {
  const [attBatchCounts, setAttBatchCounts] = useState<{ semester: number; count: number }[]>([]);
  const [attLoading, setAttLoading] = useState(false);
  const [attSaving, setAttSaving] = useState(false);
+ /* Request-sequence guard: switching class/date fires overlapping loads —
+    only the newest response may touch state (stale-response race guard). */
+ const attReqSeq = useRef(0);
 
  const loadAttendance = useCallback(async (scheduleId: string, date: string) => {
  if (!scheduleId) {
+ attReqSeq.current += 1; // invalidate any in-flight fetch
  setAttStudents([]);
  setAttStatuses({});
  setAttSchedule(null);
@@ -292,6 +368,7 @@ export function TeacherPanel() {
  setAttBatchCounts([]);
  return;
  }
+ const seq = ++attReqSeq.current;
  setAttLoading(true);
  try {
  const data = await apiGet<{
@@ -302,15 +379,17 @@ export function TeacherPanel() {
  recentDates: string[];
  batchCounts?: { semester: number; count: number }[];
  }>(`/api/teacher/attendance?scheduleId=${encodeURIComponent(scheduleId)}&date=${encodeURIComponent(date)}`);
+ if (seq !== attReqSeq.current) return; // stale — a newer load superseded it
  setAttSchedule(data.schedule);
  setAttStudents(data.students);
  setAttStatuses({ ...data.existing });
  setAttRecentDates(data.recentDates ?? []);
  setAttBatchCounts(data.batchCounts ?? []);
  } catch (err) {
+ if (seq !== attReqSeq.current) return;
  toast({ title: "Failed to load roster", description: errMsg(err), variant: "destructive" });
  } finally {
- setAttLoading(false);
+ if (seq === attReqSeq.current) setAttLoading(false);
  }
  }, []);
 
@@ -516,7 +595,7 @@ export function TeacherPanel() {
  [schedules]
  );
 
- const today = new Date().toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+ const today = bdWeekday();
  const todayStr = todayISO();
  const todays = useMemo(
  () =>
@@ -524,6 +603,14 @@ export function TeacherPanel() {
  .filter((s) => s.dayOfWeek === today)
  .sort((a, b) => a.startTime.localeCompare(b.startTime)),
  [schedules, today]
+ );
+
+ /* Courses actually taught by this teacher — the overview returns the
+    whole department catalogue, so counting distinct courses from the
+    timetable keeps the stat honest. */
+ const assignedCourseCount = useMemo(
+ () => new Set(schedules.map((s) => s.courseId)).size,
+ [schedules]
  );
 
  const greeting = (() => {
@@ -611,22 +698,48 @@ export function TeacherPanel() {
  const [actionOpen, setActionOpen] = useState(false);
 
  const openClassAction = useCallback((s: ScheduleDTO) => {
- setActionSchedule(s);
+ // Resolve the ORIGINAL schedule object: the timetable grid remaps
+ // timeSlotId → startTime for row alignment, and the dialog's room
+ // finder needs the real timeSlotId or every room would look "Free".
+ setActionSchedule(schedules.find((x) => x.id === s.id) ?? s);
  setActionOpen(true);
- }, []);
+ }, [schedules]);
 
  const latestChangeBySchedule = useMemo(() => {
  const m = new Map<string, ScheduleChangeDTO>();
  for (const c of changes) {
+ // A future-dated change must NOT restyle its class yet — only
+ // changes that are in effect as of today (Dhaka) show badges.
+ if (!isChangeEffective(c.effectiveDate)) continue;
  if (!m.has(c.scheduleId)) m.set(c.scheduleId, c);
  }
  return m;
  }, [changes]);
 
  const activeChangesFor = useCallback(
- (scheduleId: string) => changes.filter((c) => c.scheduleId === scheduleId).slice(0, 5),
+ (scheduleId: string) =>
+ changes.filter((c) => c.scheduleId === scheduleId && isChangeEffective(c.effectiveDate)).slice(0, 5),
  [changes]
  );
+
+ /* Next upcoming class today (Dhaka clock) — subtle highlight below.
+    Cancelled classes never count as "next"; if nothing is upcoming
+    (or it's ambiguous) the highlight is silently skipped. */
+ const nowMinutes = hhmmToMinutes(
+ new Intl.DateTimeFormat("en-GB", {
+ timeZone: DHAKA_TZ,
+ hour: "2-digit",
+ minute: "2-digit",
+ hourCycle: "h23",
+ }).format(new Date())
+ );
+ const nextClassId = useMemo(() => {
+ for (const s of todays) {
+ if (latestChangeBySchedule.get(s.id)?.changeType === "cancelled") continue;
+ if (hhmmToMinutes(s.startTime) > nowMinutes) return s.id;
+ }
+ return null;
+ }, [todays, latestChangeBySchedule, nowMinutes]);
 
  function handleClassActionSubmitted(change: ScheduleChangeDTO, notified: number) {
  setChanges((prev) => [change, ...prev]);
@@ -650,17 +763,22 @@ export function TeacherPanel() {
  const [aSubmitting, setASubmitting] = useState(false);
  const [deleteId, setDeleteId] = useState<string | null>(null);
  const [deleting, setDeleting] = useState(false);
+ /* Stale-response guard for the course-filter switcher */
+ const assignmentsReqSeq = useRef(0);
 
  const loadAssignments = useCallback(async () => {
+ const seq = ++assignmentsReqSeq.current;
  setAssignmentsLoading(true);
  try {
  const qs = assignmentFilter !== "all" ? `?courseId=${encodeURIComponent(assignmentFilter)}` : "";
  const data = await apiGet<{ assignments: AssignmentRow[] }>(`/api/teacher/assignments${qs}`);
+ if (seq !== assignmentsReqSeq.current) return; // stale filter response — drop
  setAssignments(data.assignments);
  } catch (err) {
+ if (seq !== assignmentsReqSeq.current) return;
  toast({ title: "Failed to load assignments", description: errMsg(err), variant: "destructive" });
  } finally {
- setAssignmentsLoading(false);
+ if (seq === assignmentsReqSeq.current) setAssignmentsLoading(false);
  }
  }, [assignmentFilter]);
 
@@ -752,20 +870,25 @@ export function TeacherPanel() {
  const [examType, setExamType] = useState("ct1");
  const [marks, setMarks] = useState<Record<string, string>>({});
  const [savingResults, setSavingResults] = useState(false);
+ /* Stale-response guard for rapid course switching in the Results tab */
+ const resultsReqSeq = useRef(0);
 
  const loadResults = useCallback(async (courseId: string) => {
+ const seq = ++resultsReqSeq.current;
  setResultsLoading(true);
  try {
  const data = await apiGet<{ results: ResultRow[]; students: StudentRow[]; course: CourseDTO }>(
  `/api/teacher/results?courseId=${encodeURIComponent(courseId)}`
  );
+ if (seq !== resultsReqSeq.current) return; // stale — newer course selected
  setResults(data.results);
  setStudents(data.students);
  setRCourse(data.course);
  } catch (err) {
+ if (seq !== resultsReqSeq.current) return;
  toast({ title: "Failed to load results", description: errMsg(err), variant: "destructive" });
  } finally {
- setResultsLoading(false);
+ if (seq === resultsReqSeq.current) setResultsLoading(false);
  }
  }, []);
 
@@ -879,9 +1002,9 @@ export function TeacherPanel() {
 
  {/* ---------- stats row ---------- */}
  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
- <StatCard icon={CalendarClock} label="Today's Classes" value={stats.todayClasses} sub={dayLabel(today) ?? "Today"} tone="amber" delay={0} />
+ <StatCard icon={CalendarClock} label="Today's Classes" value={todays.length} sub={dayLabel(today) ?? "Today"} tone="amber" delay={0} />
  <StatCard icon={CalendarDays} label="Weekly Classes" value={stats.totalClasses} sub="This week" tone="violet" delay={0.06} />
- <StatCard icon={BookOpen} label="Courses" value={stats.totalCourses} sub="Assigned to you" tone="fuchsia" delay={0.12} />
+ <StatCard icon={BookOpen} label="Courses" value={assignedCourseCount} sub="Assigned to you" tone="fuchsia" delay={0.12} />
  <StatCard icon={Users} label="My Students" value={stats.myStudents} sub="Across your batches" tone="emerald" delay={0.18} />
  </div>
 
@@ -918,6 +1041,7 @@ export function TeacherPanel() {
  timeSlots={syntheticSlots}
  showTeacher={false}
  onClassClick={openClassAction}
+ latestChangeBySchedule={latestChangeBySchedule}
  />
  </FadeIn>
  )}
@@ -934,6 +1058,8 @@ export function TeacherPanel() {
  {todays.map((s, i) => {
  const change = latestChangeBySchedule.get(s.id);
  const cancelled = change?.changeType === "cancelled";
+ const target = changeTargetSuffix(change);
+ const isNext = nextClassId === s.id;
  return (
  <FadeIn key={s.id} index={i}>
  <button
@@ -944,7 +1070,8 @@ export function TeacherPanel() {
  "group flex w-full flex-wrap items-center gap-3 rounded-xl border p-3 text-left transition-all hover:-translate-y-px hover:border-[#2D4F35]/40 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2D4F35]",
  cancelled
  ? "border-rose-300/70 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/20"
- : "bg-muted/30"
+ : "bg-muted/30",
+ isNext && "ring-2 ring-[#2D4F35]/40 ring-offset-1 dark:ring-[#7FB08F]/40"
  )}
  >
  <div className="flex h-11 w-20 shrink-0 flex-col items-center justify-center rounded-lg bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-white shadow-md shadow-[#2D4F35]/30">
@@ -962,7 +1089,17 @@ export function TeacherPanel() {
  <MapPin className="h-3 w-3" /> Room {change?.changeType === "room_changed" && change.newRoomNumber ? change.newRoomNumber : s.roomNumber}
  </p>
  </div>
+ {isNext && (
+ <span className="inline-flex items-center rounded-full bg-[#2D4F35] px-2 py-0.5 text-[10px] font-bold text-white dark:bg-[#7FB08F] dark:text-[#241C15]">
+ Next
+ </span>
+ )}
  {change && <ChangeTypeBadge type={change.changeType} />}
+ {target && (
+ <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+ {target}
+ </span>
+ )}
  <span
  className={cn(
  "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
@@ -1021,6 +1158,7 @@ export function TeacherPanel() {
  {dayClasses.map((s) => {
  const change = latestChangeBySchedule.get(s.id);
  const cancelled = change?.changeType === "cancelled";
+ const target = changeTargetSuffix(change);
  return (
  <button
  key={s.id}
@@ -1047,6 +1185,11 @@ export function TeacherPanel() {
  </span>
  </span>
  {change && <ChangeTypeBadge type={change.changeType} />}
+ {target && (
+ <span className="hidden max-w-[160px] truncate text-[11px] font-semibold text-emerald-700 md:inline dark:text-emerald-300" title={target}>
+ {target}
+ </span>
+ )}
  <span
  className={cn(
  "hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold sm:inline-flex",
@@ -1492,12 +1635,21 @@ export function TeacherPanel() {
 
  {/* ============ STUDENTS (full control) ============ */}
  <TabsContent value="students">
- <TeacherStudentsTab courses={courses} />
+ <TeacherStudentsTab
+ courses={courses}
+ scope={studentsScope}
+ onScopeChange={patchStudentsScope}
+ />
  </TabsContent>
 
  {/* ============ DOCUMENTS (downloads) ============ */}
  <TabsContent value="documents">
- <TeacherDocumentsTab courses={courses} schedules={schedules} />
+ <TeacherDocumentsTab
+ courses={courses}
+ schedules={schedules}
+ scope={documentsScope}
+ onScopeChange={patchDocumentsScope}
+ />
  </TabsContent>
 
  {/* ============ ASSIGNMENTS ============ */}
@@ -1614,7 +1766,11 @@ export function TeacherPanel() {
  <form onSubmit={submitAssignment} className="space-y-4">
  <div className="space-y-1.5">
  <Label htmlFor="a-course">Course *</Label>
- <Select value={aCourseId} onValueChange={setACourseId}>
+ <Select
+ value={aCourseId}
+ onValueChange={setACourseId}
+ disabled={Boolean(editingId)}
+ >
  <SelectTrigger id="a-course">
  <SelectValue placeholder="Select a course" />
  </SelectTrigger>
@@ -1626,6 +1782,11 @@ export function TeacherPanel() {
  ))}
  </SelectContent>
  </Select>
+ {editingId && (
+ <p className="text-xs text-muted-foreground">
+ Course can&apos;t be changed after publishing — edit the title, due date or description instead.
+ </p>
+ )}
  </div>
  <div className="space-y-1.5">
  <Label htmlFor="a-title">Title *</Label>

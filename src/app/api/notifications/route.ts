@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
-import { requireSession } from "@/lib/session";
+import { requireSession, ApiError } from "@/lib/session";
 import type { NotificationDTO } from "@/types";
 
 /** GET /api/notifications — current user's notifications */
@@ -46,6 +46,13 @@ export async function PATCH(req: NextRequest) {
  data: { isRead: true },
  });
  } else if (ids?.length) {
+ // Cap the batch — an unbounded `in` list is an easy abuse vector.
+ if (ids.length > 200) {
+ throw new ApiError(
+ 400,
+ "Too many notifications at once — use 'mark all' instead"
+ );
+ }
  await db.notification.updateMany({
  where: { id: { in: ids }, userId: session.userId },
  data: { isRead: true },
@@ -61,11 +68,12 @@ export async function DELETE(req: NextRequest) {
  const session = await requireSession();
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
- if (id) {
+ if (!id) {
+ throw new ApiError(400, "Notification id required");
+ }
  await db.notification.deleteMany({
  where: { id, userId: session.userId },
  });
- }
  return { deleted: true };
  });
 }

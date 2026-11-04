@@ -2,6 +2,7 @@ import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { computeCoursePerformance, computeGPA, resultPct, percentToGrade } from "@/lib/grades";
+import { bdWeekday } from "@/lib/date-bd";
 import type {
  AssignmentDTO,
  NoticeDTO,
@@ -70,7 +71,13 @@ export async function GET() {
  where: {
  departmentId,
  audience: { in: ["all", "students"] },
- OR: [{ programId: null }, { programId: programId ?? "none" }],
+ AND: [
+ // program-targeted notices: null = all programs. No more
+ // "none"-sentinel matching (which could never hit a real id).
+ { OR: [{ programId: null }, { programId: user.programId }] },
+ // semester-targeted notices: null = all semesters.
+ { OR: [{ semester: null }, { semester: user.semester }] },
+ ],
  },
  orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
  take: 30,
@@ -95,6 +102,7 @@ export async function GET() {
  where: { departmentId, studentId: user.id },
  include: { course: { select: { code: true, name: true } } },
  orderBy: { createdAt: "desc" },
+ take: 300,
  }),
  db.notification.count({
  where: { userId: user.id, isRead: false },
@@ -114,6 +122,7 @@ export async function GET() {
  db.attendance.findMany({
  where: { departmentId, studentId: user.id },
  select: { courseId: true, status: true, courseCode: true },
+ take: 300,
  }),
  ]);
 
@@ -215,9 +224,8 @@ export async function GET() {
  description: c.description,
  }));
 
- const today = new Date()
- .toLocaleDateString("en-US", { weekday: "long" })
- .toLowerCase();
+ // Weekday in Asia/Dhaka (server clock may be UTC → wrong "today").
+ const today = bdWeekday();
  const todayClasses = scheduleDTOs.filter(
  (s) => s.dayOfWeek === today
  ).length;

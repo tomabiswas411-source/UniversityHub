@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { assertDepartmentAccess } from "@/lib/auth";
 import { isSaneCoords } from "@/lib/geo";
+import { bdTodayISO } from "@/lib/date-bd";
 
 /**
  * QR attendance session management (teacher / dept_admin).
@@ -37,10 +38,12 @@ export async function POST(req: NextRequest) {
     };
 
     if (!body.scheduleId) throw new ApiError(400, "Schedule is required");
-    const classDate = body.date || new Date().toISOString().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(classDate)) {
-      throw new ApiError(400, "Date must be YYYY-MM-DD");
-    }
+    // Class date: prefer a validated body.date, else today in Asia/Dhaka
+    // (the old UTC slice filed the first ~6 BD hours under the wrong date).
+    const classDate =
+      typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
+        ? body.date
+        : bdTodayISO();
     const duration = Math.min(Math.max(Number(body.durationSec) || 120, 30), 600);
 
     // Geo-fence inputs: enabled only when the teacher asked for it AND
@@ -140,6 +143,25 @@ export async function GET(req: NextRequest) {
 
     if (scheduleId) {
       // ---- history chips: last 5 sessions for this class ----
+      // Tenant guard: verify the schedule belongs to the caller's
+      // department (and to this teacher) before handing out tokens —
+      // tokens are check-in credentials and must not leak cross-dept.
+      const schedule = await db.schedule.findUnique({
+        where: { id: scheduleId },
+        select: { id: true, departmentId: true, teacherId: true },
+      });
+      if (!schedule) throw new ApiError(404, "Schedule not found");
+      if (
+        session.role === "teacher" &&
+        schedule.teacherId !== session.userId
+      ) {
+        throw new ApiError(
+          403,
+          "You can only view QR history for your own classes"
+        );
+      }
+      assertDepartmentAccess(session, schedule.departmentId);
+
       const list = await db.attendanceSession.findMany({
         where: {
           scheduleId,

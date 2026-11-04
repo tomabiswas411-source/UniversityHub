@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { assertDepartmentAccess } from "@/lib/auth";
 import { percentToGrade, resultPct } from "@/lib/grades";
+import { bdTodayISO, bdWeekday } from "@/lib/date-bd";
 
 /**
  * Teacher actions API.
@@ -38,9 +39,20 @@ type Ctx = { params: Promise<{ action: string }> };
 const DAYS = ["saturday", "sunday", "monday", "tuesday", "wednesday", "thursday"];
 
 function todayStr(): string {
- const d = new Date();
- return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+ // Asia/Dhaka date — the old local-time version drifted a day for the
+ // first 6 hours of the BD day (server clock runs UTC).
+ return bdTodayISO();
 }
+
+const CHANGE_TYPES = [
+ "cancelled",
+ "rescheduled",
+ "room_changed",
+ "time_changed",
+ "extra_class",
+] as const;
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function GET(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
@@ -230,7 +242,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  // When the class batch is empty, tell the teacher WHY: count active
  // students per semester of the same program (one tiny indexed groupBy,
  // only in the empty case — happy path pays nothing).
- let batchCounts: { semester: number; count: number }[] | undefined;
+ let batchCounts: { semester: number | null; count: number }[] | undefined;
  if (students.length === 0) {
  const grouped = await db.user.groupBy({
  by: ["semester"],
@@ -351,7 +363,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.scheduleChange.findMany({
  where: { teacherId: session.userId, isActive: true },
  orderBy: { createdAt: "desc" },
- take: 20,
+ take: 200,
  }),
  db.room.findMany({
  where: { departmentId: session.departmentId!, isActive: true },
@@ -362,9 +374,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  orderBy: { slotOrder: "asc" },
  }),
  ]);
- const today = new Date()
- .toLocaleDateString("en-US", { weekday: "long" })
- .toLowerCase();
+ // Weekday in Asia/Dhaka (server clock may be UTC → wrong "today").
+ const today = bdWeekday();
  const todayClasses = schedules.filter((s) => s.dayOfWeek === today).length;
 
  // Distinct (program, semester) batches taught → student reach (COST GUARD:
@@ -871,11 +882,30 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  assertDepartmentAccess(session, schedule.departmentId);
 
+ // Roster validation — only students of this class batch may be marked.
+ // (Same filter the roster GET uses: programId + semester + active.)
+ const roster = await db.user.findMany({
+ where: {
+ departmentId: schedule.departmentId,
+ role: "student",
+ isActive: true,
+ programId: schedule.programId,
+ semester: schedule.semester,
+ },
+ select: { id: true },
+ });
+ const rosterIds = new Set(roster.map((s) => s.id));
+
  let saved = 0;
  const absentees: string[] = [];
+ const ops: ReturnType<typeof db.attendance.upsert>[] = [];
  for (const e of entries) {
  if (!e.studentId || !isAttStatus(e.status)) continue;
- await db.attendance.upsert({
+ if (!rosterIds.has(e.studentId)) {
+ throw new ApiError(400, "Roster mismatch");
+ }
+ ops.push(
+ db.attendance.upsert({
  where: {
  scheduleId_studentId_date: {
  scheduleId,
@@ -895,9 +925,18 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  courseCode: schedule.courseCode,
  },
  update: { status: e.status, markedBy: session.userId, markedByName: session.name },
- });
+ })
+ );
  saved++;
  if (e.status === "absent") absentees.push(e.studentId);
+ }
+
+ // Batched upserts: chunked array-transactions instead of one await per
+ // student (the libsql adapter handles modest batches well; chunks of 25
+ // keep each transaction small).
+ const CHUNK_SIZE = 25;
+ for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
+ await db.$transaction(ops.slice(i, i + CHUNK_SIZE));
  }
 
  // Notify absent students (skip when re-saving an already-marked day is fine —
@@ -1109,6 +1148,17 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!scheduleId || !changeType || !reason?.trim()) {
  throw new ApiError(400, "Schedule, change type and reason are required");
  }
+ // Whitelist the change type (the route only supports these five modes),
+ // the target day, and the effective date format.
+ if (!(CHANGE_TYPES as readonly string[]).includes(changeType)) {
+ throw new ApiError(400, "Invalid change type");
+ }
+ if (newDay && !DAYS.includes(newDay)) {
+ throw new ApiError(400, "Invalid day of week");
+ }
+ if (effectiveDate && !DATE_RE.test(effectiveDate)) {
+ throw new ApiError(400, "Date must be YYYY-MM-DD");
+ }
  const schedule = await db.schedule.findUnique({
  where: { id: scheduleId },
  });
@@ -1319,10 +1369,44 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!course) throw new ApiError(404, "Course not found");
  assertDepartmentAccess(session, course.departmentId);
 
+ // Result rows are keyed max 20 (existing convention) — validate it.
+ const maxMarks = 20;
+
+ // Roster validation — same batch filter the results roster GET uses.
+ const roster = await db.user.findMany({
+ where: {
+ departmentId: course.departmentId,
+ role: "student",
+ isActive: true,
+ programId: course.programId,
+ semester: course.semester,
+ },
+ select: { id: true },
+ });
+ const rosterIds = new Set(roster.map((s) => s.id));
+
  let saved = 0;
+ const ops: ReturnType<typeof db.result.upsert>[] = [];
+ const notifications: {
+ userId: string;
+ title: string;
+ body: string;
+ type: string;
+ }[] = [];
  for (const e of entries) {
- if (e.marks === undefined || e.marks === null) continue;
- await db.result.upsert({
+ if (e.marks === undefined || e.marks === null || !e.studentId) continue;
+ if (!rosterIds.has(e.studentId)) {
+ throw new ApiError(400, "Roster mismatch");
+ }
+ const marks = Number(e.marks);
+ if (!Number.isFinite(marks) || marks < 0 || marks > maxMarks) {
+ throw new ApiError(
+ 400,
+ `Marks must be a number between 0 and ${maxMarks}`
+ );
+ }
+ ops.push(
+ db.result.upsert({
  where: {
  courseId_studentId_examType: {
  courseId,
@@ -1336,28 +1420,37 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  studentId: e.studentId,
  enteredBy: session.userId,
  examType,
- marks: Number(e.marks),
- maxMarks: 20,
+ marks,
+ maxMarks,
  grade: e.grade ?? null,
  remarks: e.remarks ?? null,
  },
  update: {
- marks: Number(e.marks),
+ marks,
  grade: e.grade ?? null,
  remarks: e.remarks ?? null,
  },
- });
- saved++;
-
- // notify the student
- await db.notification.create({
- data: {
+ })
+ );
+ notifications.push({
  userId: e.studentId,
  title: `Result Published: ${course.code}`,
- body: `Your ${examType.toUpperCase()} result for ${course.code} is published: ${e.marks}/20${e.grade ? ` (Grade ${e.grade})` : ""}`,
+ body: `Your ${examType.toUpperCase()} result for ${course.code} is published: ${marks}/${maxMarks}${e.grade ? ` (Grade ${e.grade})` : ""}`,
  type: "result",
- },
  });
+ saved++;
+ }
+
+ // Batched upserts — chunked array-transactions (COST GUARD: no more
+ // one-await-per-student round trips).
+ const CHUNK_SIZE = 25;
+ for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
+ await db.$transaction(ops.slice(i, i + CHUNK_SIZE));
+ }
+
+ // ONE fan-out write instead of a per-student notification.create.
+ if (notifications.length) {
+ await db.notification.createMany({ data: notifications });
  }
  return { saved };
  }
@@ -1458,6 +1551,9 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (a.teacherId !== session.userId && session.role !== "dept_admin") {
  throw new ApiError(403, "Not your assignment");
  }
+ // Cross-tenant guard: a dept_admin of ANOTHER department must not be
+ // able to update this assignment just because of their role.
+ assertDepartmentAccess(session, a.departmentId);
  const data: Record<string, unknown> = {};
  if (typeof body.title === "string" && body.title.trim()) data.title = body.title.trim();
  if (typeof body.description === "string") data.description = body.description.trim();
@@ -1517,6 +1613,8 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  if (a.teacherId !== session.userId && session.role !== "dept_admin") {
  throw new ApiError(403, "Not your assignment");
  }
+ // Cross-tenant guard (same as PUT) — role alone is not enough.
+ assertDepartmentAccess(session, a.departmentId);
  await db.assignment.delete({ where: { id } });
  return { deleted: true };
  }
@@ -1528,6 +1626,8 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  if (n.postedBy !== session.userId && session.role !== "dept_admin") {
  throw new ApiError(403, "You can only delete your own notices");
  }
+ // Cross-tenant guard — dept_admins may only touch their own dept.
+ assertDepartmentAccess(session, n.departmentId);
  await db.notice.delete({ where: { id } });
  return { deleted: true };
  }

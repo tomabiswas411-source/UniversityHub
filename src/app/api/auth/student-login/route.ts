@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { handle } from "@/lib/api-helpers";
+import { handle, getClientIp, rateLimit } from "@/lib/api-helpers";
 import { findStudentForLogin, toSafeUser } from "@/lib/auth";
 import { createSession, ApiError } from "@/lib/session";
 
@@ -19,6 +19,11 @@ export async function POST(req: NextRequest) {
  "University, ID Number and Roll Number are required"
  );
  }
+
+ // Brute-force guard: 10 attempts / 5 min per IP+ID-number pair.
+ rateLimit(
+ `${getClientIp(req)}:${String(studentIdNumber).trim().toLowerCase()}`
+ );
 
  const student = await findStudentForLogin(
  universitySlug,

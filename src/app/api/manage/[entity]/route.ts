@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { requireSession, ApiError, type SessionPayload } from "@/lib/session";
 import { hashPassword } from "@/lib/auth";
 import { gradeDistribution, passRate, resultPct } from "@/lib/grades";
+import { bdWeekday } from "@/lib/date-bd";
 
 /**
  * Department-scoped management API for dept_admin & super_admin.
@@ -34,6 +35,49 @@ async function getDeptId(
  if (!departmentId) throw new ApiError(400, "departmentId is required");
  await assertDeptAccess(session, departmentId);
  return departmentId;
+}
+
+/**
+ * Resolve the university a department belongs to. User rows are keyed by
+ * universityId — deriving it from the department (instead of trusting
+ * session.universityId) is what lets a super_admin create staff in any
+ * department without producing orphaned users.
+ */
+async function resolveUniversityId(departmentId: string): Promise<string> {
+ const dept = await db.department.findUnique({
+ where: { id: departmentId },
+ select: { universityId: true },
+ });
+ if (!dept) throw new ApiError(404, "Department not found");
+ return dept.universityId;
+}
+
+/** Strip the password hash from any User-shaped row (incl. `include`s). */
+function stripPassword<T extends { password?: string | null }>(
+ row: T
+): Omit<T, "password"> {
+ const { password: _password, ...safe } = row;
+ return safe;
+}
+
+const VALID_DAYS = new Set([
+ "saturday",
+ "sunday",
+ "monday",
+ "tuesday",
+ "wednesday",
+ "thursday",
+]);
+
+/** 409 with a friendly "in use" message when reference rows exist. */
+async function assertNotReferenced(
+ refs: { label: string; count: number }[]
+): Promise<void> {
+ const inUse = refs.filter((r) => r.count > 0);
+ if (inUse.length > 0) {
+ const detail = inUse.map((r) => `${r.count} ${r.label}`).join(", ");
+ throw new ApiError(409, `Cannot delete: in use by ${detail}. Deactivate it instead.`);
+ }
 }
 
 const ENTITIES = [
@@ -79,11 +123,13 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.user.findMany({
  where: { departmentId, role: "teacher" },
  orderBy: { fullName: "asc" },
+ take: 500,
  }),
  db.user.findMany({
  where: { departmentId, role: "student" },
  include: { program: { select: { shortName: true } } },
  orderBy: { rollNumber: "asc" },
+ take: 500,
  }),
  db.course.findMany({
  where: { departmentId },
@@ -103,7 +149,17 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  orderBy: { startTime: "asc" },
  }),
  ]);
- return { teachers, students, courses, rooms, timeSlots, programs, notices, schedules };
+ return {
+ // Password hashes must never leave the server.
+ teachers: teachers.map(stripPassword),
+ students: students.map(stripPassword),
+ courses,
+ rooms,
+ timeSlots,
+ programs,
+ notices,
+ schedules,
+ };
  }
 
  case "stats": {
@@ -118,19 +174,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  select: { dayOfWeek: true },
  }),
  ]);
- const dayMap: Record<string, string> = {
- saturday: "saturday",
- sunday: "sunday",
- monday: "monday",
- tuesday: "tuesday",
- wednesday: "wednesday",
- thursday: "thursday",
- };
- const today = dayMap[
- new Date()
- .toLocaleDateString("en-US", { weekday: "long" })
- .toLowerCase()
- ];
+ // Weekday in Asia/Dhaka — the server clock may be UTC.
+ const today = bdWeekday();
  const todayClasses = schedules.filter((s) => s.dayOfWeek === today).length;
  return {
  totalTeachers,
@@ -144,11 +189,15 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
  case "analytics": {
  // Aggregated department insights — Day 41 + attendance loop
- const [results, schedulesForLoad, studentsForDist, coursesInfo, recentChanges, noticesCount, attendanceRows] =
+ const [results, schedulesForLoad, studentsForDist, coursesInfo, recentChanges, noticesCount, attendanceGroups] =
  await Promise.all([
+ // Cap + comment: results feed per-row percentage math (marks/max
+ // varies), which aggregates can't express exactly — 5000 rows is
+ // far beyond any department's real volume.
  db.result.findMany({
  where: { departmentId },
  select: { marks: true, maxMarks: true, examType: true, createdAt: true },
+ take: 5000,
  }),
  db.schedule.findMany({
  where: { departmentId, isActive: true },
@@ -169,9 +218,11 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  },
  }),
  db.notice.count({ where: { departmentId } }),
- db.attendance.findMany({
+ // One grouped count instead of loading every attendance row.
+ db.attendance.groupBy({
+ by: ["courseId", "courseCode", "status"],
  where: { departmentId },
- select: { status: true, courseId: true, courseCode: true },
+ _count: true,
  }),
  ]);
 
@@ -245,31 +296,34 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  ? Math.round((results.reduce((a, r) => a + resultPct(r), 0) / results.length) * 10) / 10
  : 0;
 
- // ---------- Attendance analytics ----------
+ // ---------- Attendance analytics (from grouped counts) ----------
  const attCounts = { present: 0, absent: 0, late: 0, excused: 0 };
  const attByCourse = new Map<
  string,
  { courseCode: string; present: number; late: number; absent: number; excused: number }
  >();
- for (const a of attendanceRows) {
- if (a.status === "present") attCounts.present++;
- else if (a.status === "absent") attCounts.absent++;
- else if (a.status === "late") attCounts.late++;
- else if (a.status === "excused") attCounts.excused++;
+ let totalMarked = 0;
+ for (const g of attendanceGroups) {
+ const n = g._count;
+ totalMarked += n;
+ if (g.status === "present") attCounts.present += n;
+ else if (g.status === "absent") attCounts.absent += n;
+ else if (g.status === "late") attCounts.late += n;
+ else if (g.status === "excused") attCounts.excused += n;
  const cur =
- attByCourse.get(a.courseId) ??
- { courseCode: a.courseCode, present: 0, late: 0, absent: 0, excused: 0 };
- if (a.status === "present") cur.present++;
- else if (a.status === "absent") cur.absent++;
- else if (a.status === "late") cur.late++;
- else if (a.status === "excused") cur.excused++;
- attByCourse.set(a.courseId, cur);
+ attByCourse.get(g.courseId) ??
+ { courseCode: g.courseCode, present: 0, late: 0, absent: 0, excused: 0 };
+ if (g.status === "present") cur.present += n;
+ else if (g.status === "absent") cur.absent += n;
+ else if (g.status === "late") cur.late += n;
+ else if (g.status === "excused") cur.excused += n;
+ attByCourse.set(g.courseId, cur);
  }
  const attCounted = attCounts.present + attCounts.late + attCounts.absent;
  const attendanceAnalytics = {
- hasData: attendanceRows.length > 0,
+ hasData: totalMarked > 0,
  rate: attCounted === 0 ? 0 : Math.round(((attCounts.present + attCounts.late) / attCounted) * 100),
- totalMarked: attendanceRows.length,
+ totalMarked,
  present: attCounts.present,
  absent: attCounts.absent,
  late: attCounts.late,
@@ -306,17 +360,19 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  }
 
  case "teachers":
- return db.user.findMany({
+ return (await db.user.findMany({
  where: { departmentId, role: "teacher" },
  orderBy: { fullName: "asc" },
- });
+ take: 500,
+ })).map(stripPassword);
 
  case "students":
- return db.user.findMany({
+ return (await db.user.findMany({
  where: { departmentId, role: "student" },
  include: { program: { select: { shortName: true, name: true } } },
  orderBy: { rollNumber: "asc" },
- });
+ take: 500,
+ })).map(stripPassword);
 
  case "courses":
  return db.course.findMany({
@@ -377,19 +433,25 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  body as Record<string, string>;
  if (!fullName || !email || !password)
  throw new ApiError(400, "Name, email and password are required");
+ if (password.length < 4)
+ throw new ApiError(400, "Password must be at least 4 characters");
+ // universityId comes from the department row so a super_admin can
+ // provision any department without creating an orphaned user.
+ const universityId = await resolveUniversityId(departmentId);
+ const emailNorm = email.trim().toLowerCase();
  const existing = await db.user.findFirst({
- where: { universityId: session.universityId, email },
+ where: { universityId, email: emailNorm },
  });
  if (existing)
  throw new ApiError(409, "A user with this email already exists");
  const hashed = await hashPassword(password);
- return db.user.create({
+ const created = await db.user.create({
  data: {
- universityId: session.universityId!,
+ universityId,
  departmentId,
  role: "teacher",
  fullName,
- email,
+ email: emailNorm,
  password: hashed,
  designation: designation || "Lecturer",
  phone,
@@ -397,6 +459,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  bio,
  },
  });
+ return stripPassword(created);
  }
 
  case "students": {
@@ -411,14 +474,15 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  } = body as Record<string, string | number>;
  if (!fullName || !studentIdNumber || !rollNumber)
  throw new ApiError(400, "Name, ID number and roll number are required");
+ const universityId = await resolveUniversityId(departmentId);
  const existing = await db.user.findFirst({
- where: { universityId: session.universityId, studentIdNumber: String(studentIdNumber) },
+ where: { universityId, studentIdNumber: String(studentIdNumber) },
  });
  if (existing)
  throw new ApiError(409, "A student with this ID number already exists");
- return db.user.create({
+ const created = await db.user.create({
  data: {
- universityId: session.universityId!,
+ universityId,
  departmentId,
  role: "student",
  fullName: String(fullName),
@@ -430,6 +494,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  phone: phone ? String(phone) : null,
  },
  });
+ return stripPassword(created);
  }
 
  case "courses": {
@@ -502,13 +567,17 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  body as Record<string, string | number | boolean>;
  if (!title || !content)
  throw new ApiError(400, "Title and content are required");
+ const audienceVal = audience ? String(audience) : "all";
+ if (!["all", "students", "teachers"].includes(audienceVal)) {
+ throw new ApiError(400, "Audience must be all, students or teachers");
+ }
  return db.notice.create({
  data: {
  departmentId,
  title: String(title),
  content: String(content),
  category: String(category) || "general",
- audience: String(audience) || "all",
+ audience: audienceVal,
  programId: programId ? String(programId) : null,
  semester: semester ? Number(semester) : null,
  isPinned: Boolean(isPinned),
@@ -533,21 +602,35 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  !programId || !dayOfWeek
  )
  throw new ApiError(400, "All schedule fields are required");
+ const day = String(dayOfWeek);
+ if (!VALID_DAYS.has(day))
+ throw new ApiError(400, "Invalid day of week");
 
- const [course, teacher, room, timeSlot] = await Promise.all([
+ const [course, teacher, room, timeSlot, program] = await Promise.all([
  db.course.findUnique({ where: { id: String(courseId) } }),
  db.user.findUnique({ where: { id: String(teacherId) } }),
  db.room.findUnique({ where: { id: String(roomId) } }),
  db.timeSlot.findUnique({ where: { id: String(timeSlotId) } }),
+ db.program.findUnique({ where: { id: String(programId) } }),
  ]);
- if (!course || !teacher || !room || !timeSlot)
- throw new ApiError(404, "Invalid course, teacher, room or time slot");
+ if (!course || !teacher || !room || !timeSlot || !program)
+ throw new ApiError(404, "Invalid course, teacher, room, time slot or program");
+ // Tenant guard: every referenced resource must belong to THIS department.
+ if (
+ course.departmentId !== departmentId ||
+ teacher.departmentId !== departmentId ||
+ room.departmentId !== departmentId ||
+ timeSlot.departmentId !== departmentId ||
+ program.departmentId !== departmentId
+ ) {
+ throw new ApiError(403, "Resource belongs to another department");
+ }
 
  // Conflict detection: room, teacher, batch at same day+slot
  const sameSlot = await db.schedule.findMany({
  where: {
  departmentId,
- dayOfWeek: String(dayOfWeek),
+ dayOfWeek: day,
  timeSlotId: String(timeSlotId),
  isActive: true,
  },
@@ -565,7 +648,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  `${teacher.fullName} already has ${teacherClash.courseCode} at this time`
  );
  const batchClash = sameSlot.find(
- (s) => s.programId === String(programId) && s.semester === Number(semester)
+ (s) => s.programId === program.id && s.semester === Number(semester)
  );
  if (batchClash)
  throw new ApiError(
@@ -580,7 +663,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  teacherId: teacher.id,
  roomId: room.id,
  timeSlotId: timeSlot.id,
- programId: String(programId),
+ programId: program.id,
  semester: Number(semester) || 1,
  courseCode: course.code,
  courseName: course.name,
@@ -588,7 +671,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  roomNumber: room.roomNumber,
  startTime: timeSlot.startTime,
  endTime: timeSlot.endTime,
- dayOfWeek: String(dayOfWeek),
+ dayOfWeek: day,
  classType: course.type,
  createdBy: session.userId,
  },
@@ -667,11 +750,40 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
  switch (entity) {
  case "teachers":
- case "students":
- if (typeof body.password === "string" && body.password.length >= 4) {
+ case "students": {
+ // Password policy: "" → skip (leave unchanged); 1-3 chars → 400;
+ // 4+ → hash. (Previously short passwords were silently ignored.)
+ if (typeof body.password === "string") {
+ if (body.password.length === 0) {
+ // empty string → skip password change
+ } else if (body.password.length < 4) {
+ throw new ApiError(400, "Password must be at least 4 characters");
+ } else {
  data.password = await hashPassword(body.password);
  }
- return db.user.update({ where: { id }, data });
+ }
+ // Email updates: normalize + per-university uniqueness.
+ if (typeof body.email === "string" && body.email.trim()) {
+ const emailNorm = body.email.trim().toLowerCase();
+ const target = await db.user.findUnique({
+ where: { id },
+ select: { universityId: true },
+ });
+ const clash = await db.user.findFirst({
+ where: {
+ email: emailNorm,
+ universityId: target?.universityId ?? null,
+ id: { not: id },
+ },
+ select: { id: true },
+ });
+ if (clash)
+ throw new ApiError(409, "A user with this email already exists");
+ data.email = emailNorm;
+ }
+ const updated = await db.user.update({ where: { id }, data });
+ return stripPassword(updated);
+ }
  case "courses":
  return db.course.update({ where: { id }, data });
  case "rooms":
@@ -686,9 +798,81 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  // If slot/day changed, re-run conflict detection
  const existing = await db.schedule.findUnique({ where: { id } });
  if (!existing) throw new ApiError(404, "Schedule not found");
+
+ // Optional relation swaps — previously these fields were silently
+ // dropped by the generic string-field mapper (the slot picker was a
+ // no-op). Validate existence + department membership, then keep the
+ // denormalized display columns in sync.
+ if (
+ typeof body.timeSlotId === "string" &&
+ body.timeSlotId &&
+ body.timeSlotId !== existing.timeSlotId
+ ) {
+ const slot = await db.timeSlot.findUnique({ where: { id: body.timeSlotId } });
+ if (!slot) throw new ApiError(404, "Time slot not found");
+ if (slot.departmentId !== departmentId)
+ throw new ApiError(403, "Resource belongs to another department");
+ data.timeSlotId = slot.id;
+ data.startTime = slot.startTime;
+ data.endTime = slot.endTime;
+ }
+ if (
+ typeof body.roomId === "string" &&
+ body.roomId &&
+ body.roomId !== existing.roomId
+ ) {
+ const room = await db.room.findUnique({ where: { id: body.roomId } });
+ if (!room) throw new ApiError(404, "Room not found");
+ if (room.departmentId !== departmentId)
+ throw new ApiError(403, "Resource belongs to another department");
+ data.roomId = room.id;
+ data.roomNumber = room.roomNumber;
+ }
+ if (
+ typeof body.teacherId === "string" &&
+ body.teacherId &&
+ body.teacherId !== existing.teacherId
+ ) {
+ const teacher = await db.user.findUnique({ where: { id: body.teacherId } });
+ if (!teacher) throw new ApiError(404, "Teacher not found");
+ if (teacher.departmentId !== departmentId)
+ throw new ApiError(403, "Resource belongs to another department");
+ data.teacherId = teacher.id;
+ data.teacherName = teacher.fullName;
+ }
+ if (
+ typeof body.courseId === "string" &&
+ body.courseId &&
+ body.courseId !== existing.courseId
+ ) {
+ const course = await db.course.findUnique({ where: { id: body.courseId } });
+ if (!course) throw new ApiError(404, "Course not found");
+ if (course.departmentId !== departmentId)
+ throw new ApiError(403, "Resource belongs to another department");
+ data.courseId = course.id;
+ data.courseCode = course.code;
+ data.courseName = course.name;
+ data.classType = course.type;
+ }
+ if (body.programId !== undefined && data.programId !== undefined) {
+ if (!data.programId)
+ throw new ApiError(400, "Program is required for a schedule");
+ const program = await db.program.findUnique({
+ where: { id: String(data.programId) },
+ });
+ if (!program) throw new ApiError(404, "Program not found");
+ if (program.departmentId !== departmentId)
+ throw new ApiError(403, "Resource belongs to another department");
+ data.programId = program.id;
+ }
+ if (data.dayOfWeek !== undefined && !VALID_DAYS.has(String(data.dayOfWeek))) {
+ throw new ApiError(400, "Invalid day of week");
+ }
+
+ // Clash re-check must see the NEW room/teacher values, not just the
+ // existing row's.
  const day = (data.dayOfWeek as string) ?? existing.dayOfWeek;
- const timeSlotId =
- (data.timeSlotId as string) ?? existing.timeSlotId;
+ const timeSlotId = (data.timeSlotId as string) ?? existing.timeSlotId;
  if (
  (data.timeSlotId && data.timeSlotId !== existing.timeSlotId) ||
  (data.dayOfWeek && data.dayOfWeek !== existing.dayOfWeek)
@@ -703,8 +887,9 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  },
  });
  const roomId = (data.roomId as string) ?? existing.roomId;
+ const teacherId = (data.teacherId as string) ?? existing.teacherId;
  const clash = sameSlot.find(
- (s) => s.roomId === roomId || s.teacherId === existing.teacherId
+ (s) => s.roomId === roomId || s.teacherId === teacherId
  );
  if (clash)
  throw new ApiError(
@@ -738,12 +923,25 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const user = await db.user.findUnique({ where: { id } });
  if (!user) throw new ApiError(404, "User not found");
  await assertDeptAccess(session, user.departmentId!);
- return db.user.delete({ where: { id } });
+ // Soft-delete: schedules/results/attendance reference users, so a
+ // hard delete would either cascade-wipe history or fail with a 500.
+ await db.user.update({ where: { id }, data: { isActive: false } });
+ return { deleted: true, deactivated: true };
  }
  case "courses": {
  const c = await db.course.findUnique({ where: { id } });
  if (!c) throw new ApiError(404, "Course not found");
  await assertDeptAccess(session, c.departmentId);
+ const [scheduleCount, assignmentCount, resultCount] = await Promise.all([
+ db.schedule.count({ where: { courseId: id } }),
+ db.assignment.count({ where: { courseId: id } }),
+ db.result.count({ where: { courseId: id } }),
+ ]);
+ await assertNotReferenced([
+ { label: "schedule(s)", count: scheduleCount },
+ { label: "assignment(s)", count: assignmentCount },
+ { label: "result(s)", count: resultCount },
+ ]);
  await db.course.delete({ where: { id } });
  return { deleted: true };
  }
@@ -751,6 +949,8 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const r = await db.room.findUnique({ where: { id } });
  if (!r) throw new ApiError(404, "Room not found");
  await assertDeptAccess(session, r.departmentId);
+ const scheduleCount = await db.schedule.count({ where: { roomId: id } });
+ await assertNotReferenced([{ label: "schedule(s)", count: scheduleCount }]);
  await db.room.delete({ where: { id } });
  return { deleted: true };
  }
@@ -758,6 +958,8 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const t = await db.timeSlot.findUnique({ where: { id } });
  if (!t) throw new ApiError(404, "Time slot not found");
  await assertDeptAccess(session, t.departmentId);
+ const scheduleCount = await db.schedule.count({ where: { timeSlotId: id } });
+ await assertNotReferenced([{ label: "schedule(s)", count: scheduleCount }]);
  await db.timeSlot.delete({ where: { id } });
  return { deleted: true };
  }
@@ -765,6 +967,16 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const p = await db.program.findUnique({ where: { id } });
  if (!p) throw new ApiError(404, "Program not found");
  await assertDeptAccess(session, p.departmentId);
+ const [scheduleCount, courseCount, studentCount] = await Promise.all([
+ db.schedule.count({ where: { programId: id } }),
+ db.course.count({ where: { programId: id } }),
+ db.user.count({ where: { programId: id } }),
+ ]);
+ await assertNotReferenced([
+ { label: "schedule(s)", count: scheduleCount },
+ { label: "course(s)", count: courseCount },
+ { label: "student(s)", count: studentCount },
+ ]);
  await db.program.delete({ where: { id } });
  return { deleted: true };
  }

@@ -11,6 +11,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { apiGet, apiPatch } from "@/lib/api-client";
+import { useAuthStore } from "@/store/auth-store";
 import { useNotificationSound, showBrowserNotification } from "@/hooks/use-notification-sound";
 import type { NotificationDTO } from "@/types";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,9 @@ export function timeAgo(iso: string): string {
  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function typeIcon(type: string) {
+/** Icon + colour class for a notification type (shared with the
+    student dashboard's Alerts tab). */
+export function typeIcon(type: string) {
  const t = type.replace(/^class_/, "");
  switch (t) {
  case "cancelled":
@@ -66,12 +69,15 @@ export function NotificationBell({ className }: { className?: string }) {
  const [justArrived, setJustArrived] = useState(false);
  const newestIdRef = useRef<string | null>(null);
  const firstLoadRef = useRef(true);
- const authedRef = useRef(true);
  const play = useNotificationSound();
+ /* Derive "should poll" from the live auth state on every tick — a ref
+    latch would stay false forever after a single 401 (e.g. a temporary
+    session expiry) and never resume once the user logs back in. */
+ const user = useAuthStore((s) => s.user);
 
  const fetchNotifications = useCallback(
  async (silent = false) => {
- if (!authedRef.current) return;
+ if (!useAuthStore.getState().user) return;
  try {
  const data = await apiGet<NotificationsResponse>("/api/notifications");
  setItems(data.notifications);
@@ -87,14 +93,9 @@ export function NotificationBell({ className }: { className?: string }) {
  }
  newestIdRef.current = newest;
  firstLoadRef.current = false;
- } catch (err) {
- const msg = err instanceof Error ? err.message : "";
- if (/401|unauthor/i.test(msg)) {
- // user logged out — stop polling silently
- authedRef.current = false;
- return;
- }
- // network hiccups ignored silently
+ } catch {
+ // network hiccups / 401 (store already cleared by api-client) —
+ // silently ignored; polling resumes when a user is present again
  }
  },
  [play]
@@ -102,7 +103,7 @@ export function NotificationBell({ className }: { className?: string }) {
 
  useEffect(() => {
  firstLoadRef.current = true;
- authedRef.current = true;
+ newestIdRef.current = null;
  const initial = window.setTimeout(() => fetchNotifications(), 0);
  const interval = window.setInterval(() => {
  if (typeof document !== "undefined" && document.hidden) return;
@@ -112,7 +113,7 @@ export function NotificationBell({ className }: { className?: string }) {
  window.clearTimeout(initial);
  window.clearInterval(interval);
  };
- }, [fetchNotifications]);
+ }, [fetchNotifications, user]);
 
  const markAllRead = async () => {
  setItems((prev) => prev.map((n) => ({ ...n, isRead: true })));

@@ -13,7 +13,7 @@
  server-built CSV string. No polling anywhere.
 ============================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
  ArrowDown,
  ArrowUp,
@@ -30,6 +30,16 @@ import { apiGet, apiPost } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/components/dashboards/teacher-documents-tab";
 import { EmptyState, GRADIENT_BTN, SectionCard } from "@/components/dashboards/dashboard-shared";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -98,14 +108,35 @@ function attChip(pct: number) {
  return <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold", cls)}>{pct}%</span>;
 }
 
-export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
- /* ---------- scope ---------- */
- const [scopeMode, setScopeMode] = useState<"course" | "batch">("course");
- const [courseId, setCourseId] = useState(courses[0]?.id ?? "");
- const [programId, setProgramId] = useState("");
- const [semester, setSemester] = useState("1");
- const [search, setSearch] = useState("");
- const [debouncedQ, setDebouncedQ] = useState("");
+/** Scope + selection state for the Students tab. Lives in the parent
+ *  panel so switching tabs doesn't wipe the teacher's filters. */
+export type StudentsScopeState = {
+  scopeMode: "course" | "batch";
+  courseId: string;
+  programId: string;
+  semester: string;
+  search: string;
+  selectedIds: string[];
+};
+
+export function TeacherStudentsTab({
+  courses,
+  scope,
+  onScopeChange,
+}: {
+  courses: CourseDTO[];
+  /** Lifted scope/selection state — owned by the parent panel. */
+  scope: StudentsScopeState;
+  /** Patch-style updater so call sites stay one-liners. */
+  onScopeChange: (patch: Partial<StudentsScopeState>) => void;
+}) {
+ /* ---------- scope (lifted to the panel; first course pre-highlighted) ---------- */
+ const scopeMode = scope.scopeMode;
+ const courseId = scope.courseId || courses[0]?.id || "";
+ const programId = scope.programId;
+ const semester = scope.semester;
+ const search = scope.search;
+ const [debouncedQ, setDebouncedQ] = useState(search.trim());
 
  useEffect(() => {
  const t = setTimeout(() => setDebouncedQ(search.trim()), 350);
@@ -127,27 +158,40 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  /* ---------- data ---------- */
  const [data, setData] = useState<StudentsResponse | null>(null);
  const [loading, setLoading] = useState(false);
- const [selected, setSelected] = useState<Set<string>>(new Set());
+ /* Selection lives in the lifted scope; keep a Set view for lookups. */
+ const selected = useMemo(() => new Set(scope.selectedIds), [scope.selectedIds]);
+ /* Stale-response guard: only the newest roster fetch may touch state. */
+ const reqSeq = useRef(0);
+ /* Track the scope the last successful load served, so returning from
+    another tab (same scope) doesn't wipe the selection but a real
+    scope change does. */
+ const lastLoadedScopeRef = useRef<string | null>(null);
 
  const load = useCallback(async () => {
+ const seq = ++reqSeq.current;
  setLoading(true);
  try {
  // First call (no scope yet) still returns the programs list so the
  // batch selector is ready before the teacher picks anything.
  const qs = scopeQuery ? `?${scopeQuery}` : "";
  const res = await apiGet<StudentsResponse>(`/api/teacher/students${qs}`);
+ if (seq !== reqSeq.current) return; // stale — a newer fetch superseded it
  setData(res);
- setSelected(new Set());
+ if (lastLoadedScopeRef.current !== scopeQuery) {
+ onScopeChange({ selectedIds: [] });
+ lastLoadedScopeRef.current = scopeQuery;
+ }
  } catch (err) {
+ if (seq !== reqSeq.current) return;
  toast({
  title: "Couldn't load students",
  description: err instanceof Error ? err.message : "Please try again.",
  variant: "destructive",
  });
  } finally {
- setLoading(false);
+ if (seq === reqSeq.current) setLoading(false);
  }
- }, [scopeQuery]);
+ }, [scopeQuery, onScopeChange]);
 
  useEffect(() => {
  void load();
@@ -161,15 +205,13 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  const allSelected = students.length > 0 && students.every((s) => selected.has(s.id));
 
  function toggleAll() {
- setSelected(allSelected ? new Set() : new Set(students.map((s) => s.id)));
+ onScopeChange({ selectedIds: allSelected ? [] : students.map((s) => s.id) });
  }
  function toggleOne(id: string) {
- setSelected((prev) => {
- const next = new Set(prev);
+ const next = new Set(scope.selectedIds);
  if (next.has(id)) next.delete(id);
  else next.add(id);
- return next;
- });
+ onScopeChange({ selectedIds: [...next] });
  }
 
  /* ---------- batch move ---------- */
@@ -199,6 +241,7 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  });
  setMoveOpen(false);
  setTargetSemester("");
+ onScopeChange({ selectedIds: [] }); // moved students no longer match the selection
  void load();
  } catch (err) {
  toast({
@@ -213,6 +256,8 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
 
  /* ---------- activate / deactivate ---------- */
  const [statusBusy, setStatusBusy] = useState(false);
+ /* Deactivate is destructive (logins are cut off) — confirm first. */
+ const [deactivateOpen, setDeactivateOpen] = useState(false);
 
  async function setStatus(isActive: boolean) {
  if (selected.size === 0) return;
@@ -226,6 +271,7 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  title: isActive ? "Students activated" : "Students deactivated",
  description: `${res.updated} student${res.updated === 1 ? "" : "s"} ${isActive ? "can log in again" : "can no longer log in"}.`,
  });
+ onScopeChange({ selectedIds: [] });
  void load();
  } catch (err) {
  toast({
@@ -246,7 +292,7 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  if (currentBatchSemester === null) return;
  const target = currentBatchSemester + delta;
  if (target < 1 || target > maxSemester) return;
- setSelected(new Set(students.map((s) => s.id)));
+ onScopeChange({ selectedIds: students.map((s) => s.id) });
  setTargetSemester(String(target));
  setMoveOpen(true);
  }
@@ -256,11 +302,18 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  async function exportRoster() {
  setExporting(true);
  try {
+ // NOTE: the export endpoint always returns the FULL batch roster —
+ // `q` is kept in the URL for future server-side filtering but is
+ // currently ignored, so the toast says so honestly.
  const res = await apiGet<{ filename: string; csv: string }>(
  `/api/teacher/export?type=students&${scopeQuery}`
  );
  downloadCsv(res.filename, res.csv);
- toast({ title: "Download started", description: res.filename });
+ const n = students.length;
+ toast({
+ title: n > 0 ? `Exported ${n} student${n === 1 ? "" : "s"} (full batch)` : "Exported full batch",
+ description: "Exports always include the whole batch — the search filter isn't applied.",
+ });
  } catch (err) {
  toast({
  title: "Couldn't export",
@@ -292,15 +345,14 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  {/* scope controls */}
  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
  <div className="space-y-1.5">
- <Label>Scope</Label>
+ <Label htmlFor="st-scope">Scope</Label>
  <Select
  value={scopeMode}
  onValueChange={(v) => {
- setScopeMode(v as "course" | "batch");
- setSearch("");
+ onScopeChange({ scopeMode: v as "course" | "batch", search: "" });
  }}
  >
- <SelectTrigger>
+ <SelectTrigger id="st-scope">
  <SelectValue />
  </SelectTrigger>
  <SelectContent>
@@ -312,9 +364,9 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
 
  {scopeMode === "course" ? (
  <div className="space-y-1.5">
- <Label>Course (its batch)</Label>
- <Select value={courseId} onValueChange={setCourseId}>
- <SelectTrigger>
+ <Label htmlFor="st-course">Course (its batch)</Label>
+ <Select value={courseId} onValueChange={(v) => onScopeChange({ courseId: v })}>
+ <SelectTrigger id="st-course">
  <SelectValue placeholder="Select a course" />
  </SelectTrigger>
  <SelectContent>
@@ -329,15 +381,14 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  ) : (
  <>
  <div className="space-y-1.5">
- <Label>Program</Label>
+ <Label htmlFor="st-program">Program</Label>
  <Select
  value={programId}
  onValueChange={(v) => {
- setProgramId(v);
- setSemester("1");
+ onScopeChange({ programId: v, semester: "1" });
  }}
  >
- <SelectTrigger>
+ <SelectTrigger id="st-program">
  <SelectValue placeholder="Select program" />
  </SelectTrigger>
  <SelectContent>
@@ -350,9 +401,9 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  </Select>
  </div>
  <div className="space-y-1.5">
- <Label>Semester</Label>
- <Select value={semester} onValueChange={setSemester}>
- <SelectTrigger>
+ <Label htmlFor="st-semester">Semester</Label>
+ <Select value={semester} onValueChange={(v) => onScopeChange({ semester: v })}>
+ <SelectTrigger id="st-semester">
  <SelectValue />
  </SelectTrigger>
  <SelectContent>
@@ -374,7 +425,7 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  <Input
  id="st-search"
  value={search}
- onChange={(e) => setSearch(e.target.value)}
+ onChange={(e) => onScopeChange({ search: e.target.value })}
  placeholder="Name, roll or ID…"
  className="pl-8"
  />
@@ -410,7 +461,7 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  variant="outline"
  className="h-7"
  onClick={() => {
- setSelected(new Set(students.map((s) => s.id)));
+ onScopeChange({ selectedIds: students.map((s) => s.id) });
  setTargetSemester("");
  setMoveOpen(true);
  }}
@@ -441,7 +492,7 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  size="sm"
  variant="outline"
  className="h-7"
- onClick={() => void setStatus(false)}
+ onClick={() => setDeactivateOpen(true)}
  disabled={statusBusy}
  >
  {statusBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="mr-1 h-3.5 w-3.5" />}
@@ -457,7 +508,7 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  >
  <ShieldCheck className="mr-1 h-3.5 w-3.5" /> Activate
  </Button>
- <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => setSelected(new Set())}>
+ <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => onScopeChange({ selectedIds: [] })}>
  Clear selection
  </Button>
  </div>
@@ -576,6 +627,36 @@ export function TeacherStudentsTab({ courses }: { courses: CourseDTO[] }) {
  </DialogFooter>
  </DialogContent>
  </Dialog>
+
+ {/* deactivate confirm — same destructive-action pattern as delete */}
+ <AlertDialog open={deactivateOpen} onOpenChange={setDeactivateOpen}>
+ <AlertDialogContent>
+ <AlertDialogHeader>
+ <AlertDialogTitle>
+ Deactivate {selected.size} student{selected.size === 1 ? "" : "s"}?
+ </AlertDialogTitle>
+ <AlertDialogDescription>
+ Students won&apos;t be able to log in until you reactivate them. Their records, results and
+ attendance history are kept.
+ </AlertDialogDescription>
+ </AlertDialogHeader>
+ <AlertDialogFooter>
+ <AlertDialogCancel disabled={statusBusy}>Cancel</AlertDialogCancel>
+ <AlertDialogAction
+ className="bg-rose-600 text-white hover:bg-rose-700"
+ disabled={statusBusy}
+ onClick={(e) => {
+ e.preventDefault();
+ setDeactivateOpen(false);
+ void setStatus(false);
+ }}
+ >
+ {statusBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldOff className="h-4 w-4" />}
+ Deactivate
+ </AlertDialogAction>
+ </AlertDialogFooter>
+ </AlertDialogContent>
+ </AlertDialog>
  </div>
  );
 }

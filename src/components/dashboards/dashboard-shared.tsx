@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CountUp } from "@/components/shared/motion-primitives";
-import type { ScheduleDTO, TimeSlotDTO } from "@/types";
+import type { ScheduleChangeDTO, ScheduleDTO, TimeSlotDTO } from "@/types";
 import { DAY_LABELS, DAYS_OF_WEEK } from "@/types";
 
 /* ============================================================
@@ -158,13 +158,27 @@ export function SectionCard({
    Rows = time slots, Cols = 6 days (Sat–Thu).
    Cell shows course code + room + teacher.
    Theory = soft forest green · Lab = soft cavendish gold.
+   When the caller passes latestChangeBySchedule, live changes are
+   surfaced in the cell itself: cancelled classes get struck through
+   plus a tiny Cancelled/Moved/Room/Extra badge (same convention as
+   the change lists).
    ------------------------------------------------------ */
+
+const GRID_CHANGE_BADGES: Record<string, { label: string; cls: string }> = {
+  cancelled: { label: "Cancelled", cls: "bg-rose-600/90 text-white" },
+  rescheduled: { label: "Moved", cls: "bg-amber-400/90 text-[#241C15]" },
+  time_changed: { label: "Moved", cls: "bg-amber-400/90 text-[#241C15]" },
+  room_changed: { label: "Room", cls: "bg-amber-400/90 text-[#241C15]" },
+  extra_class: { label: "Extra", cls: "bg-emerald-600/90 text-white" },
+};
+
 export function TimetableGrid({
   schedules,
   timeSlots,
   highlightToday = true,
   showTeacher = true,
   onClassClick,
+  latestChangeBySchedule,
 }: {
   schedules: ScheduleDTO[];
   timeSlots: TimeSlotDTO[];
@@ -172,6 +186,8 @@ export function TimetableGrid({
   showTeacher?: boolean;
   /** When provided, every class cell becomes a button (teacher manage mode). */
   onClassClick?: (schedule: ScheduleDTO) => void;
+  /** scheduleId → live (effective-today) change; powers Cancelled/Moved badges. */
+  latestChangeBySchedule?: Map<string, ScheduleChangeDTO>;
 }) {
   const today = new Date()
     .toLocaleDateString("en-US", { weekday: "long" })
@@ -236,13 +252,28 @@ export function TimetableGrid({
                     )}
                   >
                     {cell.map((s) => {
+                      const change = latestChangeBySchedule?.get(s.id);
+                      const cancelled = change?.changeType === "cancelled";
+                      const badge = change ? GRID_CHANGE_BADGES[change.changeType] : undefined;
                       const inner = (
                         <>
-                          <p className="font-bold">{s.courseCode}</p>
+                          <p className={cn("font-bold", cancelled && "line-through decoration-rose-400/80 decoration-2")}>
+                            {s.courseCode}
+                          </p>
                           <p className="max-w-[92px] truncate text-[9px] opacity-80 sm:max-w-[140px] sm:text-[11px]">
                             {s.roomNumber}
                             {showTeacher && s.teacherName ? ` · ${s.teacherName}` : ""}
                           </p>
+                          {badge && (
+                            <span
+                              className={cn(
+                                "mt-0.5 inline-block rounded px-1 py-px text-[10px] font-bold leading-none",
+                                badge.cls
+                              )}
+                            >
+                              {badge.label}
+                            </span>
+                          )}
                         </>
                       );
                       if (onClassClick) {

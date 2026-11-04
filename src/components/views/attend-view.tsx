@@ -50,25 +50,44 @@ interface ScanInfo {
   serverTime: string;
 }
 
-type Result = { kind: "success" | "already" | "corrected" } | null;
+type Result = "success" | "already" | "corrected" | null;
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong. Please try again.";
 }
 
+/** ms → "mm:ss" (clamped at 00:00) for the check-in countdown */
+function mmss(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 /* Anti-fraud device id: stable random id per phone (localStorage).
    The server blocks one device from checking in two different
    students of the same class-date. */
+function randomId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "");
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function getDeviceId(): string {
   try {
     let id = localStorage.getItem("uh_device_id");
     if (!id) {
-      id = crypto.randomUUID().replace(/-/g, "");
+      id = randomId();
       localStorage.setItem("uh_device_id", id);
     }
     return id;
   } catch {
-    return "anon-device";
+    // Storage blocked (private mode, permissions…). A shared constant
+    // like "anon-device" would lock EVERY such device out after the
+    // first check-in — hand out a fresh throwaway id per page load
+    // instead. The device guard still works within this session.
+    return randomId();
   }
 }
 
@@ -107,9 +126,17 @@ export function AttendView({ token }: { token: string | null }) {
      enabled the location check, so the permission prompt appears while
      the student is still reading the page. */
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [geoNeeded, setGeoNeeded] = useState(false);
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoDenied, setGeoDenied] = useState(false);
+  /* Auto-attempt geolocation ONCE per mount — when it fails, `coords`
+     stays null, so re-triggering off `!coords && !geoBusy` alone would
+     loop forever. After the first try only the "Retry location" button
+     (or the check-in fallback) asks again. */
+  const autoGeoTriedRef = useRef(false);
+
+  /* countdown to the window close — server-clock aware */
+  const [nowTick, setNowTick] = useState<number | null>(null);
+  const [clockSkew, setClockSkew] = useState(0);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -119,9 +146,16 @@ export function AttendView({ token }: { token: string | null }) {
     }
     setLoading(true);
     try {
-      const data = await apiGet<ScanInfo>(`/api/attendance/scan?token=${encodeURIComponent(token)}`);
+      const data = await apiGet<ScanInfo>(
+        `/api/attendance/scan?token=${encodeURIComponent(token)}`,
+        { skipAuthRedirect: true } // public scan page — never bounce to login
+      );
       setInfo(data);
       setLoadErr(null);
+      // remember how far the server clock is ahead of this device so the
+      // countdown matches the teacher's window, not the phone's clock
+      const serverMs = Date.parse(data.serverTime);
+      if (Number.isFinite(serverMs)) setClockSkew(serverMs - Date.now());
     } catch (err) {
       setLoadErr(errMsg(err));
     } finally {
@@ -143,11 +177,33 @@ export function AttendView({ token }: { token: string | null }) {
   }, []);
 
   useEffect(() => {
-    if (info?.geoRequired && info.state === "active" && !coords && !geoBusy) {
-      setGeoNeeded(true);
+    if (
+      info?.geoRequired &&
+      info.state === "active" &&
+      !coords &&
+      !geoBusy &&
+      !autoGeoTriedRef.current
+    ) {
+      autoGeoTriedRef.current = true;
       void askGeo();
     }
   }, [info, coords, geoBusy, askGeo]);
+
+  /* a fresh QR token (new scan) gets a fresh auto-attempt */
+  useEffect(() => {
+    autoGeoTriedRef.current = false;
+  }, [token]);
+
+  /* tick every second while the window is open so the countdown runs */
+  useEffect(() => {
+    if (info?.state !== "active") {
+      setNowTick(null);
+      return;
+    }
+    setNowTick(Date.now());
+    const t = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [info?.state]);
 
   const markPresent = useCallback(async () => {
     if (!token || marking || markedOnce.current) return;
@@ -162,11 +218,15 @@ export function AttendView({ token }: { token: string | null }) {
         setCoords(pos);
         if (!pos) setGeoDenied(true);
       }
-      const data = await apiPost<{ already: boolean; corrected?: boolean }>("/api/attendance/scan", {
-        token,
-        ...(pos ? { lat: pos.lat, lng: pos.lng } : {}),
-        deviceId: getDeviceId(),
-      });
+      const data = await apiPost<{ already: boolean; corrected?: boolean }>(
+        "/api/attendance/scan",
+        {
+          token,
+          ...(pos ? { lat: pos.lat, lng: pos.lng } : {}),
+          deviceId: getDeviceId(),
+        },
+        { skipAuthRedirect: true } // inline login below handles auth itself
+      );
       markedOnce.current = true;
       if (data.corrected) setResult("corrected");
       else if (data.already) setResult("already");
@@ -182,6 +242,7 @@ export function AttendView({ token }: { token: string | null }) {
   const loginAndMark = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
+      if (!token) return;
       if (!info?.universitySlug) {
         setLoginErr("University information missing from this QR code.");
         return;
@@ -193,21 +254,42 @@ export function AttendView({ token }: { token: string | null }) {
       setLoggingIn(true);
       setLoginErr(null);
       try {
-        await apiPost("/api/auth/student-login", {
-          universitySlug: info.universitySlug,
-          studentIdNumber: idNumber.trim(),
-          rollNumber: roll.trim(),
-        });
+        await apiPost(
+          "/api/auth/student-login",
+          {
+            universitySlug: info.universitySlug,
+            studentIdNumber: idNumber.trim(),
+            rollNumber: roll.trim(),
+          },
+          { skipAuthRedirect: true } // wrong credentials must not bounce away with the QR token
+        );
         await refreshAuth();
-        // intent of the scan = be marked present → auto-mark right after login
+        // Re-sync the scan state: the window may have expired (410) while
+        // the student was typing — surface the expired card instead of a
+        // raw error from the mark call.
+        let fresh: ScanInfo | null = null;
+        try {
+          fresh = await apiGet<ScanInfo>(
+            `/api/attendance/scan?token=${encodeURIComponent(token)}`,
+            { skipAuthRedirect: true }
+          );
+          setInfo(fresh);
+          setLoadErr(null);
+        } catch {
+          /* keep showing the previous info card */
+        }
         setLoggingIn(false);
-        void markPresent();
+        // intent of the scan = be marked present → auto-mark right after
+        // login, but only if the window is still open and we're not in yet
+        if (fresh && fresh.state === "active" && !fresh.myStatus) {
+          void markPresent();
+        }
       } catch (err) {
         setLoginErr(errMsg(err));
         setLoggingIn(false);
       }
     },
-    [info, idNumber, roll, refreshAuth, markPresent]
+    [token, info, idNumber, roll, refreshAuth, markPresent]
   );
 
   /* ---------------- render states ---------------- */
@@ -226,13 +308,19 @@ export function AttendView({ token }: { token: string | null }) {
       <StatusCard
         tone="rose"
         icon={XCircle}
-        title="QR code not recognised"
+        title="Something went wrong"
         message={loadErr ?? "This QR code is not valid."}
       />
     );
   }
 
   const isStudent = user?.role === "student";
+  const geoBlocking = !!info.geoRequired && !coords;
+  const remainingMs =
+    info.state === "active" && nowTick !== null
+      ? Date.parse(info.expiresAt) - (nowTick + clockSkew)
+      : null;
+  const countdownVisible = remainingMs != null && Number.isFinite(remainingMs);
 
   return (
     <div className="mx-auto max-w-lg space-y-5 py-2">
@@ -257,7 +345,26 @@ export function AttendView({ token }: { token: string | null }) {
           <span className="inline-flex items-center gap-1">
             <GraduationCap className="h-3.5 w-3.5" /> {info.teacherName}
           </span>
-          <span className="ml-auto font-semibold text-[#2D4F35] dark:text-[#7FB08F]">
+          {countdownVisible && (
+            <span
+              className={cn(
+                "ml-auto inline-flex items-center gap-1 font-semibold tabular-nums",
+                (remainingMs as number) < 5 * 60_000
+                  ? "text-[#C8442E] dark:text-[#E55A3F]"
+                  : "text-[#2D4F35] dark:text-[#7FB08F]"
+              )}
+              aria-label="Time left to check in"
+            >
+              <Clock className="h-3.5 w-3.5" aria-hidden />
+              {mmss(remainingMs as number)} left
+            </span>
+          )}
+          <span
+            className={cn(
+              "font-semibold text-[#2D4F35] dark:text-[#7FB08F]",
+              !countdownVisible && "ml-auto"
+            )}
+          >
             {info.presentCount} scanned
           </span>
         </div>
@@ -313,7 +420,7 @@ export function AttendView({ token }: { token: string | null }) {
                 <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] shadow-lg shadow-[#2D4F35]/30">
                   <UserCheck className="h-8 w-8 text-[#FFE01B]" />
                 </div>
-                <p className="mb-1 text-lg font-bold">Hi {user?.name?.split(" ")[0] ?? "there"} 👋</p>
+                <p className="mb-1 text-lg font-bold">Hi {user?.fullName?.split(" ")[0] ?? "there"} 👋</p>
                 <p className="mb-4 text-sm text-muted-foreground">
                   Confirm your presence for <span className="font-semibold">{info.courseCode}</span>
                 </p>
@@ -366,15 +473,20 @@ export function AttendView({ token }: { token: string | null }) {
                   size="lg"
                   className={cn("h-12 w-full text-base", "btn-shine bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25")}
                   onClick={() => void markPresent()}
-                  disabled={marking}
+                  disabled={marking || geoBlocking}
                 >
                   {marking ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <CheckCheck className="mr-2 h-5 w-5" />}
                   {marking
                     ? "Marking you present…"
-                    : info.geoRequired && !coords
+                    : geoBlocking
                       ? "Check in (location needed)"
                       : "Mark me Present"}
                 </Button>
+                {geoBlocking && !marking && (
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    Waiting for your location — allow it above to enable check-in.
+                  </p>
+                )}
                 {markErr && (
                   <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
                     {markErr}
