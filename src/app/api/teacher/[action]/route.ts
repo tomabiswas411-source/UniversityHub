@@ -10,6 +10,7 @@ import { bdTodayISO, bdWeekday } from "@/lib/date-bd";
  * Teacher actions API.
  * GET /api/teacher/overview → own schedules + courses + rooms + timeSlots + stats
  * GET /api/teacher/attendance?scheduleId=&date= → roster + existing marks
+ * GET /api/teacher/attendance-sheet?courseId= → master register per subject (all slots merged, all-time)
  * POST /api/teacher/attendance → bulk save (upsert per student)
  * GET /api/teacher/notices → own posted notices
  * POST /api/teacher/notices → publish (optional course scope + fan-out)
@@ -338,63 +339,102 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  }
 
  if (action === "attendance-sheet") {
- // Master attendance sheet (the class register) — the whole month in
- // ONE grid: rows = students, cols = class dates, cells = status letter.
- // COST GUARD: one indexed query for the month + one roster query;
- // response is compact (status letters, not objects).
- const scheduleId = searchParams.get("scheduleId");
- if (!scheduleId) throw new ApiError(400, "scheduleId is required");
- const month = searchParams.get("month") ?? todayStr().slice(0, 7);
- if (!/^\d{4}-\d{2}$/.test(month)) {
- throw new ApiError(400, "Month must be YYYY-MM");
- }
- const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
- if (!schedule) throw new ApiError(404, "Schedule not found");
- if (session.role === "teacher" && schedule.teacherId !== session.userId) {
+ // Master attendance sheet — ONE sheet per SUBJECT (course × batch),
+ // not one per weekly slot. ICE-1101 may run on 5 weekly slots but the
+ // batch has a single register: every class day from every slot of the
+ // course accumulates as one date column, all-time (no month windows).
+ // COST GUARD: 3 indexed queries; response is compact status letters.
+ const courseId = searchParams.get("courseId");
+ if (!courseId) throw new ApiError(400, "courseId is required");
+ const course = await db.course.findUnique({ where: { id: courseId } });
+ if (!course) throw new ApiError(404, "Course not found");
+ assertDepartmentAccess(session, course.departmentId);
+
+ // Every weekly slot of this subject in the department. For a teacher,
+ // they must own at least one slot of the course; the sheet itself still
+ // merges ALL slots (shared courses like ICE-2101 stay one register).
+ const slots = await db.schedule.findMany({
+ where: { courseId, departmentId: course.departmentId },
+ select: {
+ id: true, programId: true, semester: true, teacherId: true,
+ teacherName: true, dayOfWeek: true, startTime: true, isActive: true,
+ },
+ orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+ });
+ if (slots.length === 0) throw new ApiError(404, "No classes found for this course");
+ if (
+ session.role === "teacher" &&
+ !slots.some((s) => s.teacherId === session.userId)
+ ) {
  throw new ApiError(403, "You can only view your own classes");
  }
- assertDepartmentAccess(session, schedule.departmentId);
 
- const [students, monthMarks, allDates] = await Promise.all([
+ // Batch identity of the register (all slots of a course share it in practice)
+ const programId = slots[0].programId;
+ const semester = slots[0].semester;
+
+ const [students, marks] = await Promise.all([
  db.user.findMany({
  where: {
- departmentId: schedule.departmentId,
+ departmentId: course.departmentId,
  role: "student",
  isActive: true,
- programId: schedule.programId,
- semester: schedule.semester,
+ programId,
+ semester,
  },
  select: { id: true, fullName: true, rollNumber: true, studentIdNumber: true },
  orderBy: { rollNumber: "asc" },
  }),
- // String dates are ISO — lexicographic range works. "-31" covers
- // every real month end (Feb 30/31 don't exist so nothing extra).
  db.attendance.findMany({
- where: { scheduleId, date: { gte: `${month}-01`, lte: `${month}-31` } },
- select: { studentId: true, date: true, status: true },
+ where: { scheduleId: { in: slots.map((s) => s.id) } },
+ select: { studentId: true, scheduleId: true, date: true, status: true },
  orderBy: { date: "asc" },
- }),
- db.attendance.findMany({
- where: { scheduleId },
- select: { date: true },
- distinct: ["date"],
- orderBy: { date: "asc" },
- take: 400,
+ take: 6000, // bounded; a semester's worth of days × batch
  }),
  ]);
 
- const dates = [...new Set(monthMarks.map((m) => m.date))].sort();
+ // Columns = class MEETINGS. One column per date normally; when a subject
+ // met twice on the same calendar date (morning + afternoon slot), each
+ // meeting keeps its own column so no mark is lost.
+ const slotById = new Map(slots.map((s) => [s.id, s]));
+ const sidsByDate = new Map<string, Set<string>>();
+ for (const m of marks) {
+ let set = sidsByDate.get(m.date);
+ if (!set) sidsByDate.set(m.date, (set = new Set()));
+ set.add(m.scheduleId);
+ }
+ const columns: { key: string; date: string; slot?: string }[] = [];
+ const keyFor = (scheduleId: string, date: string): string => {
+ const ids = sidsByDate.get(date);
+ return ids && ids.size > 1 ? `${date}::${scheduleId}` : date;
+ };
+ for (const date of [...sidsByDate.keys()].sort()) {
+ const ids = [...(sidsByDate.get(date) ?? [])].sort((a, b) => {
+ const sa = slotById.get(a)?.startTime ?? "";
+ const sb = slotById.get(b)?.startTime ?? "";
+ return sa.localeCompare(sb);
+ });
+ for (const sid of ids) {
+ const slot = slotById.get(sid);
+ columns.push({
+ key: keyFor(sid, date),
+ date,
+ slot: ids.length > 1 && slot ? `${slot.dayOfWeek} ${slot.startTime}` : undefined,
+ });
+ }
+ }
+
  const cells: Record<string, Record<string, string>> = {};
  const summary: Record<string, { present: number; absent: number; late: number; excused: number; total: number; pct: number }> = {};
  for (const st of students) {
  cells[st.id] = {};
  summary[st.id] = { present: 0, absent: 0, late: 0, excused: 0, total: 0, pct: 0 };
  }
- for (const m of monthMarks) {
+ for (const m of marks) {
  const row = cells[m.studentId];
  const sum = summary[m.studentId];
  if (!row || !sum) continue; // marked student left the batch — keep grid clean
- row[m.date] = m.status;
+ row[keyFor(m.scheduleId, m.date)] = m.status;
  sum.total += 1;
  if (m.status in sum) sum[m.status as "present" | "absent" | "late" | "excused"] += 1;
  }
@@ -404,14 +444,14 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  }
 
  return {
- month,
- months: [...new Set(allDates.map((d) => d.date.slice(0, 7)))].sort().reverse(),
- schedule: {
- courseCode: schedule.courseCode,
- courseName: schedule.courseName,
- semester: schedule.semester,
+ course: {
+ courseCode: course.code,
+ courseName: course.name,
+ semester,
+ slots: slots.length,
+ teacherNames: [...new Set(slots.map((s) => s.teacherName).filter(Boolean))],
  },
- dates,
+ columns,
  students,
  cells,
  summary,

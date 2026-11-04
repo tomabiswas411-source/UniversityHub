@@ -19,6 +19,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Megaphone,
+  ShieldCheck,
   TrendingUp,
   Users,
 } from "lucide-react";
@@ -51,8 +52,10 @@ export interface DashboardSection {
 export const DASHBOARD_SECTIONS = {
   super_admin: [
     { value: "universities", label: "Universities", icon: Building2 },
+    { value: "users", label: "Platform Users", icon: Users },
     { value: "plans", label: "Plans & Billing", icon: CreditCard },
     { value: "analytics", label: "Analytics", icon: ChartNoAxesColumn },
+    { value: "system", label: "System Control", icon: ShieldCheck },
   ],
   dept_admin: [
     { value: "overview", label: "Overview", icon: LayoutDashboard },

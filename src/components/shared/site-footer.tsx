@@ -12,7 +12,7 @@ interface SiteFooterProps {
 export function SiteFooter({ navigate }: SiteFooterProps) {
  const { user } = useAuthStore();
  return (
- <footer className="mt-auto w-full border-t border-border bg-gradient-to-b from-secondary to-background dark:from-[#241C15] dark:to-[#1A1612] pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8">
+ <footer className="mt-auto hidden w-full border-t border-border bg-gradient-to-b from-secondary to-background dark:from-[#241C15] dark:to-[#1A1612] md:block md:pb-8">
  <div className="max-w-7xl mx-auto px-4 md:px-6 py-8">
  <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
  {/* Brand */}

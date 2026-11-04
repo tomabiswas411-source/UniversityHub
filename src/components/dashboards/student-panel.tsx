@@ -52,6 +52,7 @@ import {
  MetricRing,
  PerfLineChart,
 } from "@/components/dashboards/analytics-charts";
+import { StudentAttendanceSheetCard } from "@/components/dashboards/student-attendance-sheet-card";
 import {
  followNotificationLink,
  timeAgo,
@@ -934,6 +935,8 @@ export function StudentPanel({
  {/* Attendance — visible even before any results are published */}
  {data?.attendance?.hasData ? (
  <div className="mb-4 space-y-4">
+ {/* ONE sheet per subject — every class day in order, like the teacher's register */}
+ <StudentAttendanceSheetCard />
  <div className="flex flex-wrap items-center justify-around gap-4 rounded-xl border bg-card p-5 shadow-sm">
  <MetricRing
  pct={data.attendance.rate}

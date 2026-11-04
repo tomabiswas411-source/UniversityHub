@@ -3,10 +3,15 @@ import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { hashPassword } from "@/lib/auth";
+import { runCleanup } from "@/lib/cleanup";
 
 /**
  * Super Admin API.
  * GET /api/admin/overview → platform stats + universities + plans
+ * GET /api/admin/users?role=&universityId=&active=&q= → platform user directory
+ * PUT /api/admin/users?id= → activate/deactivate · change role · reset password
+ * GET /api/admin/system → every model's row count (platform health)
+ * POST /api/admin/system-cleanup → run the retention sweep now
  * POST /api/admin/universities → create university
  * PUT /api/admin/universities?id=
  * DELETE /api/admin/universities?id=
@@ -210,6 +215,92 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  return { university };
  }
 
+ if (action === "users") {
+ // Platform-wide user directory — the super admin's control panel for
+ // every account on the platform. Filters are optional; q is matched
+ // in JS (SQLite contains is case-sensitive — 500-row cap keeps it safe).
+ const role = searchParams.get("role");
+ const universityId = searchParams.get("universityId");
+ const active = searchParams.get("active");
+ const q = (searchParams.get("q") ?? "").trim().toLowerCase();
+
+ const where: Record<string, unknown> = {};
+ if (role && ["super_admin", "dept_admin", "teacher", "student"].includes(role)) {
+ where.role = role;
+ }
+ if (universityId) where.universityId = universityId;
+ if (active === "true") where.isActive = true;
+ if (active === "false") where.isActive = false;
+
+ const users = await db.user.findMany({
+ where,
+ select: {
+ id: true,
+ fullName: true,
+ email: true,
+ role: true,
+ isActive: true,
+ studentIdNumber: true,
+ rollNumber: true,
+ semester: true,
+ designation: true,
+ createdAt: true,
+ university: { select: { id: true, name: true, shortName: true, slug: true } },
+ department: { select: { id: true, name: true, shortName: true } },
+ },
+ orderBy: { createdAt: "desc" },
+ take: 500,
+ });
+
+ const filtered = q
+ ? users.filter((u) =>
+ [u.fullName, u.email, u.rollNumber, u.studentIdNumber]
+ .some((v) => (v ?? "").toLowerCase().includes(q))
+ )
+ : users;
+
+ return { users: filtered, total: filtered.length };
+ }
+
+ if (action === "system") {
+ // Platform health — one count per model. Bounded, indexed counts only.
+ const [
+ universities, departments, users, teachers, students,
+ schedules, notices, assignments, results, attendance,
+ attendanceSessions, notifications, scheduleChanges,
+ ] = await Promise.all([
+ db.university.count(),
+ db.department.count(),
+ db.user.count(),
+ db.user.count({ where: { role: "teacher", isActive: true } }),
+ db.user.count({ where: { role: "student", isActive: true } }),
+ db.schedule.count({ where: { isActive: true } }),
+ db.notice.count(),
+ db.assignment.count(),
+ db.result.count(),
+ db.attendance.count(),
+ db.attendanceSession.count(),
+ db.notification.count(),
+ db.scheduleChange.count(),
+ ]);
+ return {
+ counts: {
+ universities, departments, users, teachers, students,
+ schedules, notices, assignments, results, attendance,
+ attendanceSessions, notifications, scheduleChanges,
+ },
+ retention: {
+ attendanceSessionDays: 30,
+ notificationsReadDays: 14,
+ notificationsUnreadDays: 90,
+ scheduleChangeDays: 180,
+ autoNoticeDays: 60,
+ expiredNoticeDays: 30,
+ calendarDays: 180,
+ },
+ };
+ }
+
  throw new ApiError(404, "Unknown action");
  });
 }
@@ -320,6 +411,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  return { user: safeUser };
  }
 
+ if (action === "system-cleanup") {
+ // Run the retention sweep NOW from the System Control tab.
+ // Same idempotent sweep the daily cron uses — safe to repeat.
+ const result = await runCleanup();
+ return { cleanup: result };
+ }
+
  throw new ApiError(404, "Unknown action");
  });
 }
@@ -363,6 +461,54 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  data.slug = cleanSlug;
  }
  return db.university.update({ where: { id }, data });
+ }
+
+ if (action === "users") {
+ // Platform user control: activate/deactivate · change role · reset password.
+ // GUARDS: super_admin accounts are untouchable; you cannot lock
+ // yourself out; passwords must be hashed.
+ if (!id) throw new ApiError(400, "id is required");
+ const target = await db.user.findUnique({ where: { id } });
+ if (!target) throw new ApiError(404, "User not found");
+ if (target.role === "super_admin") {
+ throw new ApiError(400, "Super admin accounts cannot be modified here");
+ }
+ if (target.id === session.userId) {
+ throw new ApiError(400, "You cannot modify your own account from here");
+ }
+
+ const data: Record<string, unknown> = {};
+ if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
+ if (body.role !== undefined) {
+ const role = String(body.role);
+ if (!["dept_admin", "teacher", "student"].includes(role)) {
+ throw new ApiError(400, "role must be dept_admin, teacher or student");
+ }
+ if (role !== target.role && target.role === "student" && role !== "student") {
+ // Students log in with ID+Roll, not email/password — promoting one
+ // to staff without an email+password would lock them out.
+ if (!target.email) {
+ throw new ApiError(
+ 400,
+ "This student has no staff email — provision a staff account instead"
+ );
+ }
+ }
+ data.role = role;
+ }
+ if (body.password !== undefined) {
+ const pw = String(body.password);
+ if (pw.length < 4) {
+ throw new ApiError(400, "Password must be at least 4 characters");
+ }
+ data.password = await hashPassword(pw);
+ }
+ if (Object.keys(data).length === 0) {
+ throw new ApiError(400, "Nothing to update");
+ }
+ const updated = await db.user.update({ where: { id }, data });
+ const { password: _pw, ...safeUser } = updated;
+ return { user: safeUser };
  }
 
  if (action === "plans") {

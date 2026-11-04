@@ -355,6 +355,7 @@ export function TeacherPanel({
  /* ---------------- attendance (role capability loop) ---------------- */
  interface AttScheduleInfo {
  id: string;
+ courseId: string;
  courseCode: string;
  courseName: string;
  startTime: string;
@@ -1449,8 +1450,12 @@ export function TeacherPanel({
  }}
  />
 
- {/* Master sheet — every day accumulates in ONE organised grid */}
- <AttendanceSheetCard scheduleId={attScheduleId} refreshSignal={sheetRefresh} />
+ {/* Master sheet — ONE register per subject; every slot & every day accumulates here */}
+ <AttendanceSheetCard
+ courseId={attSchedule?.courseId ?? ""}
+ courseLabel={attSchedule?.courseCode}
+ refreshSignal={sheetRefresh}
+ />
  </TabsContent>
 
  {/* ============ CLASS CHANGES ============ */}

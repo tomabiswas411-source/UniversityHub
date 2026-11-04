@@ -85,6 +85,8 @@ import {
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
+import { SuperAdminUsersCard } from "@/components/dashboards/super-admin-users-card";
+import { SuperAdminSystemCard } from "@/components/dashboards/super-admin-system-card";
 import type {
  DepartmentDTO,
  PlanDTO,
@@ -1354,6 +1356,22 @@ export function SuperAdminPanel({
  </SectionCard>
  </>
  )}
+ </TabsContent>
+
+ {/* ===== Platform Users tab ===== */}
+ <TabsContent value="users" className="space-y-4">
+ <SuperAdminUsersCard
+ universities={universities.map((u) => ({
+ id: u.id,
+ name: u.name,
+ shortName: u.shortName,
+ }))}
+ />
+ </TabsContent>
+
+ {/* ===== System Control tab ===== */}
+ <TabsContent value="system" className="space-y-4">
+ <SuperAdminSystemCard />
  </TabsContent>
  </Tabs>
 
