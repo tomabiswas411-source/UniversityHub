@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAuthStore } from "@/store/auth-store";
+import { cn } from "@/lib/utils";
 import { SiteHeader } from "@/components/shared/site-header";
 import { SiteFooter } from "@/components/shared/site-footer";
 import { MobileNav } from "@/components/shared/mobile-nav";
@@ -45,6 +46,11 @@ function AppShell() {
 
  const view = parseView(searchParams.get("view"));
  const deptId = searchParams.get("dept");
+ const tabParam = searchParams.get("tab") ?? undefined;
+ /* The sidebar rail is APP chrome — it only lives on the dashboard.
+    Public views (home/department/pricing/login) use the header nav,
+    so the marketing pages stay clean. */
+ const showRail = view === "dashboard";
 
  const [booting, setBooting] = useState(true);
 
@@ -52,7 +58,11 @@ function AppShell() {
  refresh().finally(() => setBooting(false));
  }, [refresh]);
 
- const navigate = (v: AppView, params?: Record<string, string>) => {
+ const navigate = (
+ v: AppView,
+ params?: Record<string, string>,
+ opts?: { scroll?: boolean }
+ ) => {
  const sp = new URLSearchParams();
  if (v !== "home") sp.set("view", v);
  if (params) {
@@ -60,7 +70,11 @@ function AppShell() {
  }
  const qs = sp.toString();
  router.push(qs ? `/?${qs}` : "/");
+ // In-page tab switches keep the scroll position — only real
+ // view changes jump to the top.
+ if (opts?.scroll !== false) {
  window.scrollTo({ top: 0, behavior: "smooth" });
+ }
  };
 
  if (booting || !initialized) {
@@ -86,9 +100,14 @@ function AppShell() {
  <div className="min-h-screen flex flex-col bg-gradient-to-b from-gold/20 via-background to-background lg:flex-row">
  {/* Desktop app rail — the menu lives on the side from lg up;
     mobile/tablet keeps the app-style bottom tab bar. */}
- <AppSidebar view={view} navigate={navigate} />
+ <AppSidebar view={view} navigate={navigate} tab={tabParam} />
 
- <div className="flex min-h-screen flex-1 flex-col lg:pl-64">
+ <div
+ className={cn(
+ "flex min-h-screen flex-1 flex-col",
+ showRail && "lg:pl-64"
+ )}
+ >
  <SiteHeader view={view} navigate={navigate} />
  <ScrollProgress />
 
@@ -119,7 +138,15 @@ function AppShell() {
  )}
  {view === "login" && <LoginView navigate={navigate} />}
  {view === "pricing" && <PricingView navigate={navigate} />}
- {view === "dashboard" && <DashboardView navigate={navigate} />}
+ {view === "dashboard" && (
+ <DashboardView
+ navigate={navigate}
+ tab={tabParam}
+ onTabChange={(t) =>
+ navigate("dashboard", { tab: t }, { scroll: false })
+ }
+ />
+ )}
  {view === "attend" && <AttendView token={searchParams.get("k")} />}
  {view === "scan" && <ScanView navigate={navigate} />}
  </motion.div>

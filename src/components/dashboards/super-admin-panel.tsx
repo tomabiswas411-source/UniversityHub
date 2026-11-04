@@ -66,8 +66,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import {
+ DASHBOARD_SECTIONS,
  EmptyState,
  GRADIENT_BTN,
+ MOBILE_TABS_LIST,
+ MOBILE_TAB_TRIGGER,
  PanelLoader,
  SectionCard,
  StatCard,
@@ -331,8 +334,22 @@ function DeptCountChips({ dept }: { dept: DetailDept }) {
  Main panel
  ============================================================ */
 
-export function SuperAdminPanel() {
+export function SuperAdminPanel({
+ tab,
+ onTabChange,
+}: {
+ /** Active section — mirrors the ?tab= URL param (sidebar rail). */
+ tab?: string;
+ onTabChange?: (tab: string) => void;
+}) {
  const user = useAuthStore((s) => s.user);
+
+ /* Section state — URL-driven when valid (sidebar rail), local pill
+    clicks sync back to the URL via onTabChange. */
+ const [localTab, setLocalTab] = useState("universities");
+ const activeTab = DASHBOARD_SECTIONS.super_admin.some((s) => s.value === tab)
+ ? tab
+ : localTab;
 
  /* -------- data -------- */
  const [loading, setLoading] = useState(true);
@@ -389,9 +406,11 @@ export function SuperAdminPanel() {
 
  const handleTabChange = useCallback(
  (v: string) => {
+ setLocalTab(v);
+ onTabChange?.(v);
  if (v === "analytics") void loadAnalytics();
  },
- [loadAnalytics]
+ [loadAnalytics, onTabChange]
  );
 
  /* ---------------- loaders ---------------- */
@@ -859,20 +878,15 @@ export function SuperAdminPanel() {
  </section>
 
  {/* ---------- tabs ---------- */}
- <Tabs defaultValue="universities" onValueChange={handleTabChange} className="gap-4">
- <TabsList className="no-scrollbar h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:h-9">
- <TabsTrigger value="universities" className="shrink-0 gap-1.5 px-4">
- <Building2 className="h-3.5 w-3.5" />
- Universities
+ <Tabs value={activeTab} onValueChange={handleTabChange} className="gap-4">
+ {/* lg+: sidebar rail owns sections; below lg: one pill row */}
+ <TabsList className={MOBILE_TABS_LIST}>
+ {DASHBOARD_SECTIONS.super_admin.map((s) => (
+ <TabsTrigger key={s.value} value={s.value} className="min-h-9 shrink-0 gap-1.5 px-4 text-xs font-medium sm:text-sm">
+ <s.icon className="h-3.5 w-3.5" />
+ {s.label}
  </TabsTrigger>
- <TabsTrigger value="plans" className="shrink-0 gap-1.5 px-4">
- <CreditCard className="h-3.5 w-3.5" />
- Plans &amp; Billing
- </TabsTrigger>
- <TabsTrigger value="analytics" className="shrink-0 gap-1.5 px-4">
- <ChartNoAxesColumn className="h-3.5 w-3.5" />
- Analytics
- </TabsTrigger>
+ ))}
  </TabsList>
 
  {/* ===== Universities tab ===== */}

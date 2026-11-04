@@ -1,6 +1,27 @@
 "use client";
 
 import { motion } from "framer-motion";
+import {
+  ArrowLeftRight,
+  Award,
+  BarChart3,
+  Bell,
+  BookOpen,
+  Building2,
+  CalendarDays,
+  ChartNoAxesColumn,
+  ClipboardCheck,
+  CreditCard,
+  DoorOpen,
+  FileText,
+  FolderDown,
+  GraduationCap,
+  LayoutDashboard,
+  LayoutGrid,
+  Megaphone,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CountUp } from "@/components/shared/motion-primitives";
@@ -14,6 +35,67 @@ import { DAY_LABELS, DAYS_OF_WEEK } from "@/types";
    display numerals, forest green for primary actions.
    amber/emerald/rose reserved for semantics only.
    ============================================================ */
+
+/* ---------------- Dashboard sections (single source of truth) ----------------
+   The desktop sidebar rail renders these as the dashboard's section
+   navigation; each role panel keeps identical tab values so the URL
+   `?view=dashboard&tab=…` param drives both. The in-page tab strip is
+   hidden on lg+ (the rail owns it) and collapses to a single scrollable
+   pill row on phones. */
+export interface DashboardSection {
+  value: string;
+  label: string;
+  icon: LucideIcon;
+}
+
+export const DASHBOARD_SECTIONS = {
+  super_admin: [
+    { value: "universities", label: "Universities", icon: Building2 },
+    { value: "plans", label: "Plans & Billing", icon: CreditCard },
+    { value: "analytics", label: "Analytics", icon: ChartNoAxesColumn },
+  ],
+  dept_admin: [
+    { value: "overview", label: "Overview", icon: LayoutDashboard },
+    { value: "analytics", label: "Analytics", icon: BarChart3 },
+    { value: "schedule", label: "Schedule", icon: CalendarDays },
+    { value: "teachers", label: "Teachers", icon: GraduationCap },
+    { value: "students", label: "Students", icon: Users },
+    { value: "courses", label: "Courses", icon: BookOpen },
+    { value: "programs", label: "Programs", icon: LayoutGrid },
+    { value: "rooms", label: "Rooms & Slots", icon: DoorOpen },
+    { value: "notices", label: "Notices", icon: Megaphone },
+  ],
+  teacher: [
+    { value: "schedule", label: "My Schedule", icon: CalendarDays },
+    { value: "attendance", label: "Attendance", icon: ClipboardCheck },
+    { value: "changes", label: "Class Changes", icon: ArrowLeftRight },
+    { value: "students", label: "Students", icon: Users },
+    { value: "assignments", label: "Assignments", icon: FileText },
+    { value: "results", label: "Results", icon: Award },
+    { value: "notices", label: "Notices", icon: Megaphone },
+    { value: "documents", label: "Documents", icon: FolderDown },
+    { value: "insights", label: "Insights", icon: ChartNoAxesColumn },
+  ],
+  student: [
+    { value: "routine", label: "Today & Routine", icon: CalendarDays },
+    { value: "notices", label: "Notices", icon: Megaphone },
+    { value: "assignments", label: "Assignments", icon: FileText },
+    { value: "results", label: "Results", icon: Award },
+    { value: "performance", label: "Performance", icon: TrendingUp },
+    { value: "alerts", label: "Alerts", icon: Bell },
+  ],
+} as const satisfies Record<string, readonly DashboardSection[]>;
+
+export function dashboardSectionsFor(role: string): readonly DashboardSection[] {
+  return DASHBOARD_SECTIONS[role as keyof typeof DASHBOARD_SECTIONS] ?? [];
+}
+
+/** Shared tab-strip styling: single scrollable pill row on phones,
+    removed on lg+ where the sidebar rail carries the sections. */
+export const MOBILE_TABS_LIST =
+  "no-scrollbar h-11 w-full justify-start gap-1 overflow-x-auto rounded-xl border bg-muted/50 p-1 sm:h-10 lg:hidden";
+export const MOBILE_TAB_TRIGGER =
+  "min-h-9 shrink-0 gap-1.5 rounded-lg px-3 text-xs font-medium sm:text-sm";
 
 export const GRADIENT_BTN =
   "btn-shine bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25";

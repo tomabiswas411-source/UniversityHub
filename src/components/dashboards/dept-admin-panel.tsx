@@ -67,9 +67,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import {
+ DASHBOARD_SECTIONS,
  EmptyState,
  GRADIENT_BTN,
  GRADIENT_ICON,
+ MOBILE_TABS_LIST,
+ MOBILE_TAB_TRIGGER,
  PanelLoader,
  SectionCard,
  StatCard,
@@ -461,9 +464,26 @@ function ConfirmDialog({
  Main panel
  ============================================================ */
 
-export function DeptAdminPanel() {
+export function DeptAdminPanel({
+ tab,
+ onTabChange,
+}: {
+ /** Active section — mirrors the ?tab= URL param (sidebar rail). */
+ tab?: string;
+ onTabChange?: (tab: string) => void;
+}) {
  const user = useAuthStore((s) => s.user);
  const departmentId = user?.departmentId ?? null;
+
+ /* Section state — URL-driven when valid (sidebar rail), local pill
+    clicks sync back to the URL via onTabChange. */
+ const [localTab, setLocalTab] = useState("overview");
+ const activeTab =
+ tab && TABS.some((t) => t.value === tab) ? tab : localTab;
+ const handleTabChange = (v: string) => {
+ setLocalTab(v);
+ onTabChange?.(v);
+ };
 
  /* -------- data -------- */
  const [loading, setLoading] = useState(true);
@@ -818,10 +838,11 @@ export function DeptAdminPanel() {
  </section>
 
  {/* ---------- tabs ---------- */}
- <Tabs defaultValue="overview" className="gap-4">
- <TabsList className="no-scrollbar h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:h-9">
+ <Tabs value={activeTab} onValueChange={handleTabChange} className="gap-4">
+ {/* lg+: sidebar rail owns sections; below lg: one pill row */}
+ <TabsList className={MOBILE_TABS_LIST}>
  {TABS.map((t) => (
- <TabsTrigger key={t.value} value={t.value} className="shrink-0 gap-1.5 px-3">
+ <TabsTrigger key={t.value} value={t.value} className={cn(MOBILE_TAB_TRIGGER)}>
  <t.icon className="h-3.5 w-3.5" />
  <span>{t.label}</span>
  </TabsTrigger>

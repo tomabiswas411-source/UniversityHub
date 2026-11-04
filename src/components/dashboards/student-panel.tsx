@@ -35,9 +35,12 @@ import { useAuthStore } from "@/store/auth-store";
 import {
  CategoryBadge,
  ChangeTypeBadge,
+ DASHBOARD_SECTIONS,
  EmptyState,
  ExamTypeBadge,
  GRADIENT_BTN,
+ MOBILE_TABS_LIST,
+ MOBILE_TAB_TRIGGER,
  PanelLoader,
  SectionCard,
  StatCard,
@@ -264,15 +267,32 @@ function ChangeRow({ change }: { change: ScheduleChangeDTO }) {
 
 export function StudentPanel({
  navigate,
+ tab,
+ onTabChange,
 }: {
  /** Provided by DashboardView — used for the Scan QR quick action. */
  navigate?: (v: "home" | "department" | "login" | "pricing" | "dashboard" | "scan", params?: Record<string, string>) => void;
+ /** Active section — mirrors the ?tab= URL param (sidebar rail). */
+ tab?: string;
+ onTabChange?: (tab: string) => void;
 }) {
  const [data, setData] = useState<StudentDashboardData | null>(null);
  const [loading, setLoading] = useState(true);
  const [error, setError] = useState<string | null>(null);
  const [expandedNotices, setExpandedNotices] = useState<Record<string, boolean>>({});
  const authUser = useAuthStore((s) => s.user);
+
+ /* Section state — URL-driven when valid (sidebar rail), local pill
+    clicks sync back to the URL via onTabChange. */
+ const [localTab, setLocalTab] = useState("routine");
+ const activeTab =
+ tab && DASHBOARD_SECTIONS.student.some((s) => s.value === tab)
+ ? tab
+ : localTab;
+ const handleTabChange = (v: string) => {
+ setLocalTab(v);
+ onTabChange?.(v);
+ };
 
  const load = useCallback(async () => {
  setLoading(true);
@@ -568,26 +588,14 @@ export function StudentPanel({
  </div>
 
  {/* ---------- Tabs ---------- */}
- <Tabs defaultValue="routine">
- <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-2xl bg-muted/60 p-1.5">
- <TabsTrigger value="routine" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
- Today &amp; Routine
+ <Tabs value={activeTab} onValueChange={handleTabChange}>
+ {/* lg+: sidebar rail owns sections; below lg: one pill row */}
+ <TabsList className={MOBILE_TABS_LIST}>
+ {DASHBOARD_SECTIONS.student.map((s) => (
+ <TabsTrigger key={s.value} value={s.value} className={MOBILE_TAB_TRIGGER}>
+ {s.label}
  </TabsTrigger>
- <TabsTrigger value="notices" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
- Notices
- </TabsTrigger>
- <TabsTrigger value="assignments" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
- Assignments
- </TabsTrigger>
- <TabsTrigger value="results" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
- Results
- </TabsTrigger>
- <TabsTrigger value="performance" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
- Performance
- </TabsTrigger>
- <TabsTrigger value="alerts" className="min-h-9 rounded-xl px-3 text-xs sm:text-sm">
- Alerts
- </TabsTrigger>
+ ))}
  </TabsList>
 
  {/* ===== Today & Routine ===== */}

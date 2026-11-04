@@ -31,8 +31,15 @@ type NavView = "home" | "department" | "login" | "pricing" | "dashboard" | "scan
 
 export function DashboardView({
  navigate,
+ tab,
+ onTabChange,
 }: {
  navigate: (v: NavView, params?: Record<string, string>) => void;
+ /** Active dashboard section (mirrors the ?tab= URL param). */
+ tab?: string;
+ /** Panel → URL sync. The sidebar rail (lg+) navigates the same
+     param, so rail and in-page pills always agree. */
+ onTabChange?: (tab: string) => void;
 }) {
  const { user } = useAuthStore();
 
@@ -64,11 +71,20 @@ export function DashboardView({
 
  return (
  <div className="space-y-5 sm:space-y-6">
- {/* Role panels */}
- {user.role === "super_admin" && <SuperAdminPanel />}
- {user.role === "dept_admin" && <DeptAdminPanel />}
- {user.role === "teacher" && <TeacherPanel />}
- {user.role === "student" && <StudentPanel navigate={navigate} />}
+ {/* Role panels — each receives the URL-driven section so the
+     sidebar rail and the mobile pill row stay in sync */}
+ {user.role === "super_admin" && (
+ <SuperAdminPanel tab={tab} onTabChange={onTabChange} />
+ )}
+ {user.role === "dept_admin" && (
+ <DeptAdminPanel tab={tab} onTabChange={onTabChange} />
+ )}
+ {user.role === "teacher" && (
+ <TeacherPanel tab={tab} onTabChange={onTabChange} />
+ )}
+ {user.role === "student" && (
+ <StudentPanel navigate={navigate} tab={tab} onTabChange={onTabChange} />
+ )}
  </div>
  );
 }

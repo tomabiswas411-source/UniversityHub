@@ -51,9 +51,12 @@ import {
 import {
  ChangeTypeBadge,
  CategoryBadge,
+ DASHBOARD_SECTIONS,
  EmptyState,
  ExamTypeBadge,
  GRADIENT_BTN,
+ MOBILE_TABS_LIST,
+ MOBILE_TAB_TRIGGER,
  PanelLoader,
  SectionCard,
  StatCard,
@@ -260,7 +263,14 @@ function gradeCls(m: number): string {
  return "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300";
 }
 
-export function TeacherPanel() {
+export function TeacherPanel({
+ tab,
+ onTabChange,
+}: {
+ /** Active section — mirrors the ?tab= URL param (sidebar rail). */
+ tab?: string;
+ onTabChange?: (tab: string) => void;
+}) {
  const user = useAuthStore((s) => s.user);
  const mounted = useMountedFlag();
 
@@ -273,6 +283,12 @@ export function TeacherPanel() {
  const [timeSlots, setTimeSlots] = useState<TimeSlotDTO[]>([]);
  const [stats, setStats] = useState({ totalClasses: 0, todayClasses: 0, totalCourses: 0, myStudents: 0 });
  const [activeTab, setActiveTab] = useState("schedule");
+ /* URL-driven section wins when valid (sidebar rail navigation);
+    in-page pill clicks fall back to local state and sync the URL. */
+ const effectiveTab =
+ tab && DASHBOARD_SECTIONS.teacher.some((s) => s.value === tab)
+ ? tab
+ : activeTab;
 
  /* ---------------- Students / Documents scope (lifted) ----------------
  Kept here so switching between tabs doesn't wipe the teacher's
@@ -528,10 +544,11 @@ export function TeacherPanel() {
  const handleTabChange = useCallback(
  (v: string) => {
  setActiveTab(v);
+ onTabChange?.(v);
  if (v === "insights" && !insights && !insightsLoading) void loadInsights();
  if (v === "notices" && myNotices === null && !myNoticesLoading) void loadMyNotices();
  },
- [insights, insightsLoading, loadInsights, myNotices, myNoticesLoading, loadMyNotices]
+ [insights, insightsLoading, loadInsights, myNotices, myNoticesLoading, loadMyNotices, onTabChange]
  );
 
  const loadOverview = useCallback(async () => {
@@ -1014,17 +1031,16 @@ export function TeacherPanel() {
  </div>
 
  {/* ---------- tabs ---------- */}
- <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
- <TabsList className="grid h-auto w-full grid-cols-3 gap-1 sm:grid-cols-5">
- <TabsTrigger value="schedule" className="py-1.5">My Schedule</TabsTrigger>
- <TabsTrigger value="attendance" className="py-1.5">Attendance</TabsTrigger>
- <TabsTrigger value="changes" className="py-1.5">Class Changes</TabsTrigger>
- <TabsTrigger value="students" className="py-1.5">Students</TabsTrigger>
- <TabsTrigger value="assignments" className="py-1.5">Assignments</TabsTrigger>
- <TabsTrigger value="results" className="py-1.5">Results</TabsTrigger>
- <TabsTrigger value="notices" className="py-1.5">Notices</TabsTrigger>
- <TabsTrigger value="documents" className="py-1.5">Documents</TabsTrigger>
- <TabsTrigger value="insights" className="py-1.5">Insights</TabsTrigger>
+ <Tabs value={effectiveTab} onValueChange={handleTabChange} className="w-full">
+ {/* lg+: the sidebar rail owns section navigation — the in-page
+    strip is removed so nothing floats in the middle of the page.
+    Below lg: one compact scrollable pill row. */}
+ <TabsList className={MOBILE_TABS_LIST}>
+ {DASHBOARD_SECTIONS.teacher.map((s) => (
+ <TabsTrigger key={s.value} value={s.value} className={MOBILE_TAB_TRIGGER}>
+ {s.label}
+ </TabsTrigger>
+ ))}
  </TabsList>
 
  {/* ============ MY SCHEDULE ============ */}

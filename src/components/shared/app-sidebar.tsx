@@ -26,19 +26,35 @@ import {
 import { useAuthStore } from "@/store/auth-store";
 import { canSeePricing } from "@/lib/role-access";
 import { ROLE_LABELS } from "@/lib/role-labels";
+import { dashboardSectionsFor } from "@/components/dashboards/dashboard-shared";
 import { cn } from "@/lib/utils";
 import type { AppView } from "@/app/page";
 
 interface AppSidebarProps {
   view: AppView;
   navigate: (v: AppView, params?: Record<string, string>) => void;
+  /** Active dashboard section (from the ?tab= URL param). */
+  tab?: string;
 }
 
-export function AppSidebar({ view, navigate }: AppSidebarProps) {
+export function AppSidebar({ view, navigate, tab }: AppSidebarProps) {
   const router = useRouter();
   const { user, logout } = useAuthStore();
 
+  /* APP-CHROME RULE: the rail belongs to the dashboard only. Public
+     views (home / department / pricing / login) keep the clean
+     header-nav layout — the menu never floats over the marketing
+     pages. The bottom tab bar still covers mobile on every view. */
+  if (view !== "dashboard") return null;
+
   const isStudent = user?.role === "student";
+
+  /* Role-aware dashboard sections — the rail IS the dashboard's
+     navigation now: the in-page tab strip is gone on lg+. */
+  const sections = user ? dashboardSectionsFor(user.role) : [];
+  const activeSection = sections.some((s) => s.value === tab)
+    ? tab
+    : sections[0]?.value;
 
   const items: {
     view: AppView;
@@ -111,7 +127,10 @@ export function AppSidebar({ view, navigate }: AppSidebarProps) {
         </p>
         {items.map((item) => {
           const Icon = item.icon;
-          const active = view === item.view;
+          const active =
+            view === item.view &&
+            // Dashboard item only lights up when no specific section is picked
+            !(item.view === "dashboard" && activeSection != null);
           return (
             <button
               key={item.view}
@@ -152,6 +171,57 @@ export function AppSidebar({ view, navigate }: AppSidebarProps) {
             </button>
           );
         })}
+
+        {/* ---- Dashboard sections (role-aware) ---- */}
+        {sections.length > 0 && (
+          <div className="pt-3">
+            <div className="mx-2 mb-2 h-px bg-white/10" aria-hidden />
+            <p className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">
+              Dashboard
+            </p>
+            <div className="space-y-0.5">
+              {sections.map((s) => {
+                const Icon = s.icon;
+                const active = s.value === activeSection;
+                return (
+                  <button
+                    key={s.value}
+                    type="button"
+                    onClick={() => navigate("dashboard", { tab: s.value })}
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all",
+                      active
+                        ? "bg-white/10 text-white"
+                        : "text-white/55 hover:bg-white/5 hover:text-white/90"
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "absolute left-0 top-1/2 h-4.5 w-1 -translate-y-1/2 rounded-r-full bg-gold transition-all",
+                        active ? "opacity-100" : "opacity-0"
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors",
+                        active
+                          ? "bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-white shadow-sm"
+                          : "bg-white/5 text-white/55 group-hover:bg-white/10 group-hover:text-white/80"
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="truncate text-[13px] font-semibold">
+                      {s.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* account */}

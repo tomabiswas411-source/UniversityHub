@@ -18,6 +18,7 @@ import {
 import { ROLE_LABELS } from "@/lib/role-labels";
 import { canSeePricing, type RoleUser } from "@/lib/role-access";
 import { NotificationBell } from "@/components/shared/notification-bell";
+import { cn } from "@/lib/utils";
 import type { AppView } from "@/app/page";
 
 const emptySubscribe = () => () => {};
@@ -42,6 +43,11 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  const { theme, setTheme } = useTheme();
  const mounted = useMounted();
  const [scrolled, setScrolled] = useState(false);
+
+ /* The sidebar rail (lg+) carries the brand ONLY on the dashboard.
+    Everywhere else the header is the sole navigation — so its brand
+    and pill nav stay visible on large screens there. */
+ const railVisible = view === "dashboard";
 
  useEffect(() => {
  const onScroll = () => setScrolled(window.scrollY > 8);
@@ -79,7 +85,10 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  {/* Brand — hidden on lg+ where the sidebar rail carries the brand */}
  <button
  onClick={() => navigate("home")}
- className="flex items-center gap-2.5 group shrink-0 lg:invisible lg:pointer-events-none"
+ className={cn(
+ "flex items-center gap-2.5 group shrink-0",
+ railVisible && "lg:invisible lg:pointer-events-none"
+ )}
  aria-label="Go to home"
  >
  <div className="relative">
@@ -98,8 +107,14 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  </div>
  </button>
 
- {/* Compact nav for md screens (sidebar appears from lg up) */}
- <nav className="hidden md:flex lg:hidden items-center gap-1 bg-secondary/60 rounded-full px-2 py-1.5 border border-border ">
+ {/* Compact nav — md screens always; lg+ only when the sidebar
+    rail is NOT showing (public views own the header there). */}
+ <nav
+ className={cn(
+ "hidden md:flex items-center gap-1 bg-secondary/60 rounded-full px-2 py-1.5 border border-border",
+ railVisible && "lg:hidden"
+ )}
+ >
  <button
  onClick={() => navigate("home")}
  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
