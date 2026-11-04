@@ -18,6 +18,7 @@ import {
  Loader2,
  MapPin,
  Megaphone,
+ MousePointerClick,
  Pencil,
  Pin,
  Plus,
@@ -28,12 +29,17 @@ import {
  UserCheck,
  Users,
 } from "lucide-react";
+import {
+  ChevronRight,
+  ListChecks,
+} from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { timeAgo } from "@/components/shared/notification-bell";
 import { QRAttendanceCard } from "@/components/dashboards/qr-attendance-card";
+import { ClassActionDialog } from "@/components/dashboards/class-action-dialog";
 import { RoomFinder } from "@/components/dashboards/teacher-room-finder";
 import { TeacherStudentsTab } from "@/components/dashboards/teacher-students-tab";
 import { TeacherDocumentsTab } from "@/components/dashboards/teacher-documents-tab";
@@ -597,6 +603,39 @@ export function TeacherPanel() {
  }
  }
 
+ /* ---------------- class action dialog (click a class → manage) ----------------
+ One dialog serves the timetable grid, the Today list and the
+ All-Classes list. Latest change per schedule powers the status
+ badges everywhere, same convention as the department routine. */
+ const [actionSchedule, setActionSchedule] = useState<ScheduleDTO | null>(null);
+ const [actionOpen, setActionOpen] = useState(false);
+
+ const openClassAction = useCallback((s: ScheduleDTO) => {
+ setActionSchedule(s);
+ setActionOpen(true);
+ }, []);
+
+ const latestChangeBySchedule = useMemo(() => {
+ const m = new Map<string, ScheduleChangeDTO>();
+ for (const c of changes) {
+ if (!m.has(c.scheduleId)) m.set(c.scheduleId, c);
+ }
+ return m;
+ }, [changes]);
+
+ const activeChangesFor = useCallback(
+ (scheduleId: string) => changes.filter((c) => c.scheduleId === scheduleId).slice(0, 5),
+ [changes]
+ );
+
+ function handleClassActionSubmitted(change: ScheduleChangeDTO, notified: number) {
+ setChanges((prev) => [change, ...prev]);
+ toast({
+ title: "Change announced",
+ description: `${change.courseCode} · ${change.changeType.replace("_", " ")} — ${notified} student${notified === 1 ? "" : "s"} notified.`,
+ });
+ }
+
  /* ---------------- assignments ---------------- */
  const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
  const [assignmentsLoading, setAssignmentsLoading] = useState(false);
@@ -869,8 +908,17 @@ export function TeacherPanel() {
  hint="Your weekly timetable will appear here once the department assigns classes to you."
  />
  ) : (
- <FadeIn>
- <TimetableGrid schedules={gridSchedules} timeSlots={syntheticSlots} showTeacher={false} />
+ <FadeIn className="space-y-2">
+ <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+ <MousePointerClick className="h-3.5 w-3.5 text-[#2D4F35] dark:text-[#7FB08F]" />
+ Click any class to <span className="font-semibold text-[#2D4F35] dark:text-[#7FB08F]">cancel</span> or <span className="font-semibold text-[#2D4F35] dark:text-[#7FB08F]">reschedule</span> it — students are notified instantly.
+ </p>
+ <TimetableGrid
+ schedules={gridSchedules}
+ timeSlots={syntheticSlots}
+ showTeacher={false}
+ onClassClick={openClassAction}
+ />
  </FadeIn>
  )}
 
@@ -882,9 +930,23 @@ export function TeacherPanel() {
  {todays.length === 0 ? (
  <EmptyState icon={CalendarClock} title="No classes today" hint="Enjoy the free day — or get a head start on tomorrow." />
  ) : (
- <div className="space-y-3">
- {todays.map((s, i) => (
- <FadeIn key={s.id} index={i} className="flex flex-wrap items-center gap-3 rounded-xl border bg-muted/30 p-3">
+ <div className="space-y-2.5">
+ {todays.map((s, i) => {
+ const change = latestChangeBySchedule.get(s.id);
+ const cancelled = change?.changeType === "cancelled";
+ return (
+ <FadeIn key={s.id} index={i}>
+ <button
+ type="button"
+ onClick={() => openClassAction(s)}
+ aria-label={`Manage ${s.courseCode} — open cancel and reschedule options`}
+ className={cn(
+ "group flex w-full flex-wrap items-center gap-3 rounded-xl border p-3 text-left transition-all hover:-translate-y-px hover:border-[#2D4F35]/40 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2D4F35]",
+ cancelled
+ ? "border-rose-300/70 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/20"
+ : "bg-muted/30"
+ )}
+ >
  <div className="flex h-11 w-20 shrink-0 flex-col items-center justify-center rounded-lg bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-white shadow-md shadow-[#2D4F35]/30">
  <span className="flex items-center gap-1 text-xs font-bold">
  <Clock className="h-3 w-3" />
@@ -893,13 +955,14 @@ export function TeacherPanel() {
  <span className="text-[10px] opacity-80">to {s.endTime}</span>
  </div>
  <div className="min-w-0 flex-1">
- <p className="truncate text-sm font-semibold">
+ <p className={cn("truncate text-sm font-semibold", cancelled && "line-through decoration-rose-400/80 decoration-2")}>
  {s.courseCode} · {s.courseName}
  </p>
  <p className="flex items-center gap-1 text-xs text-muted-foreground">
- <MapPin className="h-3 w-3" /> Room {s.roomNumber}
+ <MapPin className="h-3 w-3" /> Room {change?.changeType === "room_changed" && change.newRoomNumber ? change.newRoomNumber : s.roomNumber}
  </p>
  </div>
+ {change && <ChangeTypeBadge type={change.changeType} />}
  <span
  className={cn(
  "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
@@ -910,11 +973,101 @@ export function TeacherPanel() {
  >
  {s.classType === "lab" ? "Lab" : "Theory"}
  </span>
+ <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-[#2D4F35] dark:group-hover:text-[#7FB08F]" />
+ </button>
  </FadeIn>
- ))}
+ );
+ })}
  </div>
  )}
  </SectionCard>
+
+ {/* ---- All classes · grouped by day ---- */}
+ {schedules.length > 0 && (
+ <SectionCard
+ title="All Classes · This Week"
+ icon={ListChecks}
+ action={<Badge variant="secondary">{schedules.length} total</Badge>}
+ >
+ <p className="mb-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+ <MousePointerClick className="h-3.5 w-3.5 text-[#2D4F35] dark:text-[#7FB08F]" />
+ Every class you teach — tap one to cancel, reschedule, change room/time or add an extra class.
+ </p>
+ <div className="space-y-4">
+ {DAYS_OF_WEEK.map((day) => {
+ const dayClasses = schedules
+ .filter((s) => s.dayOfWeek === day)
+ .sort((a, b) => a.startTime.localeCompare(b.startTime));
+ if (dayClasses.length === 0) return null;
+ const isTodayDay = day === today;
+ return (
+ <div key={day}>
+ <div className="mb-2 flex items-center gap-2">
+ <h4
+ className={cn(
+ "flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide",
+ isTodayDay ? "text-[#8A7000] dark:text-gold" : "text-muted-foreground"
+ )}
+ >
+ {DAY_LABELS[day]}
+ {isTodayDay && (
+ <span className="rounded-full bg-gold/25 px-1.5 py-0.5 text-[9px] font-bold text-[#8A7000] dark:text-gold">TODAY</span>
+ )}
+ </h4>
+ <span className="text-[10px] text-muted-foreground/70">{dayClasses.length} class{dayClasses.length === 1 ? "" : "es"}</span>
+ <span className="h-px flex-1 bg-border" />
+ </div>
+ <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+ {dayClasses.map((s) => {
+ const change = latestChangeBySchedule.get(s.id);
+ const cancelled = change?.changeType === "cancelled";
+ return (
+ <button
+ key={s.id}
+ type="button"
+ onClick={() => openClassAction(s)}
+ aria-label={`Manage ${s.courseCode} — open cancel and reschedule options`}
+ className={cn(
+ "group flex items-center gap-2.5 rounded-xl border p-2.5 text-left transition-all hover:-translate-y-px hover:border-[#2D4F35]/40 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2D4F35]",
+ cancelled
+ ? "border-rose-300/70 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/20"
+ : "bg-card"
+ )}
+ >
+ <span className="flex h-9 w-14 shrink-0 flex-col items-center justify-center rounded-lg bg-[#2D4F35]/10 text-[#2D4F35] dark:bg-[#7FB08F]/15 dark:text-[#7FB08F]">
+ <span className="text-xs font-bold">{s.startTime}</span>
+ <span className="text-[9px] opacity-75">{s.endTime}</span>
+ </span>
+ <span className="min-w-0 flex-1">
+ <span className={cn("block truncate text-sm font-semibold", cancelled && "line-through decoration-rose-400/80 decoration-2")}>
+ {s.courseCode}
+ </span>
+ <span className="block truncate text-[11px] text-muted-foreground">
+ Room {change?.changeType === "room_changed" && change.newRoomNumber ? change.newRoomNumber : s.roomNumber} · Sem {s.semester}
+ </span>
+ </span>
+ {change && <ChangeTypeBadge type={change.changeType} />}
+ <span
+ className={cn(
+ "hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold sm:inline-flex",
+ s.classType === "lab"
+ ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+ : "bg-green/10 text-green"
+ )}
+ >
+ {s.classType === "lab" ? "Lab" : "Theory"}
+ </span>
+ <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-[#2D4F35] dark:group-hover:text-[#7FB08F]" />
+ </button>
+ );
+ })}
+ </div>
+ </div>
+ );
+ })}
+ </div>
+ </SectionCard>
+ )}
  </TabsContent>
 
  {/* ============ ATTENDANCE ============ */}
@@ -1300,7 +1453,7 @@ export function TeacherPanel() {
  {changes.map((c, i) => {
  const newDayLbl = dayLabel(c.newDay);
  return (
- <FadeIn key={c.id} index={i} className="rounded-xl border p-3">
+ <FadeIn key={c.id} index={i} className="rounded-xl border p-3 transition-shadow hover:shadow-md">
  <div className="flex flex-wrap items-center gap-2">
  <ChangeTypeBadge type={c.changeType} />
  <span className="text-sm font-semibold">{c.courseCode}</span>
@@ -1308,9 +1461,24 @@ export function TeacherPanel() {
  <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{timeAgo(c.createdAt)}</span>
  </div>
  <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{c.reason}</p>
- <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
- {newDayLbl && <span>→ {newDayLbl}</span>}
- <span>Effective {fmtDate(c.effectiveDate)}</span>
+ <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+ {c.originalStartTime && (
+ <span className="rounded-md bg-muted px-1.5 py-0.5 text-muted-foreground line-through">
+ {dayLabel(c.originalDay) ?? ""} {c.originalStartTime}
+ {c.originalRoomNumber ? ` · R ${c.originalRoomNumber}` : ""}
+ </span>
+ )}
+ {(c.newStartTime || newDayLbl || c.newRoomNumber) && (
+ <>
+ <span className="text-muted-foreground">→</span>
+ <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 font-semibold text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+ {newDayLbl ? `${newDayLbl} ` : ""}
+ {c.newStartTime ?? ""}
+ {c.newRoomNumber ? ` · R ${c.newRoomNumber}` : ""}
+ </span>
+ </>
+ )}
+ <span className="text-muted-foreground">· Effective {fmtDate(c.effectiveDate)}</span>
  </div>
  </FadeIn>
  );
@@ -1823,11 +1991,12 @@ export function TeacherPanel() {
  <div className={SCROLL}>
  <div className="space-y-3">
  {myNotices.map((n, i) => (
- <FadeIn key={n.id} index={i} className="rounded-xl border p-3">
+ <FadeIn key={n.id} index={i} className="rounded-xl border p-3 transition-shadow hover:shadow-md">
  <div className="flex items-start justify-between gap-2">
  <div className="min-w-0">
  <div className="flex items-center gap-1.5">
  {n.isPinned && <Pin className="h-3.5 w-3.5 shrink-0 text-amber-500" />}
+ {n.isAutoGenerated && <Badge variant="outline" className="h-4 border-dashed px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide">Auto</Badge>}
  <p className="truncate text-sm font-semibold">{n.title}</p>
  </div>
  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{n.content}</p>
@@ -1844,6 +2013,14 @@ export function TeacherPanel() {
  </div>
  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
  <CategoryBadge category={n.category} />
+ {n.audience && n.audience !== "all" && (
+ <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-2 py-0.5 font-semibold">
+ <Users className="h-3 w-3" /> {n.audience === "students" ? "Students" : "Teachers"} only
+ </span>
+ )}
+ {n.semester != null && (
+ <span className="rounded-full bg-muted px-2 py-0.5 font-semibold">Sem {n.semester} batch</span>
+ )}
  <span className="ml-auto">{timeAgo(n.createdAt)}</span>
  </div>
  </FadeIn>
@@ -2003,6 +2180,18 @@ export function TeacherPanel() {
  )}
  </TabsContent>
  </Tabs>
+
+ {/* class action dialog — opened from the timetable grid, the
+ Today list or the All-Classes list (one shared instance) */}
+ <ClassActionDialog
+ schedule={actionSchedule}
+ open={actionOpen}
+ onOpenChange={setActionOpen}
+ rooms={rooms}
+ timeSlots={timeSlots}
+ activeChanges={actionSchedule ? activeChangesFor(actionSchedule.id) : []}
+ onSubmitted={handleClassActionSubmitted}
+ />
  </div>
  );
 }

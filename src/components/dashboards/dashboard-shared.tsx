@@ -164,11 +164,14 @@ export function TimetableGrid({
   timeSlots,
   highlightToday = true,
   showTeacher = true,
+  onClassClick,
 }: {
   schedules: ScheduleDTO[];
   timeSlots: TimeSlotDTO[];
   highlightToday?: boolean;
   showTeacher?: boolean;
+  /** When provided, every class cell becomes a button (teacher manage mode). */
+  onClassClick?: (schedule: ScheduleDTO) => void;
 }) {
   const today = new Date()
     .toLocaleDateString("en-US", { weekday: "long" })
@@ -232,21 +235,45 @@ export function TimetableGrid({
                       isToday(day) && "bg-gold/10"
                     )}
                   >
-                    {cell.map((s) => (
-                      <div
-                        key={s.id}
-                        className={cn(
-                          "mb-1 rounded-md px-1.5 py-1 text-[10px] leading-tight last:mb-0 sm:rounded-lg sm:px-2 sm:py-1.5 sm:text-xs",
-                          s.classType === "lab" ? "cell-lab" : "cell-theory"
-                        )}
-                      >
-                        <p className="font-bold">{s.courseCode}</p>
-                        <p className="max-w-[92px] truncate text-[9px] opacity-80 sm:max-w-[140px] sm:text-[11px]">
-                          {s.roomNumber}
-                          {showTeacher && s.teacherName ? ` · ${s.teacherName}` : ""}
-                        </p>
-                      </div>
-                    ))}
+                    {cell.map((s) => {
+                      const inner = (
+                        <>
+                          <p className="font-bold">{s.courseCode}</p>
+                          <p className="max-w-[92px] truncate text-[9px] opacity-80 sm:max-w-[140px] sm:text-[11px]">
+                            {s.roomNumber}
+                            {showTeacher && s.teacherName ? ` · ${s.teacherName}` : ""}
+                          </p>
+                        </>
+                      );
+                      if (onClassClick) {
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            aria-label={`Manage ${s.courseCode}, ${DAY_LABELS[s.dayOfWeek]} ${s.startTime}, room ${s.roomNumber}`}
+                            onClick={() => onClassClick(s)}
+                            className={cn(
+                              "mb-1 block w-full cursor-pointer rounded-md px-1.5 py-1 text-left text-[10px] leading-tight transition-all last:mb-0 hover:-translate-y-px hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#2D4F35] active:translate-y-0 sm:rounded-lg sm:px-2 sm:py-1.5 sm:text-xs",
+                              s.classType === "lab" ? "cell-lab" : "cell-theory",
+                              "ring-0 ring-inset ring-[#2D4F35]/0 hover:ring-2 hover:ring-[#2D4F35]/40 dark:hover:ring-[#7FB08F]/40"
+                            )}
+                          >
+                            {inner}
+                          </button>
+                        );
+                      }
+                      return (
+                        <div
+                          key={s.id}
+                          className={cn(
+                            "mb-1 rounded-md px-1.5 py-1 text-[10px] leading-tight last:mb-0 sm:rounded-lg sm:px-2 sm:py-1.5 sm:text-xs",
+                            s.classType === "lab" ? "cell-lab" : "cell-theory"
+                          )}
+                        >
+                          {inner}
+                        </div>
+                      );
+                    })}
                   </td>
                 );
               })}

@@ -493,8 +493,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  : {}),
  };
 
- const [students, totals, presents] = await Promise.all([
- db.user.findMany({
+ const students = await db.user.findMany({
  where,
  select: {
  id: true,
@@ -509,8 +508,15 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  },
  orderBy: { rollNumber: "asc" },
  take: 500,
- }),
- // Two grouped aggregates instead of N rows — COST GUARD
+ });
+ // Two grouped aggregates instead of N rows — COST GUARD.
+ // Wrapped defensively: if the attendance aggregates ever fail
+ // (e.g. stale client on a cold deploy), the roster itself must
+ // still load — attendance % just degrades to "no data".
+ let totals: { studentId: string; _count: { studentId: number } }[] = [];
+ let presents: { studentId: string; _count: { studentId: number } }[] = [];
+ try {
+ [totals, presents] = await Promise.all([
  db.attendance.groupBy({
  by: ["studentId"],
  where: {
@@ -529,6 +535,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  _count: { studentId: true },
  }),
  ]);
+ } catch (aggErr) {
+ console.error("[teacher/students] attendance aggregates failed, degrading to no-data:", aggErr);
+ }
 
  const totalMap = new Map(totals.map((t) => [t.studentId, t._count.studentId]));
  const presentMap = new Map(presents.map((p) => [p.studentId, p._count.studentId]));
