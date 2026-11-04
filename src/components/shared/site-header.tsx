@@ -33,16 +33,9 @@ interface SiteHeaderProps {
  navigate: (v: AppView, params?: Record<string, string>) => void;
 }
 
-const NAV_ITEMS: { view: AppView; label: string }[] = [
- { view: "home", label: "Home" },
- { view: "pricing", label: "Pricing" },
-];
-
-/* Role-aware nav — students/teachers never see Pricing; visitors and
-   subscription decision-makers (super_admin, dept_admin) do. */
-function navItemsFor(user: RoleUser) {
- return NAV_ITEMS.filter((i) => i.view !== "pricing" || canSeePricing(user));
-}
+/* Desktop nav now lives in the AppSidebar (app-style rail). The header
+   keeps a compact "Dashboard" shortcut on md–lg screens only, where the
+   sidebar is hidden but there is room for one link. */
 
 export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  const { user, logout } = useAuthStore();
@@ -83,10 +76,10 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  Skip to main content
  </a>
  <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 h-16 flex items-center justify-between gap-2">
- {/* Logo */}
+ {/* Brand — hidden on lg+ where the sidebar rail carries the brand */}
  <button
  onClick={() => navigate("home")}
- className="flex items-center gap-2.5 group shrink-0"
+ className="flex items-center gap-2.5 group shrink-0 lg:invisible lg:pointer-events-none"
  aria-label="Go to home"
  >
  <div className="relative">
@@ -105,21 +98,30 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  </div>
  </button>
 
- {/* Desktop nav */}
- <nav className="hidden md:flex items-center gap-1 bg-secondary/60 rounded-full px-2 py-1.5 border border-border ">
- {navItemsFor(user).map((item) => (
+ {/* Compact nav for md screens (sidebar appears from lg up) */}
+ <nav className="hidden md:flex lg:hidden items-center gap-1 bg-secondary/60 rounded-full px-2 py-1.5 border border-border ">
  <button
- key={item.view}
- onClick={() => navigate(item.view)}
+ onClick={() => navigate("home")}
  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
- view === item.view
+ view === "home"
  ? "bg-[#2D4F35] text-white shadow-md shadow-[#2D4F35]/30"
  : "text-foreground/70 hover:text-green hover:bg-green/10"
  }`}
  >
- {item.label}
+ Home
  </button>
- ))}
+ {canSeePricing(user) && (
+ <button
+ onClick={() => navigate("pricing")}
+ className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
+ view === "pricing"
+ ? "bg-[#2D4F35] text-white shadow-md shadow-[#2D4F35]/30"
+ : "text-foreground/70 hover:text-green hover:bg-green/10"
+ }`}
+ >
+ Pricing
+ </button>
+ )}
  {user && (
  <button
  onClick={() => navigate("dashboard")}

@@ -27,7 +27,7 @@ const StudentPanel = dynamic(
  { loading: () => <PanelLoader label="Loading your panel…" /> }
 );
 
-type NavView = "home" | "department" | "login" | "pricing" | "dashboard";
+type NavView = "home" | "department" | "login" | "pricing" | "dashboard" | "scan";
 
 export function DashboardView({
  navigate,
@@ -68,7 +68,7 @@ export function DashboardView({
  {user.role === "super_admin" && <SuperAdminPanel />}
  {user.role === "dept_admin" && <DeptAdminPanel />}
  {user.role === "teacher" && <TeacherPanel />}
- {user.role === "student" && <StudentPanel />}
+ {user.role === "student" && <StudentPanel navigate={navigate} />}
  </div>
  );
 }

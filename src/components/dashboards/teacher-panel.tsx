@@ -38,6 +38,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { timeAgo } from "@/components/shared/notification-bell";
 import { QRAttendanceCard } from "@/components/dashboards/qr-attendance-card";
 import { ClassActionDialog } from "@/components/dashboards/class-action-dialog";
+import { AttendanceSheetCard } from "@/components/dashboards/attendance-sheet-card";
 import { RoomFinder } from "@/components/dashboards/teacher-room-finder";
 import {
  TeacherStudentsTab,
@@ -354,6 +355,9 @@ export function TeacherPanel() {
  const [attBatchCounts, setAttBatchCounts] = useState<{ semester: number; count: number }[]>([]);
  const [attLoading, setAttLoading] = useState(false);
  const [attSaving, setAttSaving] = useState(false);
+ /* Bumped whenever attendance data changes (manual save, QR finalize)
+    so the Master Attendance Sheet re-reads itself. */
+ const [sheetRefresh, setSheetRefresh] = useState(0);
  /* Request-sequence guard: switching class/date fires overlapping loads —
     only the newest response may touch state (stale-response race guard). */
  const attReqSeq = useRef(0);
@@ -439,6 +443,7 @@ export function TeacherPanel() {
  description: `${data.saved ?? entries.length} students marked${data.absentNotified ? ` · ${data.absentNotified} absent alert${data.absentNotified === 1 ? "" : "s"} sent` : ""}.`,
  });
  void loadAttendance(attScheduleId, attDate);
+ setSheetRefresh((n) => n + 1);
  } catch (err) {
  toast({ title: "Failed to save attendance", description: errMsg(err), variant: "destructive" });
  } finally {
@@ -1421,8 +1426,15 @@ export function TeacherPanel() {
  scheduleId={attScheduleId}
  date={attDate}
  totalStudents={attStudents.length}
- onRosterRefresh={() => void loadAttendance(attScheduleId, attDate)}
+ courseLabel={attSchedule ? `${attSchedule.courseCode} · ${attSchedule.startTime}` : undefined}
+ onRosterRefresh={() => {
+ void loadAttendance(attScheduleId, attDate);
+ setSheetRefresh((n) => n + 1);
+ }}
  />
+
+ {/* Master sheet — every day accumulates in ONE organised grid */}
+ <AttendanceSheetCard scheduleId={attScheduleId} refreshSignal={sheetRefresh} />
  </TabsContent>
 
  {/* ============ CLASS CHANGES ============ */}

@@ -21,6 +21,13 @@ interface NotificationsResponse {
  unreadCount: number;
 }
 
+/** COST GUARD payload — ~150 bytes instead of the old 50-row list */
+interface PingResponse {
+ ping: boolean;
+ unreadCount: number;
+ latest: NotificationDTO | null;
+}
+
 /** "5m ago" style relative time */
 export function timeAgo(iso: string): string {
  const then = new Date(iso).getTime();
@@ -59,6 +66,21 @@ export function typeIcon(type: string) {
  return { Icon: Megaphone, cls: "text-green" };
  default:
  return { Icon: Info, cls: "text-green" };
+ }
+}
+
+/**
+ * Follow a notification's deep link (e.g. "/?view=dashboard"). The app
+ * is a query-param SPA, so an in-app navigation is just a location
+ * assignment — full reload only happens on hard refresh anyway.
+ */
+export function followNotificationLink(link: string | null | undefined) {
+ if (!link) return false;
+ try {
+ window.location.assign(link);
+ return true;
+ } catch {
+ return false;
  }
 }
 
@@ -101,19 +123,46 @@ export function NotificationBell({ className }: { className?: string }) {
  [play]
  );
 
+ /* COST GUARD: background ticks use the tiny ping endpoint. The full
+    50-row list is fetched only when the dropdown opens or the ping
+    reports a changed unread count. ~100× less bandwidth than polling
+    the full list every 30s. */
  useEffect(() => {
  firstLoadRef.current = true;
  newestIdRef.current = null;
+ let lastSeenUnread = -1;
+
  const initial = window.setTimeout(() => fetchNotifications(), 0);
- const interval = window.setInterval(() => {
+
+ const ping = async () => {
  if (typeof document !== "undefined" && document.hidden) return;
- fetchNotifications();
- }, 30000);
+ if (!useAuthStore.getState().user) return;
+ try {
+ const d = await apiGet<PingResponse>("/api/notifications?ping=1");
+ if (d.unreadCount !== lastSeenUnread) {
+ if (lastSeenUnread !== -1 && d.unreadCount > lastSeenUnread && d.latest) {
+ // a genuinely new notification arrived
+ play();
+ showBrowserNotification(d.latest.title, d.latest.body);
+ setJustArrived(true);
+ window.setTimeout(() => setJustArrived(false), 5000);
+ }
+ lastSeenUnread = d.unreadCount;
+ setUnreadCount(d.unreadCount);
+ // refresh the visible list (cheap — happens rarely)
+ void fetchNotifications(true);
+ }
+ } catch {
+ // transient errors — next tick retries
+ }
+ };
+
+ const interval = window.setInterval(ping, 45000);
  return () => {
  window.clearTimeout(initial);
  window.clearInterval(interval);
  };
- }, [fetchNotifications, user]);
+ }, [fetchNotifications, play, user]);
 
  const markAllRead = async () => {
  setItems((prev) => prev.map((n) => ({ ...n, isRead: true })));
@@ -125,22 +174,23 @@ export function NotificationBell({ className }: { className?: string }) {
  }
  };
 
- const markRead = async (id: string) => {
- const target = items.find((n) => n.id === id);
- if (!target || target.isRead) return;
- setItems((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+ const handleItem = async (n: NotificationDTO) => {
+ if (!n.isRead) {
+ setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)));
  setUnreadCount((c) => Math.max(0, c - 1));
  try {
- await apiPatch("/api/notifications", { ids: [id] });
- // sync count silently
- fetchNotifications(true);
+ await apiPatch("/api/notifications", { ids: [n.id] });
  } catch {
  // optimistic — silent
  }
+ }
+ // deep-link to the related page (dashboard, etc.) — close the menu first
+ setOpen(false);
+ followNotificationLink(n.link);
  };
 
  return (
- <DropdownMenu open={open} onOpenChange={setOpen}>
+ <DropdownMenu open={open} onOpenChange={(o) => { setOpen(o); if (o) void fetchNotifications(true); }}>
  <DropdownMenuTrigger asChild>
  <Button
  variant="ghost"
@@ -194,7 +244,8 @@ export function NotificationBell({ className }: { className?: string }) {
  <button
  key={n.id}
  type="button"
- onClick={() => markRead(n.id)}
+ onClick={() => void handleItem(n)}
+ title={n.link ? "Open related page" : undefined}
  className={cn(
  "flex w-full items-start gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-accent/60",
  !n.isRead && "bg-gold/10"

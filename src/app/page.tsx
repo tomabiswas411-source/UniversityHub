@@ -7,6 +7,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { SiteHeader } from "@/components/shared/site-header";
 import { SiteFooter } from "@/components/shared/site-footer";
 import { MobileNav } from "@/components/shared/mobile-nav";
+import { AppSidebar } from "@/components/shared/app-sidebar";
 import { ScrollProgress } from "@/components/shared/motion-primitives";
 import { HomeView } from "@/components/views/home-view";
 import { DepartmentView } from "@/components/views/department-view";
@@ -14,9 +15,10 @@ import { LoginView } from "@/components/views/login-view";
 import { PricingView } from "@/components/views/pricing-view";
 import { DashboardView } from "@/components/views/dashboard-view";
 import { AttendView } from "@/components/views/attend-view";
+import { ScanView } from "@/components/views/scan-view";
 import { Loader2, GraduationCap } from "lucide-react";
 
-export type AppView = "home" | "department" | "login" | "pricing" | "dashboard" | "attend";
+export type AppView = "home" | "department" | "login" | "pricing" | "dashboard" | "attend" | "scan";
 
 /* Every ?view= value the app understands — anything else in the URL
    falls back to "home" instead of rendering a blank page. */
@@ -27,6 +29,7 @@ const KNOWN_VIEWS: readonly AppView[] = [
  "pricing",
  "dashboard",
  "attend",
+ "scan",
 ];
 
 function parseView(raw: string | null): AppView {
@@ -80,7 +83,12 @@ function AppShell() {
  }
 
  return (
- <div className="min-h-screen flex flex-col bg-gradient-to-b from-gold/20 via-background to-background ">
+ <div className="min-h-screen flex flex-col bg-gradient-to-b from-gold/20 via-background to-background lg:flex-row">
+ {/* Desktop app rail — the menu lives on the side from lg up;
+    mobile/tablet keeps the app-style bottom tab bar. */}
+ <AppSidebar view={view} navigate={navigate} />
+
+ <div className="flex min-h-screen flex-1 flex-col lg:pl-64">
  <SiteHeader view={view} navigate={navigate} />
  <ScrollProgress />
 
@@ -113,12 +121,14 @@ function AppShell() {
  {view === "pricing" && <PricingView navigate={navigate} />}
  {view === "dashboard" && <DashboardView navigate={navigate} />}
  {view === "attend" && <AttendView token={searchParams.get("k")} />}
+ {view === "scan" && <ScanView navigate={navigate} />}
  </motion.div>
  </AnimatePresence>
  </Suspense>
  </main>
 
  <SiteFooter navigate={navigate} />
+ </div>
  <MobileNav view={view} navigate={navigate} />
  </div>
  );

@@ -59,7 +59,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
  width: "device-width",
  initialScale: 1,
- maximumScale: 1,
+ // No maximumScale — pinch-zoom must stay available (accessibility).
  viewportFit: "cover", // Day 47 — respect notches / home-indicator safe areas
  themeColor: "#241C15",
 };

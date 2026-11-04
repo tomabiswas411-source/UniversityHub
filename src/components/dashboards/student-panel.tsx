@@ -21,6 +21,7 @@ import {
  Megaphone,
  Pin,
  RefreshCw,
+ ScanLine,
  Sunrise,
  TrendingUp,
  User,
@@ -48,7 +49,11 @@ import {
  MetricRing,
  PerfLineChart,
 } from "@/components/dashboards/analytics-charts";
-import { timeAgo, typeIcon } from "@/components/shared/notification-bell";
+import {
+ followNotificationLink,
+ timeAgo,
+ typeIcon,
+} from "@/components/shared/notification-bell";
 import type {
  AcademicCalendarDTO,
  AssignmentDTO,
@@ -257,7 +262,12 @@ function ChangeRow({ change }: { change: ScheduleChangeDTO }) {
 
 /* ---------------- main component ---------------- */
 
-export function StudentPanel() {
+export function StudentPanel({
+ navigate,
+}: {
+ /** Provided by DashboardView — used for the Scan QR quick action. */
+ navigate?: (v: "home" | "department" | "login" | "pricing" | "dashboard" | "scan", params?: Record<string, string>) => void;
+}) {
  const [data, setData] = useState<StudentDashboardData | null>(null);
  const [loading, setLoading] = useState(true);
  const [error, setError] = useState<string | null>(null);
@@ -494,6 +504,15 @@ export function StudentPanel() {
  {universityName && (
  <p className="mt-3 text-xs font-medium text-white/75">{universityName}</p>
  )}
+ {/* App-like quick action — in-app QR scanner for attendance */}
+ <button
+ type="button"
+ onClick={() => navigate?.("scan")}
+ className="btn-shine mt-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#FFE01B] px-4 py-2 text-sm font-bold text-[#241C15] shadow-lg shadow-black/25 transition-transform hover:scale-[1.03] active:scale-95"
+ >
+ <ScanLine className="h-4 w-4" aria-hidden />
+ Scan Attendance QR
+ </button>
  </div>
  <div
  aria-hidden
@@ -1147,8 +1166,12 @@ export function StudentPanel() {
  <button
  key={n.id}
  type="button"
- onClick={() => void markNotifRead(n.id)}
- title={n.isRead ? undefined : "Mark as read"}
+ onClick={() => {
+ void markNotifRead(n.id);
+ // Deep-link to the related page when the notification carries one
+ if (n.link) followNotificationLink(n.link);
+ }}
+ title={n.link ? "Open related page" : n.isRead ? undefined : "Mark as read"}
  className={cn(
  "flex w-full items-start gap-3 py-3 text-left transition-colors first:pt-0 last:pb-0 hover:bg-accent/40",
  !n.isRead && "bg-gold/5"

@@ -14,6 +14,7 @@ import {
  Network,
  RefreshCcw,
  Smartphone,
+ Tag,
  Users,
  type LucideIcon,
 } from "lucide-react";
@@ -24,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Reveal, TiltCard } from "@/components/shared/motion-primitives";
 import { apiGet } from "@/lib/api-client";
 import { useAuthStore } from "@/store/auth-store";
+import { canSeePricing } from "@/lib/role-access";
 import type { DepartmentDTO, PlanDTO, UniversityDTO } from "@/types";
 
 // ------------------------------------------------------------------
@@ -471,7 +473,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  }
  className="h-11 w-full rounded-xl bg-[#2D4F35] px-7 text-white shadow-md shadow-[#2D4F35]/25 hover:bg-[#3A6B47] sm:w-auto"
  >
- Explore Departments
+ Explore Universities
  <ArrowRight className="h-4 w-4" />
  </Button>
  <Button
@@ -485,6 +487,18 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  >
  {user ? "Go to Dashboard" : "Login Portal"}
  </Button>
+ {/* Institutional plans — visitors & subscription decision-makers only;
+    students/teachers never see pricing (role-visibility rule). */}
+ {canSeePricing(user) && !user && (
+ <Button
+ onClick={() => navigate("pricing")}
+ variant="outline"
+ className="h-11 w-full rounded-xl border-[#B8940A]/40 bg-gold/10 px-7 text-[#8A7000] hover:bg-gold/20 dark:border-gold/30 dark:text-gold sm:w-auto"
+ >
+ <Tag className="mr-2 h-4 w-4" />
+ Plans &amp; Pricing
+ </Button>
+ )}
  </motion.div>
 
  <motion.div

@@ -44,6 +44,14 @@ export async function POST(req: NextRequest) {
       typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
         ? body.date
         : bdTodayISO();
+    // REALITY CHECK: a QR window is a live classroom event — it can only
+    // be opened for TODAY's class, never for a past or future date.
+    if (classDate !== bdTodayISO()) {
+      throw new ApiError(
+        400,
+        "QR check-in can only be opened for today's class — pick today's date"
+      );
+    }
     const duration = Math.min(Math.max(Number(body.durationSec) || 120, 30), 600);
 
     // Geo-fence inputs: enabled only when the teacher asked for it AND

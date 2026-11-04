@@ -99,3 +99,30 @@ self.addEventListener("notificationclick", (event) => {
     })
   );
 });
+
+/* Web-push support: show the pushed message as a notification.
+   (Currently notifications are delivered by in-page polling; this
+   handler makes the PWA push-ready for a future push server.) */
+self.addEventListener("push", (event) => {
+  let payload = { title: "UniversityHub", body: "You have a new update." };
+  try {
+    if (event.data) {
+      const parsed = event.data.json();
+      payload = {
+        title: parsed.title || payload.title,
+        body: parsed.body || parsed.message || payload.body,
+      };
+    }
+  } catch {
+    /* plain-text push — keep defaults */
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: "/icons/icon-192x192.png",
+      badge: "/icons/icon-96x96.png",
+      tag: "universityhub-push",
+      renotify: true,
+    })
+  );
+});

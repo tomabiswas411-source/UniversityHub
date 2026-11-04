@@ -26,6 +26,7 @@ import {
   Loader2,
   MapPin,
   MapPinOff,
+  Maximize2,
   QrCode,
   ScanLine,
   Timer,
@@ -38,6 +39,13 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -83,11 +91,14 @@ export function QRAttendanceCard({
   scheduleId,
   date,
   totalStudents,
+  courseLabel,
   onRosterRefresh,
 }: {
   scheduleId: string;
   date: string;
   totalStudents: number;
+  /** e.g. "ICE-1101 · 10:00" — shown in the fullscreen projector view */
+  courseLabel?: string;
   onRosterRefresh: () => void;
 }) {
   const [duration, setDuration] = useState("120");
@@ -102,6 +113,8 @@ export function QRAttendanceCard({
   const [closing, setClosing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [summary, setSummary] = useState<{ present: number; absent: number; total: number } | null>(null);
+  /* Fullscreen projector view — classroom displays show the QR huge */
+  const [fullscreen, setFullscreen] = useState(false);
   const qrBoxRef = useRef<HTMLDivElement | null>(null);
   /* Mirror of `session` for async callbacks that must not clobber a
      freshly-created local session (stale resume / supersede logic). */
@@ -358,6 +371,7 @@ export function QRAttendanceCard({
   const pct = totalStudents > 0 ? Math.min(100, Math.round((scanned / totalStudents) * 100)) : 0;
 
   return (
+    <>
     <SectionCard
       title="QR Self Check-in"
       icon={QrCode}
@@ -474,14 +488,33 @@ export function QRAttendanceCard({
         <div className="grid gap-5 sm:grid-cols-[auto_1fr] sm:gap-6">
           {/* QR box */}
           <div ref={qrBoxRef} className="mx-auto flex flex-col items-center gap-2">
-            <div className="relative rounded-2xl border-2 border-[#2D4F35]/25 bg-white p-2 shadow-lg shadow-[#2D4F35]/10">
+            <button
+              type="button"
+              onClick={() => setFullscreen(true)}
+              aria-label="Show QR fullscreen for the projector"
+              title="Tap to enlarge — best for projecting on the classroom screen"
+              className="group relative rounded-2xl border-2 border-[#2D4F35]/25 bg-white p-2 shadow-lg shadow-[#2D4F35]/10 transition-transform hover:scale-[1.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2D4F35]"
+            >
               {qrData && (
                 <img src={qrData} alt="Attendance check-in QR code" className="h-40 w-40 sm:h-48 sm:w-48" />
               )}
               <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-[#2D4F35] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-md">
                 Scan me
               </span>
-            </div>
+              <span className="absolute -bottom-2.5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-[#241C15] px-2.5 py-0.5 text-[10px] font-bold text-[#FFE01B] opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                <Maximize2 className="h-3 w-3" /> Enlarge
+              </span>
+            </button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => setFullscreen(true)}
+            >
+              <Maximize2 className="mr-1.5 h-3.5 w-3.5" />
+              Fullscreen
+            </Button>
             <p className="max-w-[200px] break-all text-center text-[10px] leading-tight text-muted-foreground">
               {session?.url}
             </p>
@@ -588,5 +621,60 @@ export function QRAttendanceCard({
         )
       )}
     </SectionCard>
+
+    {/* ---------- Fullscreen projector view ---------- */}
+    <Dialog open={fullscreen} onOpenChange={setFullscreen}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader className="sr-only">
+          <DialogTitle>Attendance QR — fullscreen</DialogTitle>
+          <DialogDescription>
+            Show this enlarged code on the classroom projector so every student can scan it.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-full rounded-2xl bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] px-4 py-3 text-center text-white shadow-md">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] opacity-80">
+              {courseLabel ?? "Class attendance"} · {date}
+            </p>
+            <p className="flex items-center justify-center gap-2 text-sm font-semibold">
+              <Timer className="h-4 w-4" /> {fmtLeft(leftSec)} left
+              <span aria-hidden>·</span>
+              <UserCheck className="h-4 w-4" /> {scanned}/{totalStudents}
+              {live?.geo && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-[10px]">
+                  <MapPin className="h-3 w-3" /> {geoRadius}m
+                </span>
+              )}
+            </p>
+          </div>
+          {qrData && (
+            <img
+              src={qrData}
+              alt="Attendance check-in QR code, enlarged"
+              className="h-[52vh] max-h-[460px] w-auto max-w-full rounded-2xl border-4 border-[#2D4F35]/20 bg-white p-3 shadow-xl"
+            />
+          )}
+          <p className="break-all text-center text-[11px] text-muted-foreground">{session?.url}</p>
+          <div className="flex w-full flex-wrap justify-center gap-2">
+            <Button variant="outline" size="sm" className="h-9" onClick={() => void copyLink()}>
+              <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy link
+            </Button>
+            <Button
+              size="sm"
+              className={cn(GRADIENT_BTN, "h-9")}
+              onClick={() => {
+                setFullscreen(false);
+                void finalize();
+              }}
+              disabled={closing}
+            >
+              {closing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCheck className="mr-2 h-4 w-4" />}
+              Close & mark rest absent
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

@@ -31,6 +31,7 @@ function handle401(skipAuthRedirect?: boolean): void {
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const { skipAuthRedirect, ...init } = options;
   const res = await fetch(path, {
+    credentials: "same-origin", // explicit — session cookie must ride along
     headers: { "Content-Type": "application/json" },
     ...init,
   });

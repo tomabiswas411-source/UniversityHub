@@ -337,6 +337,87 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  };
  }
 
+ if (action === "attendance-sheet") {
+ // Master attendance sheet (the class register) — the whole month in
+ // ONE grid: rows = students, cols = class dates, cells = status letter.
+ // COST GUARD: one indexed query for the month + one roster query;
+ // response is compact (status letters, not objects).
+ const scheduleId = searchParams.get("scheduleId");
+ if (!scheduleId) throw new ApiError(400, "scheduleId is required");
+ const month = searchParams.get("month") ?? todayStr().slice(0, 7);
+ if (!/^\d{4}-\d{2}$/.test(month)) {
+ throw new ApiError(400, "Month must be YYYY-MM");
+ }
+ const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
+ if (!schedule) throw new ApiError(404, "Schedule not found");
+ if (session.role === "teacher" && schedule.teacherId !== session.userId) {
+ throw new ApiError(403, "You can only view your own classes");
+ }
+ assertDepartmentAccess(session, schedule.departmentId);
+
+ const [students, monthMarks, allDates] = await Promise.all([
+ db.user.findMany({
+ where: {
+ departmentId: schedule.departmentId,
+ role: "student",
+ isActive: true,
+ programId: schedule.programId,
+ semester: schedule.semester,
+ },
+ select: { id: true, fullName: true, rollNumber: true, studentIdNumber: true },
+ orderBy: { rollNumber: "asc" },
+ }),
+ // String dates are ISO — lexicographic range works. "-31" covers
+ // every real month end (Feb 30/31 don't exist so nothing extra).
+ db.attendance.findMany({
+ where: { scheduleId, date: { gte: `${month}-01`, lte: `${month}-31` } },
+ select: { studentId: true, date: true, status: true },
+ orderBy: { date: "asc" },
+ }),
+ db.attendance.findMany({
+ where: { scheduleId },
+ select: { date: true },
+ distinct: ["date"],
+ orderBy: { date: "asc" },
+ take: 400,
+ }),
+ ]);
+
+ const dates = [...new Set(monthMarks.map((m) => m.date))].sort();
+ const cells: Record<string, Record<string, string>> = {};
+ const summary: Record<string, { present: number; absent: number; late: number; excused: number; total: number; pct: number }> = {};
+ for (const st of students) {
+ cells[st.id] = {};
+ summary[st.id] = { present: 0, absent: 0, late: 0, excused: 0, total: 0, pct: 0 };
+ }
+ for (const m of monthMarks) {
+ const row = cells[m.studentId];
+ const sum = summary[m.studentId];
+ if (!row || !sum) continue; // marked student left the batch — keep grid clean
+ row[m.date] = m.status;
+ sum.total += 1;
+ if (m.status in sum) sum[m.status as "present" | "absent" | "late" | "excused"] += 1;
+ }
+ for (const st of students) {
+ const sum = summary[st.id];
+ sum.pct = sum.total > 0 ? Math.round((sum.present / sum.total) * 100) : 0;
+ }
+
+ return {
+ month,
+ months: [...new Set(allDates.map((d) => d.date.slice(0, 7)))].sort().reverse(),
+ schedule: {
+ courseCode: schedule.courseCode,
+ courseName: schedule.courseName,
+ semester: schedule.semester,
+ },
+ dates,
+ students,
+ cells,
+ summary,
+ };
+ }
+
  if (action === "notices") {
  const notices = await db.notice.findMany({
  where: { departmentId: session.departmentId!, postedBy: session.userId },
@@ -875,6 +956,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!/^\d{4}-\d{2}-\d{2}$/.test(classDate)) {
  throw new ApiError(400, "Date must be YYYY-MM-DD");
  }
+ // REALITY CHECK: attendance can be filed for today or retroactively
+ // (a teacher who forgot yesterday), never for a future date.
+ if (classDate > todayStr()) {
+ throw new ApiError(400, "Attendance cannot be marked for a future date");
+ }
  const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
  if (!schedule) throw new ApiError(404, "Schedule not found");
  if (session.role === "teacher" && schedule.teacherId !== session.userId) {
@@ -1159,6 +1245,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (effectiveDate && !DATE_RE.test(effectiveDate)) {
  throw new ApiError(400, "Date must be YYYY-MM-DD");
  }
+ // REALITY CHECK: a class that already happened (yesterday or earlier)
+ // cannot be cancelled/rescheduled today — changes apply from today on.
+ if (effectiveDate && effectiveDate < todayStr()) {
+ throw new ApiError(
+ 400,
+ "You cannot change a class in the past — pick today or a future date"
+ );
+ }
  const schedule = await db.schedule.findUnique({
  where: { id: scheduleId },
  });
@@ -1314,6 +1408,17 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  body as Record<string, string>;
  if (!courseId || !title?.trim() || !description?.trim()) {
  throw new ApiError(400, "Course, title and description are required");
+ }
+ // REALITY CHECK: a deadline in the past would mark every submission
+ // overdue the moment it is published.
+ if (dueDate) {
+ const due = new Date(dueDate);
+ if (Number.isNaN(due.getTime())) {
+ throw new ApiError(400, "Due date is not a valid date");
+ }
+ if (due.getTime() < Date.now() - 60_000) {
+ throw new ApiError(400, "Due date must be in the future");
+ }
  }
  const course = await db.course.findUnique({ where: { id: courseId } });
  if (!course) throw new ApiError(404, "Course not found");
