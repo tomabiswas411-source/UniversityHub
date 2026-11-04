@@ -305,3 +305,5 @@
 5. **বাল্ক অপারেশন server-side**: finalize একটাই POST → `createMany`; per-student চ্যাটার নেই।
 6. **তালিকা API-তে শুধু দরকারি ফিল্ড** (`select` দিয়ে); ভবিষ্যতে বড় লিস্টে pagination বাধ্যতামূলক।
 7. **পোলিং লিখলে অবশ্যই**: interval + কন্ডিশন (active window/visibility) + cleanup — যেন বন্ধ না-করা ইন্টারভাল রেখে যায় না।
+
+| ClassAction | 2026-11-04 | Click-a-class manage dialog (cancel/reschedule/room/time/extra + reason chips + free-room finder + active-change warnings); Vercel `prisma generate` build fix (students groupBy 500); Today/All-Classes lists rebuilt with status badges; notices cards enriched. Commit `b38b5a1`. |
