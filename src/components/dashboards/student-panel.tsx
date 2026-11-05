@@ -40,6 +40,7 @@ import {
  ExamTypeBadge,
  GRADIENT_BTN,
  MOBILE_TABS_LIST,
+ MOBILE_TABS_FADE,
  MOBILE_TAB_TRIGGER,
  PanelLoader,
  SectionCard,
@@ -53,6 +54,8 @@ import {
  PerfLineChart,
 } from "@/components/dashboards/analytics-charts";
 import { StudentAttendanceSheetCard } from "@/components/dashboards/student-attendance-sheet-card";
+import { initials, letterTone } from "@/lib/format";
+import { daysUntilDate, parseDateOnly } from "@/lib/date-bd";
 import {
  followNotificationLink,
  timeAgo,
@@ -156,16 +159,18 @@ function currentDay(): DayOfWeek {
 }
 
 function fmtDate(iso: string): string {
- return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+ return parseWhen(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function fmtTime(t: string): string {
  return t.length >= 5 ? t.slice(0, 5) : t;
 }
 
-function initials(name: string): string {
- const parts = name.trim().split(/\s+/).slice(0, 2);
- return (parts.map((w) => w[0]?.toUpperCase() ?? "").join("") || "S");
+/** Date-only strings ("2025-11-20") parse as a LOCAL calendar date —
+ `new Date("2025-11-20")` is UTC and renders the previous day for
+ UTC-negative visitors. Full timestamps pass through unchanged. */
+function parseWhen(iso: string): Date {
+ return iso.length === 10 ? parseDateOnly(iso) : new Date(iso);
 }
 
 const CHANGE_BORDER: Record<string, string> = {
@@ -183,34 +188,22 @@ const EVENT_BADGE: Record<string, string> = {
  class: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
 };
 
-function gradeBadgeCls(grade: string | null): string {
- if (!grade) return "bg-muted text-muted-foreground";
- if (grade.startsWith("A+"))
- return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
- if (grade.startsWith("A"))
- return "bg-green/10 text-green";
- if (grade.startsWith("B"))
- return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
- if (grade.startsWith("F"))
- return "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300";
- return "bg-muted text-muted-foreground"; // C / D
-}
-
 function dueChip(dueISO: string | null): { label: string; cls: string } {
  if (!dueISO) return { label: "No due date", cls: "bg-muted text-muted-foreground" };
- const due = new Date(dueISO);
- const now = new Date();
- const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
- const startOfDue = new Date(due.getFullYear(), due.getMonth(), due.getDate());
- const days = Math.round((startOfDue.getTime() - startOfToday.getTime()) / 86_400_000);
- if (days < 0)
- return { label: "Overdue", cls: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" };
- if (days <= 3)
- return {
- label: days === 0 ? "Due today" : `Due in ${days}d`,
- cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
- };
- return { label: fmtDate(dueISO), cls: "bg-muted text-muted-foreground" };
+ // Day-diff comes from the Dhaka calendar (daysUntilDate), not the
+ // browser clock — labels match the teacher dashboard exactly. Slice
+ // to the date part so full ISO timestamps resolve to the same day.
+ const diff = daysUntilDate(dueISO.slice(0, 10));
+ if (Number.isNaN(diff)) return { label: fmtDate(dueISO), cls: "bg-muted text-muted-foreground" };
+ const text =
+ diff < 0 ? "Overdue" : diff === 0 ? "Due today" : diff === 1 ? "Due tomorrow" : `Due in ${diff}d`;
+ const cls =
+ diff < 0
+ ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+ : diff <= 3
+ ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+ : "bg-muted text-muted-foreground";
+ return { label: `${text} · ${fmtDate(dueISO)}`, cls };
 }
 
 /* ---------------- small local pieces ---------------- */
@@ -545,7 +538,7 @@ export function StudentPanel({
  </motion.section>
 
  {/* ---------- Stats row ---------- */}
- <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+ <div className="grid max-lg:[&>*:last-child]:col-span-2 grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-5">
  <StatCard
  icon={CalendarClock}
  label="Today's Classes"
@@ -591,6 +584,7 @@ export function StudentPanel({
  {/* ---------- Tabs ---------- */}
  <Tabs value={activeTab} onValueChange={handleTabChange}>
  {/* lg+: sidebar rail owns sections; below lg: one pill row */}
+ <div className="relative">
  <TabsList className={MOBILE_TABS_LIST}>
  {DASHBOARD_SECTIONS.student.map((s) => (
  <TabsTrigger key={s.value} value={s.value} className={MOBILE_TAB_TRIGGER}>
@@ -598,6 +592,8 @@ export function StudentPanel({
  </TabsTrigger>
  ))}
  </TabsList>
+ <div className={MOBILE_TABS_FADE} />
+ </div>
 
  {/* ===== Today & Routine ===== */}
  <TabsContent value="routine" className="mt-4">
@@ -908,7 +904,7 @@ export function StudentPanel({
  <span
  className={cn(
  "rounded-full px-2 py-0.5 text-[11px] font-bold",
- gradeBadgeCls(r.grade)
+ letterTone(r.grade)
  )}
  >
  {r.grade}
@@ -1103,7 +1099,7 @@ export function StudentPanel({
  </p>
  <Badge className="bg-gold/25 text-[#7A6500] hover:bg-gold/35 dark:text-gold">
  {a.dueDate
- ? new Date(a.dueDate).toLocaleDateString("en-US", {
+ ? parseWhen(a.dueDate).toLocaleDateString("en-US", {
  weekday: "short",
  month: "short",
  day: "numeric",
@@ -1262,7 +1258,7 @@ export function StudentPanel({
  ) : (
  <div className="max-h-[60vh] divide-y overflow-y-auto pr-1 sm:max-h-96">
  {sortedCalendar.map((e) => {
- const d = new Date(e.date);
+ const d = parseWhen(e.date);
  return (
  <div key={e.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
  <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl bg-muted text-center">

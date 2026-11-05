@@ -55,6 +55,11 @@ export function AppSidebar({ view, navigate, tab }: AppSidebarProps) {
   const activeSection = sections.some((s) => s.value === tab)
     ? tab
     : sections[0]?.value;
+  /* Explicit "URL has a ?tab= param" flag. activeSection always falls
+     back to sections[0], so it can never be null and the old guard
+     suppressed the Dashboard rail item forever — highlight Dashboard
+     whenever NO tab is picked, the matching section when one is. */
+  const hasTab = !!tab;
 
   const items: {
     view: AppView;
@@ -129,8 +134,9 @@ export function AppSidebar({ view, navigate, tab }: AppSidebarProps) {
           const Icon = item.icon;
           const active =
             view === item.view &&
-            // Dashboard item only lights up when no specific section is picked
-            !(item.view === "dashboard" && activeSection != null);
+            // Dashboard item lights up when no section tab is picked
+            // (?tab= absent); with a tab, that section highlights instead.
+            (item.view !== "dashboard" || !hasTab);
           return (
             <button
               key={item.view}

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { ApiError, requireSession } from "@/lib/session";
+import { bdTodayISO } from "@/lib/date-bd";
 import type {
  CourseDTO,
  DepartmentDTO,
@@ -13,13 +14,8 @@ import type {
  UserDTO,
 } from "@/types";
 
-function todayStr(): string {
- const d = new Date();
- const y = d.getFullYear();
- const m = String(d.getMonth() + 1).padStart(2, "0");
- const day = String(d.getDate()).padStart(2, "0");
- return `${y}-${m}-${day}`;
-}
+/* "Today" is pinned to Asia/Dhaka — the previous local-clock version
+ * filed public routine changes under the wrong date for 6h/day (UTC). */
 
 /**
  * GET /api/department?id=...&programId=...&semester=...
@@ -59,6 +55,8 @@ export async function GET(req: NextRequest) {
  db.notice.findMany({
  where: {
  departmentId: id,
+ // Public endpoint: teacher-only notices belong to staff dashboards.
+ audience: "all",
  OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }],
  },
  orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
@@ -100,7 +98,7 @@ export async function GET(req: NextRequest) {
  where: {
  departmentId: id,
  isActive: true,
- effectiveDate: { gte: todayStr() },
+ effectiveDate: { gte: bdTodayISO() },
  programId: selectedProgramId,
  semester,
  },
@@ -407,10 +405,22 @@ export async function DELETE(req: NextRequest) {
  if (!existing) throw new ApiError(404, "Department not found");
 
  // Safe delete — refuse while the department still holds content that
- // would be cascade-destroyed (users / courses / schedules / notices /
- // programs / rooms / time slots).
- const [users, courses, schedules, notices, programs, rooms, timeSlots] =
- await Promise.all([
+ // would be cascade-destroyed. Assignment/result/attendance/schedule-change
+ // rows also hang off departmentId with Cascade, so an "empty-looking"
+ // department with historical records must still be blocked.
+ const [
+ users,
+ courses,
+ schedules,
+ notices,
+ programs,
+ rooms,
+ timeSlots,
+ assignments,
+ results,
+ attendance,
+ scheduleChanges,
+ ] = await Promise.all([
  db.user.count({ where: { departmentId: id } }),
  db.course.count({ where: { departmentId: id } }),
  db.schedule.count({ where: { departmentId: id } }),
@@ -418,6 +428,10 @@ export async function DELETE(req: NextRequest) {
  db.program.count({ where: { departmentId: id } }),
  db.room.count({ where: { departmentId: id } }),
  db.timeSlot.count({ where: { departmentId: id } }),
+ db.assignment.count({ where: { departmentId: id } }),
+ db.result.count({ where: { departmentId: id } }),
+ db.attendance.count({ where: { departmentId: id } }),
+ db.scheduleChange.count({ where: { departmentId: id } }),
  ]);
  const blocks: string[] = [];
  if (users) blocks.push(`${users} user${users === 1 ? "" : "s"}`);
@@ -427,6 +441,10 @@ export async function DELETE(req: NextRequest) {
  if (programs) blocks.push(`${programs} program${programs === 1 ? "" : "s"}`);
  if (rooms) blocks.push(`${rooms} room${rooms === 1 ? "" : "s"}`);
  if (timeSlots) blocks.push(`${timeSlots} time slot${timeSlots === 1 ? "" : "s"}`);
+ if (assignments) blocks.push(`${assignments} assignment${assignments === 1 ? "" : "s"}`);
+ if (results) blocks.push(`${results} result${results === 1 ? "" : "s"}`);
+ if (attendance) blocks.push(`${attendance} attendance record${attendance === 1 ? "" : "s"}`);
+ if (scheduleChanges) blocks.push(`${scheduleChanges} schedule change${scheduleChanges === 1 ? "" : "s"}`);
  if (blocks.length > 0) {
  throw new ApiError(
  409,

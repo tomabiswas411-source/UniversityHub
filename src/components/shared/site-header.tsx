@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { GraduationCap, Moon, Sun, Menu, Bell } from "lucide-react";
+import { GraduationCap, Moon, Sun, Menu, LayoutDashboard } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useAuthStore } from "@/store/auth-store";
@@ -18,6 +18,7 @@ import {
 import { ROLE_LABELS } from "@/lib/role-labels";
 import { canSeePricing, type RoleUser } from "@/lib/role-access";
 import { NotificationBell } from "@/components/shared/notification-bell";
+import { GRADIENT_BTN } from "@/components/dashboards/dashboard-shared";
 import { cn } from "@/lib/utils";
 import type { AppView } from "@/app/page";
 
@@ -68,7 +69,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  initial={{ y: -60, opacity: 0 }}
  animate={{ y: 0, opacity: 1 }}
  transition={{ duration: 0.4, ease: "easeOut" }}
- className={`sticky top-0 z-50 w-full border-b transition-all duration-300 ${
+ className={`sticky top-0 z-50 w-full border-b pt-[env(safe-area-inset-top)] transition-all duration-300 ${
  scrolled
  ? "bg-background/80 backdrop-blur-xl border-border shadow-sm"
  : "bg-transparent border-transparent"
@@ -194,7 +195,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  </DropdownMenuLabel>
  <DropdownMenuSeparator />
  <DropdownMenuItem onClick={() => navigate("dashboard")}>
- <Bell className="w-4 h-4 mr-2" /> My Dashboard
+ <LayoutDashboard className="w-4 h-4 mr-2" /> My Dashboard
  </DropdownMenuItem>
  <DropdownMenuSeparator />
  <DropdownMenuItem
@@ -211,7 +212,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  ) : (
  <Button
  onClick={() => navigate("login")}
- className="rounded-full bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25 px-4 sm:px-5"
+ className={cn("rounded-full px-4 sm:px-5", GRADIENT_BTN)}
  >
  Login
  </Button>

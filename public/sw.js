@@ -1,6 +1,6 @@
 /* UniversityHub Service Worker — PWA offline shell + notification routing
- * v5: bump whenever the shell changes so existing installs refresh caches */
-const CACHE = "universityhub-v5";
+ * v6: bump whenever the shell changes so existing installs refresh caches */
+const CACHE = "universityhub-v6";
 const OFFLINE_ASSETS = [
  "/",
  "/offline.html",
@@ -88,14 +88,20 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-/* Focus an open tab when a notification is clicked */
+/* Focus an open tab when a notification is clicked.
+   lastPushLink carries the deep link from the most recent push payload
+   (if any) so the click opens the relevant page, not always "/". */
+let lastPushLink = null;
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const target = lastPushLink || "/";
+  lastPushLink = null;
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       const existing = clients.find((c) => c.url.includes(self.location.origin));
       if (existing) return existing.focus();
-      return self.clients.openWindow("/");
+      return self.clients.openWindow(target);
     })
   );
 });
@@ -105,6 +111,7 @@ self.addEventListener("notificationclick", (event) => {
    handler makes the PWA push-ready for a future push server.) */
 self.addEventListener("push", (event) => {
   let payload = { title: "UniversityHub", body: "You have a new update." };
+  lastPushLink = null;
   try {
     if (event.data) {
       const parsed = event.data.json();
@@ -112,6 +119,9 @@ self.addEventListener("push", (event) => {
         title: parsed.title || payload.title,
         body: parsed.body || parsed.message || payload.body,
       };
+      if (typeof parsed.link === "string" && parsed.link) {
+        lastPushLink = parsed.link;
+      }
     }
   } catch {
     /* plain-text push — keep defaults */

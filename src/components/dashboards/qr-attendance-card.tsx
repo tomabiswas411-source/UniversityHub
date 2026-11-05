@@ -35,7 +35,18 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { fmtDateOnly } from "@/lib/date-bd";
 import { cn } from "@/lib/utils";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -115,7 +126,13 @@ export function QRAttendanceCard({
   const [summary, setSummary] = useState<{ present: number; absent: number; total: number } | null>(null);
   /* Fullscreen projector view — classroom displays show the QR huge */
   const [fullscreen, setFullscreen] = useState(false);
+  /* Bulk "mark rest absent" runs behind a confirmation dialog */
+  const [absentConfirmOpen, setAbsentConfirmOpen] = useState(false);
   const qrBoxRef = useRef<HTMLDivElement | null>(null);
+  /* Server-clock skew (serverTime - clientTime, ms) sampled from the
+     status poll's Date header — the countdown uses it so a laptop with
+     a drifting clock can't cut the window short or stretch it. */
+  const serverOffsetRef = useRef(0);
   /* Mirror of `session` for async callbacks that must not clobber a
      freshly-created local session (stale resume / supersede logic). */
   const sessionRef = useRef(session);
@@ -211,11 +228,13 @@ export function QRAttendanceCard({
     }
   }, [scheduleId, date, duration, geoOn, geoRadius, session, phase, onRosterRefresh]);
 
-  /* Countdown — 1s local tick; server remains the authority */
+  /* Countdown — 1s local tick, corrected for server-clock skew;
+     server remains the authority */
   useEffect(() => {
     if (phase !== "active" || !session) return;
     const iv = setInterval(() => {
-      const left = Math.round((session.exp - Date.now()) / 1000);
+      const now = Date.now() + serverOffsetRef.current;
+      const left = Math.round((session.exp - now) / 1000);
       setLeftSec(left);
       if (left <= 0) setPhase("expired");
     }, 1000);
@@ -268,16 +287,30 @@ export function QRAttendanceCard({
     };
   }, [scheduleId, date]);
 
-  /* Live poll — 3s tiny fetch, ONLY while active; self-stops otherwise */
+  /* Live poll — 3s tiny fetch, ONLY while active; self-stops otherwise.
+     Raw fetch (not apiGet) so the response's Date header can be read
+     for server-clock skew correction. */
   useEffect(() => {
     if (phase !== "active" || !session) return;
     let stopped = false;
     const tick = async () => {
       try {
-        const d = await apiGet<LiveStatus>(`/api/attendance/session?id=${session.id}`);
+        const res = await fetch(`/api/attendance/session?id=${session.id}`, {
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+        });
+        const json = (await res.json()) as { success: boolean; data?: LiveStatus; error?: string };
+        if (!res.ok || !json.success || !json.data) {
+          throw new Error(json.error || `Request failed (${res.status})`);
+        }
+        // Skew correction: serverTime - clientTime. Date headers are
+        // absent/invalid in some odd proxies — fall back to 0 offset.
+        const dateHdr = res.headers.get("date");
+        const serverTime = dateHdr ? new Date(dateHdr).getTime() : NaN;
+        serverOffsetRef.current = Number.isNaN(serverTime) ? 0 : serverTime - Date.now();
         if (stopped) return;
-        setLive(d);
-        if (d.st !== "active") setPhase(d.st);
+        setLive(json.data);
+        if (json.data.st !== "active") setPhase(json.data.st);
       } catch {
         /* transient network error — next tick retries silently */
       }
@@ -330,6 +363,14 @@ export function QRAttendanceCard({
       setClosing(false);
     }
   }, [session, onRosterRefresh]);
+
+  /* finalize is destructive (bulk-absent + notifications) — every
+     "Close & mark rest absent" button opens the confirm dialog first. */
+  const requestFinalize = useCallback(() => setAbsentConfirmOpen(true), []);
+  const confirmFinalize = useCallback(async () => {
+    await finalize();
+    setAbsentConfirmOpen(false);
+  }, [finalize]);
 
   const copyLink = useCallback(async () => {
     if (!session) return;
@@ -569,7 +610,7 @@ export function QRAttendanceCard({
               <Button
                 size="sm"
                 className={cn(GRADIENT_BTN, "h-9")}
-                onClick={() => void finalize()}
+                onClick={requestFinalize}
                 disabled={closing}
               >
                 {closing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCheck className="mr-2 h-4 w-4" />}
@@ -593,7 +634,7 @@ export function QRAttendanceCard({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" className={cn(GRADIENT_BTN, "h-9")} onClick={() => void finalize()} disabled={closing}>
+            <Button size="sm" className={cn(GRADIENT_BTN, "h-9")} onClick={requestFinalize} disabled={closing}>
               {closing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCheck className="mr-2 h-4 w-4" />}
               Mark rest absent
             </Button>
@@ -634,7 +675,7 @@ export function QRAttendanceCard({
         <div className="flex flex-col items-center gap-3">
           <div className="w-full rounded-2xl bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] px-4 py-3 text-center text-white shadow-md">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] opacity-80">
-              {courseLabel ?? "Class attendance"} · {date}
+              {courseLabel ?? "Class attendance"} · {fmtDateOnly(date)}
             </p>
             <p className="flex items-center justify-center gap-2 text-sm font-semibold">
               <Timer className="h-4 w-4" /> {fmtLeft(leftSec)} left
@@ -664,7 +705,7 @@ export function QRAttendanceCard({
               className={cn(GRADIENT_BTN, "h-9")}
               onClick={() => {
                 setFullscreen(false);
-                void finalize();
+                requestFinalize();
               }}
               disabled={closing}
             >
@@ -675,6 +716,33 @@ export function QRAttendanceCard({
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Bulk absent confirmation — shared by all finalize entry points */}
+    <AlertDialog open={absentConfirmOpen} onOpenChange={setAbsentConfirmOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Mark remaining students absent?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Everyone who hasn&apos;t scanned will be marked absent and notified. This can&apos;t be
+            undone from the app.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={closing}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-rose-600 text-white hover:bg-rose-700"
+            disabled={closing}
+            onClick={(e) => {
+              e.preventDefault();
+              void confirmFinalize();
+            }}
+          >
+            {closing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+            Mark absent
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     </>
   );
 }

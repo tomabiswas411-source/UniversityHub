@@ -17,9 +17,11 @@ import {
  Pencil,
  Plus,
  Power,
+ RefreshCw,
  ShieldCheck,
  Trash2,
  TrendingUp,
+ TriangleAlert,
  UserPlus,
  Users,
 } from "lucide-react";
@@ -70,6 +72,7 @@ import {
  EmptyState,
  GRADIENT_BTN,
  MOBILE_TABS_LIST,
+ MOBILE_TABS_FADE,
  MOBILE_TAB_TRIGGER,
  PanelLoader,
  SectionCard,
@@ -393,14 +396,19 @@ export function SuperAdminPanel({
  /* ---------------- analytics (Day 43, lazy) ---------------- */
  const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+ const [analyticsError, setAnalyticsError] = useState<string | null>(null);
  // Refetch every time the analytics tab is opened — never serve a stale cache.
  const loadAnalytics = useCallback(async () => {
  if (analyticsLoading) return;
  setAnalyticsLoading(true);
  try {
  setAnalytics(await apiGet<PlatformAnalytics>("/api/admin/analytics"));
- } catch {
+ setAnalyticsError(null);
+ } catch (err) {
+ // Silent catch left the tab looking permanently empty — surface a
+ // retryable error message instead (see the Analytics tab render).
  setAnalytics(null);
+ setAnalyticsError(errMsg(err));
  } finally {
  setAnalyticsLoading(false);
  }
@@ -414,6 +422,14 @@ export function SuperAdminPanel({
  },
  [loadAnalytics, onTabChange]
  );
+
+ // Deep-link support: landing directly on ?tab=analytics (no tab-change
+ // event fires) must trigger the same lazy fetch exactly once.
+ useEffect(() => {
+ if (activeTab === "analytics" && !analytics && !analyticsLoading && !analyticsError) {
+ void loadAnalytics();
+ }
+ }, [activeTab, analytics, analyticsLoading, analyticsError, loadAnalytics]);
 
  /* ---------------- loaders ---------------- */
 
@@ -448,7 +464,7 @@ export function SuperAdminPanel({
  setDeptLoading(true);
  try {
  const res = await apiGet<UniversityDetailResponse>(
- `/api/admin/university?id=${id}`
+ `/api/admin/university?id=${encodeURIComponent(id)}`
  );
  if (reqId !== detailReqRef.current) return; // stale — a newer request won
  setDetail(res.university?.departments ?? []);
@@ -882,6 +898,7 @@ export function SuperAdminPanel({
  {/* ---------- tabs ---------- */}
  <Tabs value={activeTab} onValueChange={handleTabChange} className="gap-4">
  {/* lg+: sidebar rail owns sections; below lg: one pill row */}
+ <div className="relative">
  <TabsList className={MOBILE_TABS_LIST}>
  {DASHBOARD_SECTIONS.super_admin.map((s) => (
  <TabsTrigger key={s.value} value={s.value} className="min-h-9 shrink-0 gap-1.5 px-4 text-xs font-medium sm:text-sm">
@@ -890,6 +907,8 @@ export function SuperAdminPanel({
  </TabsTrigger>
  ))}
  </TabsList>
+ <div className={MOBILE_TABS_FADE} />
+ </div>
 
  {/* ===== Universities tab ===== */}
  <TabsContent value="universities" className="space-y-4">
@@ -1274,11 +1293,23 @@ export function SuperAdminPanel({
  <TabsContent value="analytics" className="space-y-4">
  {analyticsLoading && !analytics ? (
  <PanelLoader label="Loading platform insights…" />
+ ) : analyticsError && !analytics ? (
+ <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-rose-200 bg-rose-50/60 p-10 text-center dark:border-rose-900/60 dark:bg-rose-950/20">
+ <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-100 dark:bg-rose-950/50">
+ <TriangleAlert className="h-6 w-6 text-rose-600 dark:text-rose-300" />
+ </div>
+ <p className="text-sm font-bold text-rose-800 dark:text-rose-200">Couldn&apos;t load platform analytics</p>
+ <p className="max-w-sm text-xs text-rose-700/90 dark:text-rose-300/80">{analyticsError}</p>
+ <Button variant="outline" size="sm" className="mt-1" onClick={() => void loadAnalytics()}>
+ <RefreshCw className="h-3.5 w-3.5" />
+ Retry
+ </Button>
+ </div>
  ) : !analytics ? (
  <EmptyState
  icon={ChartNoAxesColumn}
  title="Analytics unavailable"
- hint="Switch tabs and come back to retry."
+ hint="Open the Analytics tab to load platform insights."
  />
  ) : (
  <>
@@ -1330,7 +1361,18 @@ export function SuperAdminPanel({
  </tr>
  </thead>
  <tbody>
- {analytics.perUniversity.map((u) => (
+ {analytics.perUniversity.length === 0 ? (
+ <tr>
+ <td colSpan={5}>
+ <EmptyState
+ icon={Building2}
+ title="No university data yet"
+ hint="Register universities and assign plans to populate the leaderboard."
+ />
+ </td>
+ </tr>
+ ) : (
+ analytics.perUniversity.map((u) => (
  <tr key={u.id} className="border-b last:border-0">
  <td className="py-2.5 pr-3 font-semibold">
  <span className="inline-flex items-center gap-1.5">
@@ -1349,7 +1391,8 @@ export function SuperAdminPanel({
  <td className="py-2.5 pr-3 text-right tabular-nums">{u.users}</td>
  <td className="py-2.5 text-right tabular-nums">{u.schedules}</td>
  </tr>
- ))}
+ ))
+ )}
  </tbody>
  </table>
  </div>

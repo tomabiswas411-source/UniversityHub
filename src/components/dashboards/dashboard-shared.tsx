@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { bdWeekday } from "@/lib/date-bd";
 import { CountUp } from "@/components/shared/motion-primitives";
 import type { ScheduleChangeDTO, ScheduleDTO, TimeSlotDTO } from "@/types";
 import { DAY_LABELS, DAYS_OF_WEEK } from "@/types";
@@ -99,6 +100,12 @@ export const MOBILE_TABS_LIST =
   "no-scrollbar h-11 w-full justify-start gap-1 overflow-x-auto rounded-xl border bg-muted/50 p-1 sm:h-10 lg:hidden";
 export const MOBILE_TAB_TRIGGER =
   "min-h-9 shrink-0 gap-1.5 rounded-lg px-3 text-xs font-medium sm:text-sm";
+
+/** Right-edge fade for the mobile tab strip (9 tabs, hidden scrollbar —
+    this hints there is more to scroll). Render inside a `relative`
+    wrapper around the TabsList that uses MOBILE_TABS_LIST. */
+export const MOBILE_TABS_FADE =
+  "pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent lg:hidden";
 
 export const GRADIENT_BTN =
   "btn-shine bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25";
@@ -280,9 +287,10 @@ export function TimetableGrid({
   /** scheduleId → live (effective-today) change; powers Cancelled/Moved badges. */
   latestChangeBySchedule?: Map<string, ScheduleChangeDTO>;
 }) {
-  const today = new Date()
-    .toLocaleDateString("en-US", { weekday: "long" })
-    .toLowerCase() as (typeof DAYS_OF_WEEK)[number];
+  // "Today" in Asia/Dhaka (lowercase weekday, matches dayOfWeek values).
+  // The plain browser clock highlighted the wrong column for users in
+  // other timezones (e.g. Bangladeshi students abroad).
+  const today = bdWeekday() as (typeof DAYS_OF_WEEK)[number];
   const isToday = (d: string) => highlightToday && d === today;
 
   if (timeSlots.length === 0 || schedules.length === 0) return null;

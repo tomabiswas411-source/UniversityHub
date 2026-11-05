@@ -18,9 +18,16 @@ function createPrismaClient(): PrismaClient {
  return new PrismaClient({ adapter });
  }
 
- // Fallback: local SQLite file (development)
+ // Fallback: local SQLite file (development). In production the FS is
+ // ephemeral — writes would silently vanish per invocation, so refuse to
+ // boot on a misconfigured deployment instead of serving a fake DB.
+ if (process.env.NODE_ENV === "production") {
+ throw new Error(
+ "[db] TURSO_DATABASE_URL / TURSO_AUTH_TOKEN are not configured — refusing to fall back to ephemeral local SQLite in production"
+ );
+ }
  console.warn(
- "[db] TURSO env vars not set — falling back to local SQLite file."
+ "[db] TURSO env vars not set — falling back to local SQLite file (dev only)."
  );
  return new PrismaClient();
 }

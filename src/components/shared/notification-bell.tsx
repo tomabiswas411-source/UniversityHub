@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Bell, BellOff, Clock, Info, MapPin, Megaphone, PlusCircle, XCircle, Award, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +12,8 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { apiGet, apiPatch } from "@/lib/api-client";
+import { toast } from "@/hooks/use-toast";
+import { timeAgo } from "@/lib/format";
 import { useAuthStore } from "@/store/auth-store";
 import { useNotificationSound, showBrowserNotification } from "@/hooks/use-notification-sound";
 import type { NotificationDTO } from "@/types";
@@ -28,21 +31,10 @@ interface PingResponse {
  latest: NotificationDTO | null;
 }
 
-/** "5m ago" style relative time */
-export function timeAgo(iso: string): string {
- const then = new Date(iso).getTime();
- if (Number.isNaN(then)) return "";
- const diff = Math.max(0, Date.now() - then);
- const s = Math.floor(diff / 1000);
- if (s < 60) return "just now";
- const m = Math.floor(s / 60);
- if (m < 60) return `${m}m ago`;
- const h = Math.floor(m / 60);
- if (h < 24) return `${h}h ago`;
- const d = Math.floor(h / 24);
- if (d < 7) return `${d}d ago`;
- return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
+/** "5m ago" relative time — single shared implementation (lib/format).
+    Re-exported here because dept-admin / teacher / student panels still
+    import it from this module. */
+export { timeAgo };
 
 /** Icon + colour class for a notification type (shared with the
     student dashboard's Alerts tab). */
@@ -71,13 +63,18 @@ export function typeIcon(type: string) {
 
 /**
  * Follow a notification's deep link (e.g. "/?view=dashboard"). The app
- * is a query-param SPA, so an in-app navigation is just a location
- * assignment — full reload only happens on hard refresh anyway.
+ * is a query-param SPA. When a Next.js router is supplied the link is
+ * pushed through it (client-side navigation); otherwise it falls back
+ * to a plain location assignment for non-React callers.
  */
-export function followNotificationLink(link: string | null | undefined) {
+export function followNotificationLink(
+ link: string | null | undefined,
+ router?: { push: (url: string) => void }
+) {
  if (!link) return false;
  try {
- window.location.assign(link);
+ if (router) router.push(link);
+ else window.location.assign(link);
  return true;
  } catch {
  return false;
@@ -85,10 +82,12 @@ export function followNotificationLink(link: string | null | undefined) {
 }
 
 export function NotificationBell({ className }: { className?: string }) {
+ const router = useRouter();
  const [open, setOpen] = useState(false);
  const [items, setItems] = useState<NotificationDTO[]>([]);
  const [unreadCount, setUnreadCount] = useState(0);
  const [justArrived, setJustArrived] = useState(false);
+ const [listError, setListError] = useState(false);
  const newestIdRef = useRef<string | null>(null);
  const firstLoadRef = useRef(true);
  const play = useNotificationSound();
@@ -104,6 +103,7 @@ export function NotificationBell({ className }: { className?: string }) {
  const data = await apiGet<NotificationsResponse>("/api/notifications");
  setItems(data.notifications);
  setUnreadCount(data.unreadCount);
+ setListError(false);
 
  const newest = data.notifications[0]?.id ?? null;
  if (!firstLoadRef.current && newest && newest !== newestIdRef.current && !silent) {
@@ -117,7 +117,9 @@ export function NotificationBell({ className }: { className?: string }) {
  firstLoadRef.current = false;
  } catch {
  // network hiccups / 401 (store already cleared by api-client) —
- // silently ignored; polling resumes when a user is present again
+ // surface an inline retry hint instead of stale silence; polling
+ // resumes when a user is present again
+ setListError(true);
  }
  },
  [play]
@@ -165,12 +167,21 @@ export function NotificationBell({ className }: { className?: string }) {
  }, [fetchNotifications, play, user]);
 
  const markAllRead = async () => {
+ // optimistic flip — rolled back if the PATCH fails
+ const prevItems = items;
+ const prevUnread = unreadCount;
  setItems((prev) => prev.map((n) => ({ ...n, isRead: true })));
  setUnreadCount(0);
  try {
  await apiPatch("/api/notifications", { all: true });
  } catch {
- // optimistic — silent
+ setItems(prevItems);
+ setUnreadCount(prevUnread);
+ toast({
+ title: "Couldn't mark notifications as read",
+ description: "Please try again.",
+ variant: "destructive",
+ });
  }
  };
 
@@ -186,7 +197,7 @@ export function NotificationBell({ className }: { className?: string }) {
  }
  // deep-link to the related page (dashboard, etc.) — close the menu first
  setOpen(false);
- followNotificationLink(n.link);
+ followNotificationLink(n.link, router);
  };
 
  return (
@@ -225,6 +236,19 @@ export function NotificationBell({ className }: { className?: string }) {
  </Button>
  </div>
  <Separator />
+ {listError && (
+ <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-2 text-xs">
+ <span className="text-muted-foreground">Couldn't refresh notifications.</span>
+ <Button
+ variant="ghost"
+ size="sm"
+ className="h-7 min-h-9 rounded-full px-2.5 text-xs font-semibold text-green hover:text-green sm:min-h-0"
+ onClick={() => void fetchNotifications(true)}
+ >
+ Retry
+ </Button>
+ </div>
+ )}
  {items.length === 0 ? (
  <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">

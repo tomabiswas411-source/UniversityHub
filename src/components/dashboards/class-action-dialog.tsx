@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiPost } from "@/lib/api-client";
+import { bdTodayISO, fmtDateOnly } from "@/lib/date-bd";
 import { cn } from "@/lib/utils";
 import { RoomFinder } from "@/components/dashboards/teacher-room-finder";
 import { ChangeTypeBadge } from "@/components/dashboards/dashboard-shared";
@@ -115,10 +116,8 @@ const QUICK_REASONS = [
   "Unavailable today",
 ];
 
-function todayISO(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
+/* "Today" for the effective-date min comes from the Asia/Dhaka clock
+   (bdTodayISO) — the old local todayISO() drifted for UTC+6 evening use. */
 
 function dayLabel(day: string | null): string {
   if (!day) return "—";
@@ -148,7 +147,7 @@ export function ClassActionDialog({
   const [newDay, setNewDay] = useState("");
   const [newSlot, setNewSlot] = useState("keep");
   const [newRoom, setNewRoom] = useState("keep");
-  const [date, setDate] = useState(todayISO());
+  const [date, setDate] = useState(bdTodayISO());
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -159,7 +158,7 @@ export function ClassActionDialog({
       setNewDay("");
       setNewSlot("keep");
       setNewRoom("keep");
-      setDate(todayISO());
+      setDate(bdTodayISO());
       setReason("");
       setSubmitting(false);
     }
@@ -285,7 +284,7 @@ export function ClassActionDialog({
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <p className="text-amber-800 dark:text-amber-300">
               This class already has an active change: <ChangeTypeBadge type={activeWarning.changeType} />{" "}
-              effective {activeWarning.effectiveDate}. Submitting again adds another announcement.
+              effective {fmtDateOnly(activeWarning.effectiveDate)}. Submitting again adds another announcement.
             </p>
           </div>
         )}
@@ -423,7 +422,7 @@ export function ClassActionDialog({
               id="cad-date"
               type="date"
               value={date}
-              min={todayISO()}
+              min={bdTodayISO()}
               onChange={(e) => setDate(e.target.value)}
             />
           </div>
@@ -469,7 +468,7 @@ export function ClassActionDialog({
                   <ChangeTypeBadge type={c.changeType} />
                   <span className="font-semibold">{c.courseCode}</span>
                   <span className="truncate text-muted-foreground">{c.reason}</span>
-                  <span className="ml-auto shrink-0 text-muted-foreground">from {c.effectiveDate}</span>
+                  <span className="ml-auto shrink-0 text-muted-foreground">from {fmtDateOnly(c.effectiveDate)}</span>
                 </div>
               ))}
             </div>

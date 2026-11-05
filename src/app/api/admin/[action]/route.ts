@@ -81,7 +81,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  start: new Date(now.getFullYear(), now.getMonth() - (11 - i), 1),
  end: new Date(now.getFullYear(), now.getMonth() - (11 - i) + 1, 1),
  }));
- const [universities, plans, roleCounts, scheduleRows, userGrowthCounts] =
+ const [universities, plans, roleCounts, scheduleGroups, deptUniRows, userGrowthCounts] =
  await Promise.all([
  db.university.findMany({
  include: {
@@ -101,10 +101,14 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  _count: { role: true },
  where: { isActive: true },
  }),
- // schedules live on departments — map them to universities here
- db.schedule.findMany({
- select: { department: { select: { universityId: true } } },
+ // schedules live on departments — map them to universities here via a
+ // groupBy (the old full findMany loaded every schedule row and grew
+ // linearly with platform size).
+ db.schedule.groupBy({
+ by: ["departmentId"],
+ _count: { departmentId: true },
  }),
+ db.department.findMany({ select: { id: true, universityId: true } }),
  Promise.all(
  monthBuckets.map((b) =>
  db.user.count({ where: { createdAt: { gte: b.start, lt: b.end } } })
@@ -112,10 +116,20 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  ),
  ]);
 
+ const uniByDept = new Map(
+ deptUniRows.map((d) => [d.id, d.universityId])
+ );
  const schedulesByUni = new Map<string, number>();
- for (const s of scheduleRows) {
- const uid = s.department?.universityId;
- if (uid) schedulesByUni.set(uid, (schedulesByUni.get(uid) ?? 0) + 1);
+ let totalSchedules = 0;
+ for (const g of scheduleGroups) {
+ totalSchedules += g._count.departmentId;
+ const uid = uniByDept.get(g.departmentId);
+ if (uid) {
+ schedulesByUni.set(
+ uid,
+ (schedulesByUni.get(uid) ?? 0) + g._count.departmentId
+ );
+ }
  }
 
  // Growth: universities joined per month (last 8 months)
@@ -178,7 +192,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  payingUniversities: activeUnis.filter((u) => (u.plan?.priceMonthly ?? 0) > 0).length,
  perUniversity,
  roles,
- totalSchedules: scheduleRows.length,
+ totalSchedules,
  };
  }
 
@@ -333,10 +347,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  .toLowerCase()
  .trim()
  .replace(/[^a-z0-9-]/g, "-");
+ if (!cleanSlug || cleanSlug === "-") {
+ throw new ApiError(400, "Slug must contain letters or numbers");
+ }
  const existing = await db.university.findUnique({
  where: { slug: cleanSlug },
  });
  if (existing) throw new ApiError(409, "Slug already in use");
+ // planId must reference a real plan — an invalid one used to surface
+ // as an opaque Prisma FK 500.
+ if (planId) {
+ const plan = await db.plan.findUnique({ where: { id: planId }, select: { id: true } });
+ if (!plan) throw new ApiError(400, "Selected plan does not exist");
+ }
 
  const university = await db.university.create({
  data: {
@@ -375,8 +398,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
  throw new ApiError(400, "Please provide a valid email address");
  }
- if (password.length < 4) {
- throw new ApiError(400, "Password must be at least 4 characters");
+ if (password.length < 6) {
+ throw new ApiError(400, "Password must be at least 6 characters");
  }
 
  const department = await db.department.findUnique({
@@ -447,7 +470,16 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  ]) {
  if (body[f] !== undefined) data[f] = body[f] ? String(body[f]) : null;
  }
- if (body.planId !== undefined) data.planId = body.planId || null;
+ if (body.planId !== undefined) {
+ if (body.planId) {
+ const plan = await db.plan.findUnique({
+ where: { id: String(body.planId) },
+ select: { id: true },
+ });
+ if (!plan) throw new ApiError(400, "Selected plan does not exist");
+ }
+ data.planId = body.planId || null;
+ }
  if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
  if (body.slug !== undefined) {
  const cleanSlug = String(body.slug)
@@ -486,11 +518,22 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  }
  if (role !== target.role && target.role === "student" && role !== "student") {
  // Students log in with ID+Roll, not email/password — promoting one
- // to staff without an email+password would lock them out.
- if (!target.email) {
+ // to staff without BOTH an email and a password would lock them out
+ // of the staff login entirely.
+ if (!target.email || !target.password) {
  throw new ApiError(
  400,
- "This student has no staff email — provision a staff account instead"
+ "This student has no staff email/password — provision a staff account instead"
+ );
+ }
+ }
+ if (role !== target.role && target.role !== "student" && role === "student") {
+ // Demoting staff to student: the student login needs ID+Roll.
+ // Without them the account can log in nowhere.
+ if (!target.studentIdNumber || !target.rollNumber) {
+ throw new ApiError(
+ 400,
+ "Set a student ID number and roll number before converting this account to a student"
  );
  }
  }
@@ -498,8 +541,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  }
  if (body.password !== undefined) {
  const pw = String(body.password);
- if (pw.length < 4) {
- throw new ApiError(400, "Password must be at least 4 characters");
+ if (pw.length < 6) {
+ throw new ApiError(400, "Password must be at least 6 characters");
  }
  data.password = await hashPassword(pw);
  }
@@ -513,20 +556,29 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
  if (action === "plans") {
  if (!id) throw new ApiError(400, "id is required");
+ const num = (v: unknown, label: string, opts: { min?: number; max?: number } = {}): number => {
+ const n = Number(v);
+ if (!Number.isFinite(n)) throw new ApiError(400, `${label} must be a number`);
+ if (opts.min !== undefined && n < opts.min)
+ throw new ApiError(400, `${label} must be at least ${opts.min}`);
+ if (opts.max !== undefined && n > opts.max)
+ throw new ApiError(400, `${label} must be at most ${opts.max}`);
+ return Math.round(n * 100) / 100;
+ };
  const data: Record<string, unknown> = {};
  if (body.name !== undefined) data.name = String(body.name);
  if (body.tagline !== undefined)
  data.tagline = body.tagline == null ? null : String(body.tagline);
  if (body.priceMonthly !== undefined)
- data.priceMonthly = Number(body.priceMonthly);
+ data.priceMonthly = num(body.priceMonthly, "Monthly price", { min: 0 });
  if (body.priceYearly !== undefined)
- data.priceYearly = Number(body.priceYearly);
+ data.priceYearly = num(body.priceYearly, "Yearly price", { min: 0 });
  if (body.maxDepartments !== undefined)
- data.maxDepartments = Number(body.maxDepartments);
+ data.maxDepartments = num(body.maxDepartments, "Max departments", { min: 0 });
  if (body.maxStudents !== undefined)
- data.maxStudents = Number(body.maxStudents);
+ data.maxStudents = num(body.maxStudents, "Max students", { min: 0 });
  if (body.maxTeachers !== undefined)
- data.maxTeachers = Number(body.maxTeachers);
+ data.maxTeachers = num(body.maxTeachers, "Max teachers", { min: 0 });
  if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
  if (body.features !== undefined)
  data.features = JSON.stringify(body.features);

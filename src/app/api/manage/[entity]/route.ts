@@ -5,6 +5,7 @@ import { requireSession, ApiError, type SessionPayload } from "@/lib/session";
 import { hashPassword } from "@/lib/auth";
 import { gradeDistribution, passRate, resultPct } from "@/lib/grades";
 import { bdWeekday } from "@/lib/date-bd";
+import { windowsOverlap } from "@/lib/time-utils";
 
 /**
  * Department-scoped management API for dept_admin & super_admin.
@@ -68,6 +69,30 @@ const VALID_DAYS = new Set([
  "wednesday",
  "thursday",
 ]);
+
+const VALID_CATEGORIES = new Set([
+ "academic", "exam", "event", "general", "schedule_change", "assignment",
+]);
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Trim + hard length cap — keeps free-text abuse from bloating rows. */
+function cleanStr(v: unknown, max: number): string {
+ return String(v).trim().slice(0, max);
+}
+
+/** Number coercion with a friendly 400 instead of an opaque Prisma 500. */
+function cleanNum(v: unknown): number {
+ const n = Number(v);
+ if (!Number.isFinite(n)) throw new ApiError(400, "Invalid number value");
+ return n;
+}
+
+function validateSemester(v: unknown, label = "Semester"): number {
+ const n = Number(v);
+ if (!Number.isInteger(n) || n < 1 || n > 12)
+ throw new ApiError(400, `${label} must be a whole number between 1 and 12`);
+ return n;
+}
 
 /** 409 with a friendly "in use" message when reference rows exist. */
 async function assertNotReferenced(
@@ -403,12 +428,14 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  return db.notice.findMany({
  where: { departmentId },
  orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
+ take: 200,
  });
 
  case "schedules":
  return db.schedule.findMany({
  where: { departmentId },
  orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+ take: 1000,
  });
  }
  });
@@ -433,12 +460,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  body as Record<string, string>;
  if (!fullName || !email || !password)
  throw new ApiError(400, "Name, email and password are required");
- if (password.length < 4)
- throw new ApiError(400, "Password must be at least 4 characters");
+ const emailNorm = email.trim().toLowerCase();
+ if (!EMAIL_RE.test(emailNorm))
+ throw new ApiError(400, "Please enter a valid email address");
+ if (password.length < 6)
+ throw new ApiError(400, "Password must be at least 6 characters");
  // universityId comes from the department row so a super_admin can
  // provision any department without creating an orphaned user.
  const universityId = await resolveUniversityId(departmentId);
- const emailNorm = email.trim().toLowerCase();
  const existing = await db.user.findFirst({
  where: { universityId, email: emailNorm },
  });
@@ -450,13 +479,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  universityId,
  departmentId,
  role: "teacher",
- fullName,
+ fullName: cleanStr(fullName, 100),
  email: emailNorm,
  password: hashed,
- designation: designation || "Lecturer",
- phone,
- officeRoom,
- bio,
+ designation: cleanStr(designation || "Lecturer", 60),
+ phone: phone ? cleanStr(phone, 30) : null,
+ officeRoom: officeRoom ? cleanStr(officeRoom, 30) : null,
+ bio: bio ? cleanStr(bio, 500) : null,
  },
  });
  return stripPassword(created);
@@ -485,13 +514,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  universityId,
  departmentId,
  role: "student",
- fullName: String(fullName),
- studentIdNumber: String(studentIdNumber),
- rollNumber: String(rollNumber),
+ fullName: cleanStr(fullName, 100),
+ studentIdNumber: cleanStr(studentIdNumber, 30),
+ rollNumber: cleanStr(rollNumber, 30),
  programId: programId ? String(programId) : null,
- semester: semester ? Number(semester) : null,
- section: section ? String(section) : null,
- phone: phone ? String(phone) : null,
+ semester: semester ? validateSemester(semester, "Semester") : null,
+ section: section ? cleanStr(section, 20) : null,
+ phone: phone ? cleanStr(phone, 30) : null,
  },
  });
  return stripPassword(created);
@@ -571,11 +600,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!["all", "students", "teachers"].includes(audienceVal)) {
  throw new ApiError(400, "Audience must be all, students or teachers");
  }
+ if (category && !VALID_CATEGORIES.has(String(category))) {
+ throw new ApiError(400, "Invalid notice category");
+ }
  return db.notice.create({
  data: {
  departmentId,
- title: String(title),
- content: String(content),
+ title: cleanStr(title, 150),
+ content: cleanStr(content, 5000),
  category: String(category) || "general",
  audience: audienceVal,
  programId: programId ? String(programId) : null,
@@ -615,6 +647,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  ]);
  if (!course || !teacher || !room || !timeSlot || !program)
  throw new ApiError(404, "Invalid course, teacher, room, time slot or program");
+ // The assignee must actually be an active teacher of this department —
+ // previously a student or another admin could end up on the routine.
+ if (teacher.role !== "teacher" || !teacher.isActive)
+ throw new ApiError(400, "Selected assignee must be an active teacher");
  // Tenant guard: every referenced resource must belong to THIS department.
  if (
  course.departmentId !== departmentId ||
@@ -625,30 +661,40 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  ) {
  throw new ApiError(403, "Resource belongs to another department");
  }
+ const sem = validateSemester(semester);
 
- // Conflict detection: room, teacher, batch at same day+slot
- const sameSlot = await db.schedule.findMany({
+ // Conflict detection: room, teacher and batch — expanded to *overlapping*
+ // time windows, since two different department slots can physically collide.
+ const sameDay = await db.schedule.findMany({
  where: {
  departmentId,
  dayOfWeek: day,
- timeSlotId: String(timeSlotId),
  isActive: true,
  },
  });
- const roomClash = sameSlot.find((s) => s.roomId === room.id);
+ const overlapping = sameDay.filter((s) =>
+ windowsOverlap(
+ s.startTime,
+ s.endTime,
+ timeSlot.startTime,
+ timeSlot.endTime,
+ s.timeSlotId === timeSlot.id
+ )
+ );
+ const roomClash = overlapping.find((s) => s.roomId === room.id);
  if (roomClash)
  throw new ApiError(
  409,
  `Room ${room.roomNumber} is occupied (${roomClash.courseCode}) at this time`
  );
- const teacherClash = sameSlot.find((s) => s.teacherId === teacher.id);
+ const teacherClash = overlapping.find((s) => s.teacherId === teacher.id);
  if (teacherClash)
  throw new ApiError(
  409,
  `${teacher.fullName} already has ${teacherClash.courseCode} at this time`
  );
- const batchClash = sameSlot.find(
- (s) => s.programId === program.id && s.semester === Number(semester)
+ const batchClash = overlapping.find(
+ (s) => s.programId === program.id && s.semester === sem
  );
  if (batchClash)
  throw new ApiError(
@@ -664,7 +710,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  roomId: room.id,
  timeSlotId: timeSlot.id,
  programId: program.id,
- semester: Number(semester) || 1,
+ semester: sem,
  courseCode: course.code,
  courseName: course.name,
  teacherName: teacher.fullName,
@@ -726,45 +772,101 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (!departmentId) throw new ApiError(404, "Record not found");
  await assertDeptAccess(session, departmentId);
 
+ // Per-entity field whitelist — previously a shared cross-entity list let
+ // callers update fields that don't exist on the target model (e.g.
+ // "capacity" on a course), which Prisma rejected with an opaque 500.
+ const FIELD_POLICY: Record<
+ string,
+ { str: [string, number][]; num: string[]; bool: string[] }
+ > = {
+ teachers: {
+ str: [["fullName", 100], ["designation", 60], ["phone", 30], ["officeRoom", 30], ["bio", 500]],
+ num: [],
+ bool: ["isActive"],
+ },
+ students: {
+ str: [["fullName", 100], ["section", 20], ["phone", 30], ["studentIdNumber", 30], ["rollNumber", 30]],
+ num: ["semester"],
+ bool: ["isActive"],
+ },
+ courses: {
+ str: [["code", 30], ["name", 120], ["type", 20]],
+ num: ["creditHours", "semester"],
+ bool: ["isActive"],
+ },
+ rooms: {
+ str: [["roomNumber", 30], ["building", 60], ["type", 20]],
+ num: ["capacity"],
+ bool: ["isActive"],
+ },
+ timeslots: {
+ str: [["label", 60], ["startTime", 10], ["endTime", 10]],
+ num: ["slotOrder"],
+ bool: ["isBreak", "isActive"],
+ },
+ programs: {
+ str: [["name", 80], ["shortName", 20]],
+ num: ["semesterCount"],
+ bool: ["isActive"],
+ },
+ notices: {
+ str: [["title", 150], ["content", 5000], ["category", 30]],
+ num: ["semester"],
+ bool: ["isPinned"],
+ },
+ schedules: {
+ str: [["dayOfWeek", 10]],
+ num: ["semester"],
+ bool: ["isActive"],
+ },
+ };
+ const policy = FIELD_POLICY[entity] ?? { str: [], num: [], bool: [] };
  const data: Record<string, unknown> = {};
- const stringFields = [
- "fullName", "designation", "phone", "officeRoom", "bio", "section",
- "code", "name", "type", "building", "label", "startTime", "endTime",
- "title", "content", "category", "audience", "dayOfWeek", "studentIdNumber",
- "rollNumber", "shortName",
- ];
- for (const f of stringFields) {
- if (body[f] !== undefined && body[f] !== null) data[f] = String(body[f]);
+ for (const [f, max] of policy.str) {
+ const v = body[f];
+ if (v !== undefined && v !== null) data[f] = cleanStr(v, max);
  }
- const numberFields = [
- "semester", "capacity", "slotOrder", "creditHours", "semesterCount",
- ];
- for (const f of numberFields) {
- if (body[f] !== undefined && body[f] !== null && body[f] !== "")
- data[f] = Number(body[f]);
+ for (const f of policy.num) {
+ const v = body[f];
+ if (v !== undefined && v !== null && v !== "") data[f] = cleanNum(v);
+ }
+ for (const f of policy.bool) {
+ if (body[f] !== undefined) data[f] = Boolean(body[f]);
  }
  if (body.programId !== undefined)
  data.programId = body.programId ? String(body.programId) : null;
- if (body.isPinned !== undefined) data.isPinned = Boolean(body.isPinned);
- if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
+ // audience: enum whitelist on update too (POST already enforces this) —
+ // previously it rode the generic string list and bypassed validation.
+ if (entity === "notices" && body.audience !== undefined && body.audience !== null) {
+ const audienceVal = String(body.audience);
+ if (!["all", "students", "teachers"].includes(audienceVal))
+ throw new ApiError(400, "Audience must be all, students or teachers");
+ data.audience = audienceVal;
+ }
+ if (entity === "notices" && body.category !== undefined && body.category !== null) {
+ if (!VALID_CATEGORIES.has(String(body.category)))
+ throw new ApiError(400, "Invalid notice category");
+ }
 
  switch (entity) {
  case "teachers":
  case "students": {
- // Password policy: "" → skip (leave unchanged); 1-3 chars → 400;
- // 4+ → hash. (Previously short passwords were silently ignored.)
+ // Password policy: "" → skip (leave unchanged); <6 chars → 400;
+ // 6+ → hash. (Previously short passwords were silently ignored.)
  if (typeof body.password === "string") {
  if (body.password.length === 0) {
  // empty string → skip password change
- } else if (body.password.length < 4) {
- throw new ApiError(400, "Password must be at least 4 characters");
+ } else if (body.password.length < 6) {
+ throw new ApiError(400, "Password must be at least 6 characters");
  } else {
  data.password = await hashPassword(body.password);
  }
  }
- // Email updates: normalize + per-university uniqueness.
+ // Email updates: normalize + format-check + per-university uniqueness.
  if (typeof body.email === "string" && body.email.trim()) {
  const emailNorm = body.email.trim().toLowerCase();
+ if (!EMAIL_RE.test(emailNorm))
+ throw new ApiError(400, "Please enter a valid email address");
  const target = await db.user.findUnique({
  where: { id },
  select: { universityId: true },
@@ -798,6 +900,10 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  // If slot/day changed, re-run conflict detection
  const existing = await db.schedule.findUnique({ where: { id } });
  if (!existing) throw new ApiError(404, "Schedule not found");
+ if (data.semester !== undefined) {
+ validateSemester(data.semester);
+ }
+ if (data.dayOfWeek === "") delete data.dayOfWeek;
 
  // Optional relation swaps — previously these fields were silently
  // dropped by the generic string-field mapper (the slot picker was a
@@ -837,6 +943,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (!teacher) throw new ApiError(404, "Teacher not found");
  if (teacher.departmentId !== departmentId)
  throw new ApiError(403, "Resource belongs to another department");
+ if (teacher.role !== "teacher" || !teacher.isActive)
+ throw new ApiError(400, "Selected assignee must be an active teacher");
  data.teacherId = teacher.id;
  data.teacherName = teacher.fullName;
  }
@@ -870,26 +978,29 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  }
 
  // Clash re-check must see the NEW room/teacher values, not just the
- // existing row's.
+ // existing row's — and compare *overlapping time windows*, not slot ids.
  const day = (data.dayOfWeek as string) ?? existing.dayOfWeek;
  const timeSlotId = (data.timeSlotId as string) ?? existing.timeSlotId;
  if (
  (data.timeSlotId && data.timeSlotId !== existing.timeSlotId) ||
  (data.dayOfWeek && data.dayOfWeek !== existing.dayOfWeek)
  ) {
- const sameSlot = await db.schedule.findMany({
+ const sameDay = await db.schedule.findMany({
  where: {
  departmentId,
  dayOfWeek: day,
- timeSlotId,
  isActive: true,
  id: { not: id },
  },
  });
  const roomId = (data.roomId as string) ?? existing.roomId;
  const teacherId = (data.teacherId as string) ?? existing.teacherId;
- const clash = sameSlot.find(
- (s) => s.roomId === roomId || s.teacherId === teacherId
+ const effStart = (data.startTime as string) ?? existing.startTime;
+ const effEnd = (data.endTime as string) ?? existing.endTime;
+ const clash = sameDay.find(
+ (s) =>
+ (s.roomId === roomId || s.teacherId === teacherId) &&
+ windowsOverlap(s.startTime, s.endTime, effStart, effEnd, s.timeSlotId === timeSlotId)
  );
  if (clash)
  throw new ApiError(
@@ -991,6 +1102,16 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const s = await db.schedule.findUnique({ where: { id } });
  if (!s) throw new ApiError(404, "Schedule not found");
  await assertDeptAccess(session, s.departmentId);
+ // A schedule delete would cascade-wipe its attendance history and QR
+ // sessions — the permanent record must survive routine housekeeping.
+ const [attendanceCount, sessionCount] = await Promise.all([
+ db.attendance.count({ where: { scheduleId: id } }),
+ db.attendanceSession.count({ where: { scheduleId: id } }),
+ ]);
+ await assertNotReferenced([
+ { label: "attendance record(s)", count: attendanceCount },
+ { label: "QR session(s)", count: sessionCount },
+ ]);
  await db.scheduleChange.deleteMany({ where: { scheduleId: id } });
  await db.schedule.delete({ where: { id } });
  return { deleted: true };

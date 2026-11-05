@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiGet } from "@/lib/api-client";
+import { gradeTone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { bdTodayISO } from "@/lib/date-bd";
 import { Button } from "@/components/ui/button";
@@ -291,11 +292,7 @@ export function AttendanceSheetCard({
                         <span
                           className={cn(
                             "inline-block rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
-                            (s?.pct ?? 0) >= 75
-                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-                              : (s?.pct ?? 0) >= 60
-                                ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
-                                : "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+                            gradeTone(s?.pct ?? 0)
                           )}
                         >
                           {s?.pct ?? 0}%

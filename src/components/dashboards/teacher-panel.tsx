@@ -11,10 +11,12 @@ import {
  CalendarDays,
  CheckCheck,
  ChevronRight,
+ RefreshCw,
  ClipboardCheck,
  ClipboardList,
  Clock,
  GraduationCap,
+ TriangleAlert,
  History,
  ListChecks,
  Loader2,
@@ -33,6 +35,8 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
+import { letterTone } from "@/lib/format";
+import { bdTodayISO, bdWeekday, daysUntilDate } from "@/lib/date-bd";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { timeAgo } from "@/components/shared/notification-bell";
@@ -56,6 +60,7 @@ import {
  ExamTypeBadge,
  GRADIENT_BTN,
  MOBILE_TABS_LIST,
+ MOBILE_TABS_FADE,
  MOBILE_TAB_TRIGGER,
  PanelLoader,
  SectionCard,
@@ -167,27 +172,11 @@ function errMsg(err: unknown): string {
  return err instanceof Error ? err.message : "Something went wrong. Please try again.";
 }
 
-function todayISO(): string {
- const now = new Date();
- return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
 /* The university runs on Asia/Dhaka time — the schedule "today", the
    next-class highlight and change effective-dates all use it, so the
-   dashboard stays consistent no matter where the teacher travels. */
+   dashboard stays consistent no matter where the teacher travels.
+   bdTodayISO/bdWeekday come from @/lib/date-bd (single implementation). */
 const DHAKA_TZ = "Asia/Dhaka";
-
-/** Today's date (YYYY-MM-DD) in Asia/Dhaka. */
-function bdTodayISO(): string {
- return new Intl.DateTimeFormat("en-CA", { timeZone: DHAKA_TZ }).format(new Date());
-}
-
-/** Current weekday ("monday"…) in Asia/Dhaka. */
-function bdWeekday(): string {
- return new Intl.DateTimeFormat("en-US", { timeZone: DHAKA_TZ, weekday: "long" })
- .format(new Date())
- .toLowerCase();
-}
 
 /** A schedule change is "live" only once its effective date has arrived. */
 function isChangeEffective(effectiveDate: string): boolean {
@@ -225,19 +214,21 @@ function hhmmToMinutes(t: string): number {
 
 function dueChip(due: string | null): { text: string; cls: string } {
  if (!due) return { text: "No due date", cls: "bg-muted text-muted-foreground" };
- // Accept both "YYYY-MM-DD" and full ISO timestamps ("…T00:00:00.000Z") —
- // appending T23:59:59 to a full ISO string would produce Invalid Date.
- const d = new Date(due.length === 10 ? `${due}T23:59:59` : due);
- if (Number.isNaN(d.getTime())) return { text: due, cls: "bg-muted text-muted-foreground" };
- const diffDays = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
- if (diffDays < 0)
- return { text: `Overdue · ${fmtDate(due)}`, cls: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" };
- if (diffDays <= 3)
- return {
- text: diffDays === 0 ? `Due today · ${fmtDate(due)}` : `Due in ${diffDays}d · ${fmtDate(due)}`,
- cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
- };
- return { text: fmtDate(due), cls: "bg-muted text-muted-foreground" };
+ // Day-diff comes from the Dhaka calendar (daysUntilDate), not the
+ // browser clock — labels match the student dashboard exactly. The
+ // date part is sliced so both "YYYY-MM-DD" and full ISO timestamps
+ // ("…T00:00:00.000Z") resolve to the same calendar day.
+ const diff = daysUntilDate(due.slice(0, 10));
+ if (Number.isNaN(diff)) return { text: due, cls: "bg-muted text-muted-foreground" };
+ const text =
+ diff < 0 ? "Overdue" : diff === 0 ? "Due today" : diff === 1 ? "Due tomorrow" : `Due in ${diff}d`;
+ const cls =
+ diff < 0
+ ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+ : diff <= 3
+ ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+ : "bg-muted text-muted-foreground";
+ return { text: `${text} · ${fmtDate(due)}`, cls };
 }
 
 function parseMarks(raw: string): number | null {
@@ -257,12 +248,6 @@ function computeGrade(m: number): string {
  return "F";
 }
 
-function gradeCls(m: number): string {
- if (m >= 14) return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
- if (m >= 10) return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
- return "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300";
-}
-
 export function TeacherPanel({
  tab,
  onTabChange,
@@ -276,6 +261,7 @@ export function TeacherPanel({
 
  /* ---------------- overview data ---------------- */
  const [loading, setLoading] = useState(true);
+ const [overviewError, setOverviewError] = useState<string | null>(null);
  const [schedules, setSchedules] = useState<ScheduleDTO[]>([]);
  const [courses, setCourses] = useState<CourseDTO[]>([]);
  const [changes, setChanges] = useState<ScheduleChangeDTO[]>([]);
@@ -364,7 +350,7 @@ export function TeacherPanel({
  semester: number;
  }
  const [attScheduleId, setAttScheduleId] = useState("");
- const [attDate, setAttDate] = useState(todayISO());
+ const [attDate, setAttDate] = useState(bdTodayISO());
  const [attSchedule, setAttSchedule] = useState<AttScheduleInfo | null>(null);
  const [attStudents, setAttStudents] = useState<StudentRow[]>([]);
  const [attStatuses, setAttStatuses] = useState<Record<string, string>>({});
@@ -584,7 +570,11 @@ export function TeacherPanel({
  myStudents: 0,
  }
  );
+ setOverviewError(null);
  } catch (err) {
+ // Surfaced as a retryable error card (not the misleading "No classes
+ // scheduled" empty states) — see the overviewError render below.
+ setOverviewError(errMsg(err));
  toast({ title: "Failed to load dashboard", description: errMsg(err), variant: "destructive" });
  } finally {
  setLoading(false);
@@ -627,7 +617,7 @@ export function TeacherPanel({
  );
 
  const today = bdWeekday();
- const todayStr = todayISO();
+ const todayStr = bdTodayISO();
  const todays = useMemo(
  () =>
  schedules
@@ -657,7 +647,7 @@ export function TeacherPanel({
  const [ccDay, setCcDay] = useState("");
  const [ccSlot, setCcSlot] = useState("keep"); // "keep" | timeSlotId
  const [ccRoom, setCcRoom] = useState("keep"); // "keep" | roomId
- const [ccDate, setCcDate] = useState(() => todayISO());
+ const [ccDate, setCcDate] = useState(() => bdTodayISO());
  const [ccReason, setCcReason] = useState("");
  const [ccSubmitting, setCcSubmitting] = useState(false);
 
@@ -863,7 +853,7 @@ export function TeacherPanel({
  if (editingId) {
  const { courseId: _ignored, ...updateBody } = body;
  await apiPut<{ assignment: AssignmentDTO }>(`/api/teacher/assignments?id=${encodeURIComponent(editingId)}`, updateBody);
- toast({ title: "Assignment updated", description: "Students were notified of the change." });
+ toast({ title: "Assignment updated" });
  } else {
  const data = await apiPost<{ assignment: AssignmentDTO; notified: number }>("/api/teacher/assignments", body);
  toast({ title: "Assignment published", description: `Assignment published to ${data.notified ?? 0} students.` });
@@ -988,6 +978,27 @@ export function TeacherPanel({
  if (!mounted) return <PanelLoader label="Preparing your cockpit…" />;
  if (loading) return <PanelLoader label="Loading your dashboard…" />;
 
+ /* Overview failed: everything below would render misleading empty
+ states ("No classes scheduled"), so stop here with a retryable
+ error card in the panel's existing card language. */
+ if (overviewError) {
+ return (
+ <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+ <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-rose-200 bg-rose-50/60 p-10 text-center dark:border-rose-900/60 dark:bg-rose-950/20">
+ <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-100 dark:bg-rose-950/50">
+ <TriangleAlert className="h-6 w-6 text-rose-600 dark:text-rose-300" />
+ </div>
+ <p className="text-sm font-bold text-rose-800 dark:text-rose-200">Couldn&apos;t load your dashboard</p>
+ <p className="max-w-sm text-xs text-rose-700/90 dark:text-rose-300/80">{overviewError}</p>
+ <Button variant="outline" size="sm" className="mt-1" onClick={() => void loadOverview()}>
+ <RefreshCw className="h-3.5 w-3.5" />
+ Retry
+ </Button>
+ </div>
+ </div>
+ );
+ }
+
  const teacherName = user?.fullName ?? "Teacher";
  const departmentName = user?.departmentName ?? null;
  const longToday = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
@@ -1044,6 +1055,7 @@ export function TeacherPanel({
  {/* lg+: the sidebar rail owns section navigation — the in-page
     strip is removed so nothing floats in the middle of the page.
     Below lg: one compact scrollable pill row. */}
+ <div className="relative">
  <TabsList className={MOBILE_TABS_LIST}>
  {DASHBOARD_SECTIONS.teacher.map((s) => (
  <TabsTrigger key={s.value} value={s.value} className={MOBILE_TAB_TRIGGER}>
@@ -1051,6 +1063,8 @@ export function TeacherPanel({
  </TabsTrigger>
  ))}
  </TabsList>
+ <div className={MOBILE_TABS_FADE} />
+ </div>
 
  {/* ============ MY SCHEDULE ============ */}
  <TabsContent value="schedule" className="mt-4 space-y-6">
@@ -1284,7 +1298,7 @@ export function TeacherPanel({
  id="att-date"
  type="date"
  value={attDate}
- max={todayISO()}
+ max={bdTodayISO()}
  onChange={(e) => setAttDate(e.target.value)}
  />
  </div>
@@ -1756,7 +1770,7 @@ export function TeacherPanel({
  <Button
  variant="ghost"
  size="icon"
- className="h-8 w-8 text-[#2D4F35] hover:bg-green/10 dark:text-[#7FB08F]"
+ className="h-9 w-9 sm:h-8 sm:w-8 text-[#2D4F35] hover:bg-green/10 dark:text-[#7FB08F]"
  onClick={() => openAssignmentDialog(a)}
  aria-label={`Edit assignment ${a.title}`}
  >
@@ -1765,7 +1779,7 @@ export function TeacherPanel({
  <Button
  variant="ghost"
  size="icon"
- className="h-8 w-8 shrink-0 text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+ className="h-9 w-9 sm:h-8 sm:w-8 shrink-0 text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
  onClick={() => setDeleteId(a.id)}
  aria-label={`Delete assignment ${a.title}`}
  >
@@ -1991,11 +2005,7 @@ export function TeacherPanel({
  {r.grade && (
  <Badge
  variant="secondary"
- className={cn(
- r.grade.startsWith("A") || r.grade === "B"
- ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
- : "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
- )}
+ className={letterTone(r.grade)}
  >
  {r.grade}
  </Badge>
@@ -2058,7 +2068,7 @@ export function TeacherPanel({
  {num === null ? (
  <span className="text-xs text-muted-foreground">—</span>
  ) : (
- <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold", gradeCls(num))}>
+ <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold", letterTone(computeGrade(num)))}>
  {computeGrade(num)}
  </span>
  )}
@@ -2207,7 +2217,7 @@ export function TeacherPanel({
  variant="ghost"
  size="icon"
  aria-label={`Delete notice ${n.title}`}
- className="h-8 w-8 shrink-0 text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+ className="h-9 w-9 sm:h-8 sm:w-8 shrink-0 text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
  onClick={() => setNoticeDeleteId(n.id)}
  >
  <Trash2 className="h-4 w-4" />

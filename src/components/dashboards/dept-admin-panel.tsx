@@ -21,7 +21,6 @@ import {
  Clock,
  DoorOpen,
  GraduationCap,
- LayoutDashboard,
  LayoutGrid,
  Loader2,
  Megaphone,
@@ -72,6 +71,7 @@ import {
  GRADIENT_BTN,
  GRADIENT_ICON,
  MOBILE_TABS_LIST,
+ MOBILE_TABS_FADE,
  MOBILE_TAB_TRIGGER,
  PanelLoader,
  SectionCard,
@@ -88,6 +88,7 @@ import {
 } from "@/components/dashboards/analytics-charts";
 import { timeAgo } from "@/components/shared/notification-bell";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
+import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import type {
@@ -271,32 +272,13 @@ const ROOM_TYPES: Array<{ value: RoomDTO["type"]; label: string }> = [
  { value: "seminar", label: "Seminar" },
 ];
 
-const TABS = [
- { value: "overview", label: "Overview", icon: LayoutDashboard },
- { value: "analytics", label: "Analytics", icon: BarChart3 },
- { value: "schedule", label: "Schedule", icon: CalendarDays },
- { value: "teachers", label: "Teachers", icon: GraduationCap },
- { value: "students", label: "Students", icon: Users },
- { value: "courses", label: "Courses", icon: BookOpen },
- { value: "programs", label: "Programs", icon: LayoutGrid },
- { value: "rooms", label: "Rooms & Slots", icon: DoorOpen },
- { value: "notices", label: "Notices", icon: Megaphone },
-] as const;
+/* Tab sections come from DASHBOARD_SECTIONS.dept_admin (dashboard-shared) —
+   the shared rail + this panel's pill strip must stay identical. */
 
 /* ---------------- helpers ---------------- */
 
 function errMsg(err: unknown): string {
  return err instanceof Error ? err.message : "Something went wrong";
-}
-
-function initials(name: string): string {
- const chars = name
- .trim()
- .split(/\s+/)
- .map((p) => p.charAt(0))
- .join("")
- .slice(0, 2);
- return (chars || "?").toUpperCase();
 }
 
 function programShortOf(s: StudentRow): string {
@@ -479,7 +461,7 @@ export function DeptAdminPanel({
     clicks sync back to the URL via onTabChange. */
  const [localTab, setLocalTab] = useState("overview");
  const activeTab =
- tab && TABS.some((t) => t.value === tab) ? tab : localTab;
+ tab && DASHBOARD_SECTIONS.dept_admin.some((t) => t.value === tab) ? tab : localTab;
  const handleTabChange = (v: string) => {
  setLocalTab(v);
  onTabChange?.(v);
@@ -499,7 +481,7 @@ export function DeptAdminPanel({
  const [analytics, setAnalytics] = useState<DeptAnalytics | null>(null);
  // Analytics load failure vs "still loading" — without this the tab spins forever
  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
- const [analyticsRetrying, setAnalyticsRetrying] = useState(false);
+ const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
  /* -------- dialogs -------- */
  const [teacherOpen, setTeacherOpen] = useState(false);
@@ -537,12 +519,9 @@ export function DeptAdminPanel({
  if (!silent) setLoading(true);
  try {
  const q = `?departmentId=${departmentId}`;
- const [ov, st, anRes] = await Promise.all([
+ const [ov, st] = await Promise.all([
  apiGet<ManageOverview>(`/api/manage/overview${q}`),
  apiGet<DeptStatsDTO>(`/api/manage/stats${q}`),
- apiGet<DeptAnalytics>(`/api/manage/analytics${q}`)
- .then((v) => ({ ok: true as const, v }))
- .catch((e: unknown) => ({ ok: false as const, e })),
  ]);
  setTeachers(ov.teachers ?? []);
  setStudents(ov.students ?? []);
@@ -553,8 +532,6 @@ export function DeptAdminPanel({
  setNotices(ov.notices ?? []);
  setSchedules(ov.schedules ?? []);
  setStats(st ?? null);
- setAnalytics(anRes.ok ? anRes.v : null);
- setAnalyticsError(anRes.ok ? null : errMsg(anRes.e));
  } catch (err) {
  toast({
  title: "Failed to load department data",
@@ -572,16 +549,30 @@ export function DeptAdminPanel({
  void load();
  }, [load]);
 
- /** Silent reload triggered from the analytics error card. */
- async function retryAnalytics() {
- if (analyticsRetrying) return;
- setAnalyticsRetrying(true);
+ /* Analytics is lazy — fetched the first time the Analytics tab is
+    activated (pill click or deep link), never on panel mount. */
+ const loadAnalytics = useCallback(async () => {
+ if (!departmentId || analyticsLoading) return;
+ setAnalyticsLoading(true);
  try {
- await load(true);
+ const v = await apiGet<DeptAnalytics>(
+ `/api/manage/analytics?departmentId=${departmentId}`
+ );
+ setAnalytics(v);
+ setAnalyticsError(null);
+ } catch (err) {
+ setAnalytics(null);
+ setAnalyticsError(errMsg(err));
  } finally {
- setAnalyticsRetrying(false);
+ setAnalyticsLoading(false);
  }
+ }, [departmentId, analyticsLoading]);
+
+ useEffect(() => {
+ if (activeTab === "analytics" && !analytics && !analyticsLoading) {
+ void loadAnalytics();
  }
+ }, [activeTab, analytics, analyticsLoading, loadAnalytics]);
 
  /* ---------------- generic save / delete ---------------- */
 
@@ -840,14 +831,17 @@ export function DeptAdminPanel({
  {/* ---------- tabs ---------- */}
  <Tabs value={activeTab} onValueChange={handleTabChange} className="gap-4">
  {/* lg+: sidebar rail owns sections; below lg: one pill row */}
+ <div className="relative">
  <TabsList className={MOBILE_TABS_LIST}>
- {TABS.map((t) => (
+ {DASHBOARD_SECTIONS.dept_admin.map((t) => (
  <TabsTrigger key={t.value} value={t.value} className={cn(MOBILE_TAB_TRIGGER)}>
  <t.icon className="h-3.5 w-3.5" />
  <span>{t.label}</span>
  </TabsTrigger>
  ))}
  </TabsList>
+ <div className={MOBILE_TABS_FADE} />
+ </div>
 
  {/* ===== Overview ===== */}
  <TabsContent value="overview" className="space-y-4">
@@ -944,10 +938,10 @@ export function DeptAdminPanel({
  <p>{analyticsError}</p>
  <Button
  className={cn("h-10", GRADIENT_BTN)}
- onClick={() => void retryAnalytics()}
- disabled={analyticsRetrying}
+ onClick={() => void loadAnalytics()}
+ disabled={analyticsLoading}
  >
- {analyticsRetrying && <Loader2 className="h-4 w-4 animate-spin" />}
+ {analyticsLoading && <Loader2 className="h-4 w-4 animate-spin" />}
  Retry
  </Button>
  </div>

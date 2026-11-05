@@ -25,6 +25,16 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { apiGet, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -128,6 +138,7 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
 
   /* ---------- actions ---------- */
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<DirectoryUser | null>(null);
   const [pwTarget, setPwTarget] = useState<DirectoryUser | null>(null);
   const [pwValue, setPwValue] = useState("");
   const [pwSaving, setPwSaving] = useState(false);
@@ -155,10 +166,20 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
     [load]
   );
 
+  /* Deactivation is destructive (instant lockout) — routed through an
+     AlertDialog instead of firing straight from the dropdown. */
+  const confirmDeactivate = useCallback(async () => {
+    if (!deactivateTarget) return;
+    const target = deactivateTarget;
+    await patchUser(target, { isActive: false }, "Account deactivated");
+    setDeactivateTarget(null);
+  }, [deactivateTarget, patchUser]);
+  const deactivating = deactivateTarget !== null && busyId === deactivateTarget.id;
+
   const submitPassword = useCallback(async () => {
     if (!pwTarget) return;
-    if (pwValue.length < 4) {
-      toast({ title: "Password must be at least 4 characters", variant: "destructive" });
+    if (pwValue.length < 6) {
+      toast({ title: "Password must be at least 6 characters", variant: "destructive" });
       return;
     }
     setPwSaving(true);
@@ -350,13 +371,14 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-56">
                           <DropdownMenuItem
-                            onClick={() =>
-                              void patchUser(
-                                u,
-                                { isActive: !u.isActive },
-                                u.isActive ? "Account deactivated" : "Account activated"
-                              )
-                            }
+                            onClick={() => {
+                              if (u.isActive) {
+                                // Deactivate needs confirmation; activation is safe.
+                                setDeactivateTarget(u);
+                              } else {
+                                void patchUser(u, { isActive: true }, "Account activated");
+                              }
+                            }}
                           >
                             <Power className="h-4 w-4" />
                             {u.isActive ? "Deactivate account" : "Activate account"}
@@ -395,6 +417,32 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
         </div>
       )}
 
+      {/* deactivate confirmation — destructive, not undoable from the row */}
+      <AlertDialog open={deactivateTarget !== null} onOpenChange={(o) => { if (!o) setDeactivateTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate this account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The user will immediately lose access. You can reactivate later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deactivating}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              disabled={deactivating}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDeactivate();
+              }}
+            >
+              {deactivating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+              Deactivate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* reset password dialog */}
       <Dialog open={!!pwTarget} onOpenChange={(o) => !o && setPwTarget(null)}>
         <DialogContent className="sm:max-w-sm">
@@ -412,7 +460,7 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
               type="text"
               value={pwValue}
               onChange={(e) => setPwValue(e.target.value)}
-              placeholder="At least 4 characters"
+              placeholder="At least 6 characters"
               autoFocus
             />
           </div>

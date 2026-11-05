@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Check, X, Loader2, Sparkles, Building2, Users, GraduationCap, Lock, LayoutDashboard, ArrowLeft } from "lucide-react";
 import { apiGet } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
+import { GRADIENT_BTN } from "@/components/dashboards/dashboard-shared";
 import type { PlanDTO } from "@/types";
 import { useAuthStore } from "@/store/auth-store";
 import { canSeePricing } from "@/lib/role-access";
@@ -32,6 +34,9 @@ export function PricingView({ navigate }: PricingViewProps) {
  const [loading, setLoading] = useState(true);
  const [error, setError] = useState<string | null>(null);
  const [yearly, setYearly] = useState(false);
+ /* bumped by the Retry button to re-run the load in place (no page reload,
+    so the Monthly/Yearly toggle survives) */
+ const [retryTick, setRetryTick] = useState(0);
 
  /* Students & teachers never need plans — skip the fetch entirely. */
  const pricingAllowed = canSeePricing(user);
@@ -43,6 +48,7 @@ export function PricingView({ navigate }: PricingViewProps) {
  .then((d) => {
  if (!alive) return;
  setPlans(d.plans);
+ setError(null);
  setLoading(false);
  })
  .catch((e) => {
@@ -53,7 +59,7 @@ export function PricingView({ navigate }: PricingViewProps) {
  return () => {
  alive = false;
  };
- }, [pricingAllowed]);
+ }, [pricingAllowed, retryTick]);
 
  /* Role guard — subscription is a university decision. Students and
     teachers land here only by typing the URL; show a friendly
@@ -81,7 +87,7 @@ export function PricingView({ navigate }: PricingViewProps) {
      <div className="mt-6 flex flex-col gap-2">
       <Button
        onClick={() => navigate("dashboard")}
-       className="h-11 rounded-xl bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25"
+       className={cn("h-11 rounded-xl", GRADIENT_BTN)}
       >
        <LayoutDashboard className="w-4 h-4 mr-2" /> Go to Dashboard
       </Button>
@@ -94,7 +100,17 @@ export function PricingView({ navigate }: PricingViewProps) {
   );
  }
 
- const recommendedSlug = "standard";
+ const popularSlug =
+ plans.find((p) => p.slug === "standard")?.slug ??
+ plans.find((p) => (p.priceMonthly ?? 0) > 0)?.slug ??
+ plans[0]?.slug;
+ /* "Starter" = cheapest plan: prefer a free (৳0) plan, else the lowest-priced. */
+ const starterSlug =
+ plans.filter((p) => (p.priceMonthly ?? 0) === 0)[0]?.slug ??
+ plans.reduce<PlanDTO | null>(
+ (min, p) => (min == null || (p.priceMonthly ?? 0) < (min.priceMonthly ?? 0) ? p : min),
+ null,
+ )?.slug;
 
  return (
  <div className="py-6 sm:py-10 max-w-6xl mx-auto">
@@ -121,6 +137,8 @@ export function PricingView({ navigate }: PricingViewProps) {
  {/* Billing toggle */}
  <div className="inline-flex items-center gap-1 mt-5 bg-secondary/70 rounded-full p-1 border border-border ">
  <button
+ type="button"
+ aria-pressed={!yearly}
  onClick={() => setYearly(false)}
  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
  !yearly
@@ -131,6 +149,8 @@ export function PricingView({ navigate }: PricingViewProps) {
  Monthly
  </button>
  <button
+ type="button"
+ aria-pressed={yearly}
  onClick={() => setYearly(true)}
  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
  yearly
@@ -155,7 +175,7 @@ export function PricingView({ navigate }: PricingViewProps) {
  <Card className="max-w-md mx-auto rounded-3xl">
  <CardContent className="pt-6 text-center">
  <p className="text-sm text-muted-foreground mb-4">{error}</p>
- <Button onClick={() => window.location.reload()}>Retry</Button>
+ <Button onClick={() => setRetryTick((t) => t + 1)}>Retry</Button>
  </CardContent>
  </Card>
  )}
@@ -176,7 +196,7 @@ export function PricingView({ navigate }: PricingViewProps) {
  {!loading && !error && plans.length > 0 && (
  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch">
  {plans.map((plan, idx) => {
- const isRecommended = plan.slug === recommendedSlug;
+ const isRecommended = plan.slug === popularSlug;
  const price = yearly ? plan.priceYearly : plan.priceMonthly;
  return (
  <motion.div
@@ -207,7 +227,7 @@ export function PricingView({ navigate }: PricingViewProps) {
  <CardHeader className="pb-3">
  <div className="flex items-center justify-between">
  <h3 className="font-bold text-lg">{plan.name}</h3>
- {plan.slug === "free" && (
+ {plan.slug === starterSlug && (
  <Badge variant="secondary">Starter</Badge>
  )}
  </div>
@@ -248,7 +268,7 @@ export function PricingView({ navigate }: PricingViewProps) {
  {user ? (
  /* Logged-in (staff) visitors don't pick plans here — send them to their dashboard instead */
  <Button
- className="w-full h-11 rounded-xl bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25"
+ className={cn("w-full h-11 rounded-xl", GRADIENT_BTN)}
  onClick={() => navigate("dashboard")}
  >
  <LayoutDashboard className="w-4 h-4 mr-2" /> Go to Dashboard
@@ -257,12 +277,12 @@ export function PricingView({ navigate }: PricingViewProps) {
  <Button
  className={`w-full h-11 rounded-xl ${
  isRecommended
- ? "bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25"
+ ? GRADIENT_BTN
  : "bg-green/10 text-green hover:bg-green/20"
  }`}
  onClick={() => navigate("login")}
  >
- {plan.slug === "free" ? "Start Free" : "Request Access"}
+ {plan.slug === starterSlug ? "Start Free" : "Request Access"}
  </Button>
  )}
  </CardFooter>

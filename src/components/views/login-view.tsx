@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "@/store/auth-store";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { GRADIENT_BTN } from "@/components/dashboards/dashboard-shared";
 import type { SessionUser, UniversityDTO } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,7 +87,9 @@ export function LoginView({ navigate }: LoginViewProps) {
  email: email.trim(),
  password,
  });
- setUser(res.user as unknown as SessionUser);
+ /* res.user is already typed as SessionUser via the apiPost generic —
+    the value passes to the store (SessionUser | null) with no cast. */
+ setUser(res.user);
  navigate("dashboard");
  } catch (err) {
  setError(err instanceof Error ? err.message : "Login failed");
@@ -108,7 +111,7 @@ export function LoginView({ navigate }: LoginViewProps) {
  rollNumber: roll.trim(),
  }
  );
- setUser(res.user as unknown as SessionUser);
+ setUser(res.user);
  navigate("dashboard");
  } catch (err) {
  setError(err instanceof Error ? err.message : "Login failed");
@@ -135,7 +138,7 @@ export function LoginView({ navigate }: LoginViewProps) {
  <div className="flex flex-col gap-2">
  <Button
  onClick={() => navigate("dashboard")}
- className="bg-[#2D4F35] hover:bg-[#3A6B47] text-white"
+ className={GRADIENT_BTN}
  >
  Go to Dashboard
  </Button>
@@ -172,7 +175,7 @@ export function LoginView({ navigate }: LoginViewProps) {
  <div className="h-1.5 bg-[#FFE01B]" />
  <div className="p-5 sm:p-6">
  {error && (
- <div className="mb-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+ <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-400">
  {error}
  </div>
  )}
@@ -235,7 +238,7 @@ export function LoginView({ navigate }: LoginViewProps) {
  <Button
  type="submit"
  disabled={staffLoading}
- className="w-full h-11 bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25"
+ className={`w-full h-11 ${GRADIENT_BTN}`}
  >
  {staffLoading ? (
  <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -254,12 +257,19 @@ export function LoginView({ navigate }: LoginViewProps) {
  <TabsContent value="student">
  <form onSubmit={studentLogin} className="space-y-4">
  <div className="space-y-2">
- <Label>University</Label>
+ <Label htmlFor="university-select">University</Label>
  <Select value={uniSlug} onValueChange={setUniSlug} required>
- <SelectTrigger className="h-11">
+ {uniLoading ? (
+ <SelectTrigger id="university-select" className="h-11" disabled aria-busy="true">
+ <Loader2 className="w-4 h-4 mr-2 animate-spin text-muted-foreground" />
+ <span className="text-muted-foreground">Loading universities…</span>
+ </SelectTrigger>
+ ) : (
+ <SelectTrigger id="university-select" className="h-11">
  <Building2 className="w-4 h-4 mr-2 text-muted-foreground" />
  <SelectValue placeholder="Select your university" />
  </SelectTrigger>
+ )}
  <SelectContent>
  {universities.map((u) => (
  <SelectItem key={u.id} value={u.slug}>
@@ -319,7 +329,7 @@ export function LoginView({ navigate }: LoginViewProps) {
  <Button
  type="submit"
  disabled={studentLoading || !uniSlug}
- className="w-full h-11 bg-[#2D4F35] hover:bg-[#3A6B47] text-white shadow-md shadow-[#2D4F35]/25"
+ className={`w-full h-11 ${GRADIENT_BTN}`}
  >
  {studentLoading ? (
  <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -339,7 +349,7 @@ export function LoginView({ navigate }: LoginViewProps) {
 
  <div className="mt-5 text-center">
  <Badge variant="outline" className="text-xs border-border text-green">
- 🔒 Sessions are encrypted & httpOnly-secured
+ <Lock className="w-3 h-3 mr-1" /> Sessions are encrypted &amp; httpOnly-secured
  </Badge>
  </div>
  </>

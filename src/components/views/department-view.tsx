@@ -55,6 +55,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiGet } from "@/lib/api-client";
+import { bdWeekday, parseDateOnly } from "@/lib/date-bd";
+import { initials, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
  DAYS_OF_WEEK,
@@ -111,16 +113,8 @@ interface Selection {
 // ------------------------------------------------------------------
 // Constants & helpers
 // ------------------------------------------------------------------
-/** JS getDay() → Bangladesh class week (Saturday–Thursday, Friday = weekend) */
-const JS_DAY_TO_DOW: Record<number, DayOfWeek | "friday"> = {
- 6: "saturday",
- 0: "sunday",
- 1: "monday",
- 2: "tuesday",
- 3: "wednesday",
- 4: "thursday",
- 5: "friday",
-};
+/* "Today" comes from bdWeekday() (Asia/Dhaka clock) — a lowercase string
+   matching Schedule.dayOfWeek values; "friday" is the BD weekend. */
 
 const TODAY_LABELS: Record<DayOfWeek | "friday", string> = {
  ...DAY_LABELS,
@@ -244,7 +238,8 @@ function describeChange(c: ScheduleChangeDTO): string {
 }
 
 function fmtDate(d: string): string {
- const dt = new Date(`${d}T00:00:00`);
+ /* parseDateOnly keeps the calendar day stable across timezones */
+ const dt = parseDateOnly(d);
  if (Number.isNaN(dt.getTime())) return d;
  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
@@ -253,30 +248,6 @@ function fmtDateTime(iso: string): string {
  const dt = new Date(iso);
  if (Number.isNaN(dt.getTime())) return iso;
  return dt.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
-}
-
-function timeAgo(iso: string): string {
- const t = new Date(iso).getTime();
- if (Number.isNaN(t)) return "";
- const mins = Math.max(0, Math.floor((Date.now() - t) / 60000));
- if (mins < 1) return "Just now";
- if (mins < 60) return `${mins} min ago`;
- const hours = Math.floor(mins / 60);
- if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
- const days = Math.floor(hours / 24);
- if (days < 30) return `${days} day${days > 1 ? "s" : ""} ago`;
- const months = Math.floor(days / 30);
- return `${months} month${months > 1 ? "s" : ""} ago`;
-}
-
-function teacherInitials(name: string): string {
- const words = name
- .trim()
- .split(/\s+/)
- .filter((w) => w.length > 1 && !w.includes("."));
- const pick = (words.length > 0 ? words : name.trim().split(/\s+/)).slice(0, 2);
- const letters = pick.map((w) => w[0]).join("");
- return letters.toUpperCase() || "T";
 }
 
 const NOTICE_CATEGORIES: Record<
@@ -747,8 +718,8 @@ export function DepartmentView({
  return grouped;
  }, [schedules]);
 
- // ---- today ----
- const todayDow = JS_DAY_TO_DOW[new Date().getDay()] ?? "friday";
+ // ---- today (Asia/Dhaka clock — never the device's local timezone) ----
+ const todayDow = bdWeekday() as DayOfWeek | "friday";
  const todaySchedules =
  todayDow !== "friday" ? byDay[todayDow] ?? [] : [];
  const todayCancelled = todaySchedules.filter(
@@ -974,12 +945,19 @@ export function DepartmentView({
  {todayDow === "friday" || todaySchedules.length === 0 ? (
  <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 ">
  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#2D4F35]/12 to-[#4A7C58]/12 text-xl dark:from-[#4A7C58]/22 dark:to-[#4A7C58]/22">
- 🎉
+ <PartyPopper className="h-6 w-6" aria-hidden />
  </div>
  <div className="min-w-0">
  <p className="text-sm font-bold">
  Today: {TODAY_LABELS[todayDow]}
- {todayDow !== "friday" ? " — No classes today 🎉" : " — Weekend"}
+ {todayDow !== "friday" ? (
+ <>
+ {" — No classes today "}
+ <PartyPopper className="inline h-4 w-4 align-[-2px]" aria-hidden />
+ </>
+ ) : (
+ " — Weekend"
+ )}
  </p>
  <p className="text-xs text-muted-foreground">
  Enjoy the day off — check the weekly routine below.
@@ -1395,7 +1373,7 @@ export function DepartmentView({
  <AvatarImage src={t.photoURL} alt={t.fullName} />
  ) : null}
  <AvatarFallback className="bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-sm font-bold text-white">
- {teacherInitials(t.fullName)}
+ {initials(t.fullName)}
  </AvatarFallback>
  </Avatar>
  <div className="min-w-0 flex-1">

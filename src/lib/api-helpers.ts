@@ -42,6 +42,12 @@ export async function handle<T>(fn: () => Promise<T>) {
         { status: 404 }
       );
     }
+    if (code === "P2003") {
+      return NextResponse.json(
+        { success: false, error: "That record references something that does not exist (invalid selection)" },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json(
       { success: false, error: "Something went wrong. Please try again." },
@@ -77,7 +83,7 @@ export function rateLimit(
   const now = Date.now();
 
   // Opportunistic cleanup keeps the map bounded on abusive traffic.
-  if (rateBuckets.size > 500) {
+  if (rateBuckets.size > 200) {
     for (const [k, v] of rateBuckets) {
       if (v.resetAt <= now) rateBuckets.delete(k);
     }
@@ -94,9 +100,15 @@ export function rateLimit(
   }
 }
 
-/** Best-effort client IP: first x-forwarded-for hop, else "unknown". */
+/**
+ * Best-effort client IP. The FIRST x-forwarded-for hop is client-supplied
+ * and trivially spoofable (rotating it defeats the limiter); the LAST hop
+ * is the one appended by the closest trusted proxy, so prefer that.
+ */
 export function getClientIp(req: NextRequest): string {
+  const real = req.headers.get("x-real-ip");
+  if (real?.trim()) return real.trim();
   const fwd = req.headers.get("x-forwarded-for");
-  const first = fwd?.split(",")[0]?.trim();
-  return first || "unknown";
+  const hops = fwd?.split(",").map((h) => h.trim()).filter(Boolean) ?? [];
+  return hops[hops.length - 1] || "unknown";
 }

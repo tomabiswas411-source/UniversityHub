@@ -33,6 +33,16 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiGet, apiPost } from "@/lib/api-client";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { EmptyState, SectionCard } from "@/components/dashboards/dashboard-shared";
 
 interface SystemResponse {
@@ -78,6 +88,7 @@ export function SuperAdminSystemCard() {
   const [data, setData] = useState<SystemResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [sweeping, setSweeping] = useState(false);
+  const [sweepOpen, setSweepOpen] = useState(false);
   const [lastSweep, setLastSweep] = useState<CleanupResult | null>(null);
 
   const load = useCallback(async () => {
@@ -129,6 +140,12 @@ export function SuperAdminSystemCard() {
     }
   }, [load]);
 
+  /* Bulk deletion — confirmed via AlertDialog before it touches rows. */
+  const confirmSweep = useCallback(async () => {
+    await runSweep();
+    setSweepOpen(false);
+  }, [runSweep]);
+
   return (
     <div className="space-y-4">
       <SectionCard
@@ -165,7 +182,7 @@ export function SuperAdminSystemCard() {
           <EmptyState
             icon={Activity}
             title="Stats unavailable"
-            hint="Leave this tab and come back to retry."
+            hint="Use the Refresh button above to try again."
           />
         ) : (
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
@@ -208,7 +225,7 @@ export function SuperAdminSystemCard() {
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={() => void runSweep()}
+                onClick={() => setSweepOpen(true)}
                 disabled={sweeping}
                 className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#2D4F35] px-4 text-sm font-semibold text-white shadow-md shadow-[#2D4F35]/25 transition-colors hover:bg-[#3A6B47] disabled:opacity-60"
               >
@@ -222,7 +239,7 @@ export function SuperAdminSystemCard() {
 
             {lastSweep && (
               <div className="rounded-xl border border-dashed p-3 text-xs">
-                <p className="mb-1.5 font-bold">Last manual sweep ({lastSweep.ranAt})</p>
+                <p className="mb-1.5 font-bold">Last manual sweep ({fmtSweepTime(lastSweep.ranAt)})</p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground sm:grid-cols-4">
                   <span>QR sessions: <b className="text-foreground">{lastSweep.attendanceSessions}</b></span>
                   <span>Notifications: <b className="text-foreground">{lastSweep.notificationsRead + lastSweep.notificationsUnread}</b></span>
@@ -247,8 +264,43 @@ export function SuperAdminSystemCard() {
           <li>• <b className="text-foreground">Cost guardrails</b> — every list endpoint is bounded; heavy grids load once per open; the retention sweep keeps Turso rows minimal.</li>
         </ul>
       </SectionCard>
+
+      {/* retention cleanup confirmation — bulk purge is destructive-ish */}
+      <AlertDialog open={sweepOpen} onOpenChange={setSweepOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Run retention cleanup?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This purges expired QR attendance sessions, read notifications, old notices and ended
+              calendar events, per the retention rules above. Permanent records (attendance,
+              results, users, routines) are never touched.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={sweeping}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[#2D4F35] text-white hover:bg-[#3A6B47]"
+              disabled={sweeping}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmSweep();
+              }}
+            >
+              {sweeping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Run cleanup
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
+}
+
+function fmtSweepTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
 }
 
 function HealthTile({

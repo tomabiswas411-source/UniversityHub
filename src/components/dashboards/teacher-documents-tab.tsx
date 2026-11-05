@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiGet } from "@/lib/api-client";
+import { bdTodayISO } from "@/lib/date-bd";
 import { GRADIENT_BTN, SectionCard } from "@/components/dashboards/dashboard-shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,10 +61,8 @@ export function downloadCsv(filename: string, csv: string) {
  URL.revokeObjectURL(url);
 }
 
-function todayISO(): string {
- const now = new Date();
- return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
+/* "Today" uses the Asia/Dhaka clock (bdTodayISO) so the day-sheet date
+   picker never defaults to the wrong calendar day near midnight. */
 
 type IconType = typeof FileText;
 
@@ -154,7 +153,7 @@ export function TeacherDocumentsTab({
  const studentCourseId = scope.studentCourseId || courses[0]?.id || "";
  const matrixScheduleId = scope.matrixScheduleId || schedules[0]?.id || "";
  const dayScheduleId = scope.dayScheduleId || schedules[0]?.id || "";
- const dayDate = scope.dayDate || todayISO();
+ const dayDate = scope.dayDate || bdTodayISO();
  const resultsCourseId = scope.resultsCourseId || courses[0]?.id || "";
 
  return (
@@ -257,7 +256,7 @@ export function TeacherDocumentsTab({
  id="doc-day-date"
  type="date"
  value={dayDate}
- max={todayISO()}
+ max={bdTodayISO()}
  onChange={(e) => onScopeChange({ dayDate: e.target.value })}
  className="h-9"
  />

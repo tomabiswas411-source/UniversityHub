@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { assertDepartmentAccess } from "@/lib/auth";
 import { percentToGrade, resultPct } from "@/lib/grades";
-import { bdTodayISO, bdWeekday } from "@/lib/date-bd";
+import { bdTodayISO, bdWeekday, bdDaysAgoISO, weekdayOfDate } from "@/lib/date-bd";
+import { windowsOverlap } from "@/lib/time-utils";
 
 /**
  * Teacher actions API.
@@ -54,6 +55,28 @@ const CHANGE_TYPES = [
 ] as const;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const VALID_EXAM_TYPES = new Set(["ct1", "ct2", "midterm", "final", "assignment"]);
+const VALID_NOTICE_CATEGORIES = new Set([
+ "academic", "exam", "event", "general", "schedule_change", "assignment",
+]);
+
+/** Fan-out writes the documented Notification.type set (schema comment). */
+const CHANGE_NOTIF_TYPE: Record<string, string> = {
+ cancelled: "class_cancelled",
+ rescheduled: "class_rescheduled",
+ time_changed: "class_rescheduled",
+ room_changed: "room_changed",
+ extra_class: "extra_class",
+};
+
+/** Marks bounds: accept a custom scale (default 20) but keep it sane. */
+function parseMaxMarks(v: unknown): number {
+ const n = Number(v);
+ if (!Number.isFinite(n) || n < 1 || n > 200)
+ throw new ApiError(400, "Max marks must be between 1 and 200");
+ return Math.round(n);
+}
 
 export async function GET(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
@@ -542,6 +565,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  },
  include: { course: { select: { code: true, name: true } } },
  orderBy: { createdAt: "desc" },
+ take: 300,
  });
  return { assignments };
  }
@@ -561,6 +585,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  },
  },
  orderBy: { createdAt: "desc" },
+ take: 2500,
  });
  const students = await db.user.findMany({
  where: {
@@ -1001,12 +1026,62 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (classDate > todayStr()) {
  throw new ApiError(400, "Attendance cannot be marked for a future date");
  }
+ // REALITY CHECK (age): anything older than a week is history, not a
+ // missed register — retro-marking covers "I forgot yesterday", not
+ // last month. Older corrections go through the dept admin.
+ if (classDate < bdDaysAgoISO(7)) {
+ throw new ApiError(
+ 400,
+ "Attendance can only be filed for the last 7 days — contact your department admin for older records"
+ );
+ }
  const schedule = await db.schedule.findUnique({ where: { id: scheduleId } });
  if (!schedule) throw new ApiError(404, "Schedule not found");
  if (session.role === "teacher" && schedule.teacherId !== session.userId) {
  throw new ApiError(403, "You can only take attendance for your own classes");
  }
  assertDepartmentAccess(session, schedule.departmentId);
+
+ // REALITY CHECK (cancelled): a class the department already cancelled
+ // for that date cannot have a register filed against it.
+ const cancelled = await db.scheduleChange.findFirst({
+ where: {
+ scheduleId,
+ changeType: "cancelled",
+ effectiveDate: classDate,
+ isActive: true,
+ },
+ select: { id: true },
+ });
+ if (cancelled)
+ throw new ApiError(400, "This class was cancelled on that date — attendance cannot be taken");
+ // REALITY CHECK (weekday): registers follow the routine unless the day
+ // was officially moved by a schedule change for that exact date.
+ const hasMove = await db.scheduleChange.findFirst({
+ where: {
+ scheduleId,
+ changeType: { in: ["rescheduled", "time_changed", "extra_class"] },
+ effectiveDate: classDate,
+ isActive: true,
+ },
+ select: { id: true },
+ });
+ if (!hasMove && weekdayOfDate(classDate) !== schedule.dayOfWeek) {
+ throw new ApiError(
+ 400,
+ `This class meets on ${schedule.dayOfWeek} — you cannot file a register for a different day`
+ );
+ }
+
+ // Dedupe by studentId (last write wins) + hard cap. Duplicates previously
+ // produced duplicate notifications and thousands of redundant upserts.
+ if (entries.length > 500) throw new ApiError(400, "Too many entries in one save");
+ const byStudent = new Map<string, { studentId: string; status: AttStatus }>();
+ for (const e of entries) {
+ if (!e.studentId || !isAttStatus(e.status)) continue;
+ byStudent.set(e.studentId, { studentId: e.studentId, status: e.status });
+ }
+ const validEntries = [...byStudent.values()];
 
  // Roster validation — only students of this class batch may be marked.
  // (Same filter the roster GET uses: programId + semester + active.)
@@ -1025,8 +1100,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  let saved = 0;
  const absentees: string[] = [];
  const ops: ReturnType<typeof db.attendance.upsert>[] = [];
- for (const e of entries) {
- if (!e.studentId || !isAttStatus(e.status)) continue;
+ for (const e of validEntries) {
  if (!rosterIds.has(e.studentId)) {
  throw new ApiError(400, "Roster mismatch");
  }
@@ -1073,7 +1147,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  userId: studentId,
  title: `Absent marked: ${schedule.courseCode}`,
  body: `You were marked absent for ${schedule.courseCode} on ${classDate}. Contact your teacher if this is a mistake.`,
- type: "attendance",
+ type: "general",
  link: "/?view=dashboard",
  })),
  });
@@ -1082,11 +1156,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  return {
  saved,
  absentNotified: absentees.length,
+ // Summary counts the DEDUPED valid entries — the raw list could
+ // double-count duplicates and exceed the number of saved rows.
  summary: {
- present: entries.filter((e) => e.status === "present").length,
+ present: validEntries.filter((e) => e.status === "present").length,
  absent: absentees.length,
- late: entries.filter((e) => e.status === "late").length,
- excused: entries.filter((e) => e.status === "excused").length,
+ late: validEntries.filter((e) => e.status === "late").length,
+ excused: validEntries.filter((e) => e.status === "excused").length,
  },
  };
  }
@@ -1159,7 +1235,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  userId: st.id,
  title: `Absent marked: ${qr.schedule.courseCode}`,
  body: `You did not scan the QR check-in for ${qr.schedule.courseCode} on ${qr.date}, so you were marked absent. Contact your teacher if this is a mistake.`,
- type: "attendance",
+ type: "general",
  link: "/?view=dashboard",
  })),
  }),
@@ -1197,6 +1273,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const audienceVal = ["all", "students", "teachers"].includes(String(audience))
  ? String(audience)
  : "all";
+ const categoryVal =
+ category && VALID_NOTICE_CATEGORIES.has(String(category))
+ ? String(category)
+ : "general";
+ const titleVal = title.trim().slice(0, 150);
+ const contentVal = content.trim().slice(0, 5000);
 
  // Optional course scope → target that batch
  let scopeProgramId: string | null = null;
@@ -1214,9 +1296,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const notice = await db.notice.create({
  data: {
  departmentId: session.departmentId!,
- title: title.trim(),
- content: content.trim(),
- category: String(category) || "general",
+ title: titleVal,
+ content: contentVal,
+ category: categoryVal,
  audience: audienceVal,
  programId: scopeProgramId,
  semester: scopeSemester,
@@ -1228,8 +1310,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
  // Fan-out notifications
  const fanout: { userId: string; title: string; body: string; type: string; link: string }[] = [];
- const nTitle = `Notice: ${title.trim().slice(0, 60)}`;
- const nBody = `${scopeCode ? `[${scopeCode}] ` : ""}${content.trim().slice(0, 140)}`;
+ const nTitle = `Notice: ${titleVal.slice(0, 60)}`;
+ const nBody = `${scopeCode ? `[${scopeCode}] ` : ""}${contentVal.slice(0, 140)}`;
  if (audienceVal !== "teachers") {
  const students = await db.user.findMany({
  where: {
@@ -1313,9 +1395,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (rm) newRoomNumber = rm.roomNumber;
  }
 
- // Room clash guard — the effective (day, slot, room) triple must be free.
- // The room finder helps the teacher pick a free room; this is the server-side
- // safety net so two classes can never land on the same room at once.
+ // Room + teacher clash guard — the effective (day, time-window, room)
+ // must be free AND the teacher must not already teach another class in
+ // an overlapping window. Previously only exact same-slot matches were
+ // caught, so 10:00-11:00 vs 10:30-11:30 slipped through both checks.
  if (changeType !== "cancelled") {
  const effDay = newDay ?? schedule.dayOfWeek;
  const effSlotId = newTimeSlotId ?? schedule.timeSlotId;
@@ -1323,21 +1406,36 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (changeType === "extra_class" && !newTimeSlotId) {
  throw new ApiError(400, "Pick a time slot for the extra class");
  }
- const clash = await db.schedule.findFirst({
+ const effStart = newTime?.startTime ?? schedule.startTime;
+ const effEnd = newTime?.endTime ?? schedule.endTime;
+ const sameDay = await db.schedule.findMany({
  where: {
  departmentId: schedule.departmentId,
  isActive: true,
  dayOfWeek: effDay,
- timeSlotId: effSlotId,
- roomId: effRoomId,
  NOT: { id: schedule.id },
  },
- select: { courseCode: true, teacherName: true, roomNumber: true },
+ select: {
+ id: true, courseId: true, courseCode: true, teacherId: true,
+ teacherName: true, roomId: true, roomNumber: true, timeSlotId: true,
+ startTime: true, endTime: true,
+ },
  });
- if (clash) {
+ const overlapping = sameDay.filter((s) =>
+ windowsOverlap(s.startTime, s.endTime, effStart, effEnd, s.timeSlotId === effSlotId)
+ );
+ const roomClash = overlapping.find((s) => s.roomId === effRoomId);
+ if (roomClash) {
  throw new ApiError(
  409,
- `Room ${clash.roomNumber} is already booked at that time by ${clash.courseCode} (${clash.teacherName}). Pick a free room from the finder.`
+ `Room ${roomClash.roomNumber} is already booked at that time by ${roomClash.courseCode} (${roomClash.teacherName}). Pick a free room from the finder.`
+ );
+ }
+ const teacherClash = overlapping.find((s) => s.teacherId === schedule.teacherId);
+ if (teacherClash) {
+ throw new ApiError(
+ 409,
+ `You already teach ${teacherClash.courseCode} in an overlapping slot on ${effDay} — pick a different time`
  );
  }
  }
@@ -1363,7 +1461,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  newRoomId: newRoomId ?? null,
  newRoomNumber,
  effectiveDate: effectiveDate || todayStr(),
- reason: reason.trim(),
+ reason: reason.trim().slice(0, 300),
  courseCode: schedule.courseCode,
  courseName: schedule.courseName,
  teacherId: schedule.teacherId,
@@ -1426,14 +1524,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  userId: s.id,
  title: notifTitle,
  body: notifBody,
- type: changeType,
+ type: CHANGE_NOTIF_TYPE[changeType] ?? "general",
  link: `/?view=department&dept=${schedule.departmentId}`,
  })),
  {
  userId: schedule.teacherId,
  title: notifTitle,
  body: notifBody,
- type: changeType,
+ type: CHANGE_NOTIF_TYPE[changeType] ?? "general",
  link: "/?view=dashboard",
  },
  ];
@@ -1469,10 +1567,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  departmentId: course.departmentId,
  courseId,
  teacherId: session.userId,
- title: title.trim(),
- description: description.trim(),
+ title: title.trim().slice(0, 150),
+ description: description.trim().slice(0, 5000),
  dueDate: dueDate ? new Date(dueDate) : null,
- maxMarks: maxMarks ? Number(maxMarks) : null,
+ maxMarks: maxMarks ? parseMaxMarks(maxMarks) : null,
  },
  });
 
@@ -1510,12 +1608,21 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!courseId || !examType || !entries?.length) {
  throw new ApiError(400, "Course, exam type and entries are required");
  }
+ // examType feeds analytics keyed on a fixed set — arbitrary values
+ // silently dropped out of every breakdown before.
+ if (!VALID_EXAM_TYPES.has(examType)) {
+ throw new ApiError(400, "Exam type must be ct1, ct2, midterm, final or assignment");
+ }
+ if (entries.length > 500) throw new ApiError(400, "Too many entries in one save");
  const course = await db.course.findUnique({ where: { id: courseId } });
  if (!course) throw new ApiError(404, "Course not found");
  assertDepartmentAccess(session, course.departmentId);
 
- // Result rows are keyed max 20 (existing convention) — validate it.
- const maxMarks = 20;
+ // Marks scale: default 20 (existing convention) — a custom maxMarks is
+ // accepted so other scales don't corrupt the percentage math.
+ const maxMarks = body.maxMarks !== undefined && body.maxMarks !== null && body.maxMarks !== ""
+ ? parseMaxMarks(body.maxMarks)
+ : 20;
 
  // Roster validation — same batch filter the results roster GET uses.
  const roster = await db.user.findMany({
@@ -1700,13 +1807,18 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  // able to update this assignment just because of their role.
  assertDepartmentAccess(session, a.departmentId);
  const data: Record<string, unknown> = {};
- if (typeof body.title === "string" && body.title.trim()) data.title = body.title.trim();
- if (typeof body.description === "string") data.description = body.description.trim();
+ if (typeof body.title === "string" && body.title.trim())
+ data.title = body.title.trim().slice(0, 150);
+ if (typeof body.description === "string")
+ data.description = body.description.trim().slice(0, 5000);
  if (body.dueDate !== undefined) {
  data.dueDate = body.dueDate ? new Date(String(body.dueDate)) : null;
  }
  if (body.maxMarks !== undefined) {
- data.maxMarks = body.maxMarks === null || body.maxMarks === "" ? null : Number(body.maxMarks);
+ data.maxMarks =
+ body.maxMarks === null || body.maxMarks === ""
+ ? null
+ : parseMaxMarks(body.maxMarks);
  }
  const updated = await db.assignment.update({ where: { id }, data });
 

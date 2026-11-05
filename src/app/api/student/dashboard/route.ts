@@ -122,6 +122,9 @@ export async function GET() {
  db.attendance.findMany({
  where: { departmentId, studentId: user.id },
  select: { courseId: true, status: true, courseCode: true },
+ // Bounded + deterministic: without an explicit order Prisma returns an
+ // unspecified slice, so the all-time % could come from a random subset.
+ orderBy: { date: "desc" },
  take: 300,
  }),
  ]);

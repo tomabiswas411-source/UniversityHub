@@ -23,13 +23,16 @@ export async function GET() {
  const rows = await db.attendance.findMany({
  where: { studentId: session.userId },
  select: { courseId: true, courseCode: true, date: true, status: true },
- orderBy: [{ date: "asc" }],
+ // Newest-first + cap: once a student passes the cap the sheet must keep
+ // the NEWEST records (ascending order used to silently drop them).
+ orderBy: [{ date: "desc" }],
  take: 600, // a semester batch — bounded like every list endpoint
  });
 
  if (rows.length === 0) {
  return { hasData: false, courses: [] };
  }
+ rows.reverse(); // back to oldest → newest for display within the cap
 
  // Group per course, preserving date order
  const byCourse = new Map<string, { code: string; days: { date: string; status: string }[] }>();

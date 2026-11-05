@@ -35,7 +35,22 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     headers: { "Content-Type": "application/json" },
     ...init,
   });
-  const json = (await res.json()) as ApiResponse<T>;
+  let json: ApiResponse<T> | null = null;
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      json = (await res.json()) as ApiResponse<T>;
+    } catch {
+      json = null;
+    }
+  }
+  if (!json) {
+    // Non-JSON body (e.g. a Vercel/CDN 502 HTML error page) — res.json()
+    // would throw a cryptic SyntaxError, so surface a human-friendly one.
+    // 401 still triggers the session-expiry bounce.
+    if (res.status === 401) handle401(skipAuthRedirect);
+    throw new Error("Server is unreachable. Please try again.");
+  }
   if (!res.ok || !json.success) {
     // Only a 401 means "session expired" — bounce to the login portal
     // once. 403/4xx/5xx stay as normal thrown errors for the caller.

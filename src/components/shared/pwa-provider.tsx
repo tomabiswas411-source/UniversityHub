@@ -31,7 +31,8 @@ export function PwaProvider() {
  if (localStorage.getItem("uh-pwa-dismissed") !== "1") setShowInstall(true);
  };
  window.addEventListener("beforeinstallprompt", onBeforeInstall);
- window.addEventListener("appinstalled", () => setShowInstall(false));
+ const onInstalled = () => setShowInstall(false);
+ window.addEventListener("appinstalled", onInstalled);
 
  // ---- Ask notification permission after first interaction (once) ----
  if (
@@ -52,6 +53,7 @@ export function PwaProvider() {
 
  return () => {
  window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+ window.removeEventListener("appinstalled", onInstalled);
  };
  }, []);
 

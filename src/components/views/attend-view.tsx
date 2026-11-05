@@ -15,8 +15,10 @@ import { motion } from "framer-motion";
 import {
   AlertTriangle,
   CheckCheck,
+  CheckCircle2,
   Clock,
   GraduationCap,
+  Hand,
   KeyRound,
   Loader2,
   MapPin,
@@ -381,7 +383,12 @@ export function AttendView({ token }: { token: string | null }) {
             <CheckCheck className="h-8 w-8 text-white" />
           </div>
           <p className="text-lg font-bold text-emerald-800 dark:text-emerald-300">
-            {result === "success" && "You are marked PRESENT ✅"}
+            {result === "success" && (
+              <>
+                You are marked PRESENT{" "}
+                <CheckCircle2 className="inline h-5 w-5 align-[-3px]" aria-hidden />
+              </>
+            )}
             {result === "already" && "You were already marked present"}
             {result === "corrected" && "Your status was corrected to PRESENT"}
           </p>
@@ -420,7 +427,10 @@ export function AttendView({ token }: { token: string | null }) {
                 <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] shadow-lg shadow-[#2D4F35]/30">
                   <UserCheck className="h-8 w-8 text-[#FFE01B]" />
                 </div>
-                <p className="mb-1 text-lg font-bold">Hi {user?.fullName?.split(" ")[0] ?? "there"} 👋</p>
+                <p className="mb-1 text-lg font-bold">
+                  Hi {user?.fullName?.split(" ")[0] ?? "there"}{" "}
+                  <Hand className="inline h-5 w-5 align-[-3px] text-amber-500" aria-hidden />
+                </p>
                 <p className="mb-4 text-sm text-muted-foreground">
                   Confirm your presence for <span className="font-semibold">{info.courseCode}</span>
                 </p>
@@ -488,7 +498,7 @@ export function AttendView({ token }: { token: string | null }) {
                   </p>
                 )}
                 {markErr && (
-                  <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                  <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
                     {markErr}
                   </p>
                 )}
@@ -552,7 +562,7 @@ export function AttendView({ token }: { token: string | null }) {
                   {loggingIn ? "Checking in…" : "Login & Mark Present"}
                 </Button>
                 {(loginErr || markErr) && (
-                  <p className="rounded-lg bg-rose-50 px-3 py-2 text-center text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                  <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-center text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
                     {loginErr ?? markErr}
                   </p>
                 )}
@@ -577,7 +587,10 @@ function Presented() {
       <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/30">
         <CheckCheck className="h-8 w-8 text-white" />
       </div>
-      <p className="text-lg font-bold text-emerald-800 dark:text-emerald-300">You are marked PRESENT ✅</p>
+      <p className="text-lg font-bold text-emerald-800 dark:text-emerald-300">
+        You are marked PRESENT{" "}
+        <CheckCircle2 className="inline h-5 w-5 align-[-3px]" aria-hidden />
+      </p>
     </motion.div>
   );
 }

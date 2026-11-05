@@ -24,6 +24,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Reveal, TiltCard } from "@/components/shared/motion-primitives";
 import { apiGet } from "@/lib/api-client";
+import { initials } from "@/lib/format";
+import { GRADIENT_BTN } from "@/components/dashboards/dashboard-shared";
 import { useAuthStore } from "@/store/auth-store";
 import { canSeePricing } from "@/lib/role-access";
 import type { DepartmentDTO, PlanDTO, UniversityDTO } from "@/types";
@@ -79,19 +81,9 @@ const riseIn: Variants = {
 // ------------------------------------------------------------------
 // Small building blocks
 // ------------------------------------------------------------------
-function initialsOf(name: string, fallback = "U"): string {
- const words = name.trim().split(/\s+/).filter(Boolean);
- if (words.length === 0) return fallback;
- const letters = words
- .slice(0, 2)
- .map((w) => w[0])
- .join("");
- return letters.toUpperCase() || fallback;
-}
-
 function uniMonogram(u: UniversityDTO): string {
  const short = u.shortName?.trim();
- return short ? short.slice(0, 4).toUpperCase() : initialsOf(u.name);
+ return short ? short.slice(0, 4).toUpperCase() : initials(u.name);
 }
 
 function AnimatedNumber({ value }: { value: number }) {
@@ -471,7 +463,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  .getElementById("universities")
  ?.scrollIntoView({ behavior: "smooth", block: "start" })
  }
- className="h-11 w-full rounded-xl bg-[#2D4F35] px-7 text-white shadow-md shadow-[#2D4F35]/25 hover:bg-[#3A6B47] sm:w-auto"
+ className={`h-11 w-full rounded-xl px-7 sm:w-auto ${GRADIENT_BTN}`}
  >
  Explore Universities
  <ArrowRight className="h-4 w-4" />
@@ -592,15 +584,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  key={u.id}
  variants={riseIn}
  whileHover={{ y: -4 }}
- role="button"
- tabIndex={0}
  onClick={() => selectUniversity(u.slug, !selected)}
- onKeyDown={(e) => {
- if (e.key === "Enter" || e.key === " ") {
- e.preventDefault();
- selectUniversity(u.slug, !selected);
- }
- }}
  className={`group cursor-pointer rounded-2xl border bg-card p-5 text-left shadow-sm transition-all outline-none focus-visible:ring-2 focus-visible:ring-[#2D4F35] ${
  selected
  ? "border-[#2D4F35] shadow-lg shadow-[#2D4F35]/20 ring-2 ring-[#2D4F35] dark:border-[#4A7C58]"
@@ -648,7 +632,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  className={`h-10 min-h-[44px] rounded-xl px-4 font-semibold text-white ${
  selected
  ? "bg-[#233D2A] shadow-md shadow-[#2D4F35]/25"
- : "bg-[#2D4F35] shadow-md shadow-[#2D4F35]/25 hover:bg-[#3A6B47]"
+ : GRADIENT_BTN
  }`}
  >
  {selected ? "Viewing" : "Enter University"}
@@ -750,7 +734,7 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  onClick={() =>
  navigate("department", { dept: dept.id })
  }
- className="mt-4 h-11 w-full rounded-xl bg-[#2D4F35] font-semibold text-white shadow-md shadow-[#2D4F35]/25 hover:bg-[#3A6B47]"
+ className={`mt-4 h-11 w-full rounded-xl font-semibold ${GRADIENT_BTN}`}
  >
  View Department
  <ArrowRight className="h-4 w-4" />

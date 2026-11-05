@@ -9,7 +9,7 @@ interface SiteFooterProps {
  navigate?: (v: AppView, params?: Record<string, string>) => void;
 }
 
-export function SiteFooter({ navigate }: SiteFooterProps) {
+export function SiteFooter(_props: SiteFooterProps) {
  const { user } = useAuthStore();
  return (
  <footer className="mt-auto hidden w-full border-t border-border bg-gradient-to-b from-secondary to-background dark:from-[#241C15] dark:to-[#1A1612] md:block md:pb-8">
@@ -37,34 +37,36 @@ export function SiteFooter({ navigate }: SiteFooterProps) {
  Quick Links
  </h4>
  <nav className="flex flex-col gap-2 text-sm text-muted-foreground">
- <button
+ {/* Plain anchors (no onClick-SPA) — full navigation is acceptable
+     for footer links; `?view=` drives the app's query-param router. */}
+ <a
+ href="/?view=home"
  className="text-left hover:text-green transition-colors w-fit"
- onClick={() => navigate?.("home")}
  >
  Home
- </button>
+ </a>
  {canSeePricing(user) && (
- <button
+ <a
+ href="/?view=pricing"
  className="text-left hover:text-green transition-colors w-fit"
- onClick={() => navigate?.("pricing")}
  >
  Pricing &amp; Plans
- </button>
+ </a>
  )}
  {user ? (
- <button
+ <a
+ href="/?view=dashboard"
  className="text-left hover:text-green transition-colors w-fit"
- onClick={() => navigate?.("dashboard")}
  >
  My Dashboard
- </button>
+ </a>
  ) : (
- <button
+ <a
+ href="/?view=login"
  className="text-left hover:text-green transition-colors w-fit"
- onClick={() => navigate?.("login")}
  >
  Login Portal
- </button>
+ </a>
  )}
  </nav>
  </div>

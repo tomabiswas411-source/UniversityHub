@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { assertDepartmentAccess } from "@/lib/auth";
 import { isSaneCoords } from "@/lib/geo";
-import { bdTodayISO } from "@/lib/date-bd";
+import { bdTodayISO, bdWeekday } from "@/lib/date-bd";
 
 /**
  * QR attendance session management (teacher / dept_admin).
@@ -68,6 +68,36 @@ export async function POST(req: NextRequest) {
       throw new ApiError(403, "You can only open QR sessions for your own classes");
     }
     assertDepartmentAccess(session, schedule.departmentId);
+
+    // REALITY CHECK: a cancelled class gets no QR window, and the routine
+    // weekday must match today unless the class was officially moved.
+    const cancelled = await db.scheduleChange.findFirst({
+      where: {
+        scheduleId: schedule.id,
+        changeType: "cancelled",
+        effectiveDate: classDate,
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    if (cancelled) {
+      throw new ApiError(400, "This class is cancelled today — QR check-in cannot be opened");
+    }
+    const moved = await db.scheduleChange.findFirst({
+      where: {
+        scheduleId: schedule.id,
+        changeType: { in: ["rescheduled", "time_changed", "extra_class"] },
+        effectiveDate: classDate,
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    if (!moved && schedule.dayOfWeek !== bdWeekday()) {
+      throw new ApiError(
+        400,
+        `This class meets on ${schedule.dayOfWeek} — no QR window on other days`
+      );
+    }
 
     // Close any still-open sessions for this class+date to avoid confusion
     await db.attendanceSession.updateMany({

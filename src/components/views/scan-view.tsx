@@ -91,7 +91,7 @@ export function ScanView({
         /* vibration unsupported — fine */
       }
       toast({
-        title: "QR detected ✅",
+        title: "QR detected",
         description: "Opening your check-in page…",
       });
       navigate("attend", { k: token });
@@ -264,7 +264,10 @@ export function ScanView({
 
           {/* non-scanning states */}
           {camState !== "scanning" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+            <div
+              aria-live="polite"
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
+            >
               {camState === "starting" && (
                 <>
                   <Loader2 className="h-8 w-8 animate-spin text-[#FFE01B]" />

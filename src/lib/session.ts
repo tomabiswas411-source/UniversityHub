@@ -4,6 +4,7 @@
  */
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { db } from "@/lib/db";
 
 export type UserRole = "super_admin" | "dept_admin" | "teacher" | "student";
 
@@ -106,6 +107,15 @@ export async function requireSession(): Promise<SessionPayload> {
  const session = await getSession();
  if (!session) {
  throw new ApiError(401, "Authentication required");
+ }
+ // Cheap liveness re-check: a deactivated (or deleted) account must not
+ // keep calling mutations on a session cookie that is still unexpired.
+ const user = await db.user.findUnique({
+ where: { id: session.userId },
+ select: { isActive: true },
+ });
+ if (!user || !user.isActive) {
+ throw new ApiError(401, "Your account is no longer active. Please contact your administrator.");
  }
  return session;
 }
