@@ -552,6 +552,14 @@ export function TeacherPanel({
  [insights, insightsLoading, loadInsights, myNotices, myNoticesLoading, loadMyNotices, onTabChange]
  );
 
+ /* Deep links (sidebar rail URL navigation, ?tab=insights) skip
+    handleTabChange — drive the lazy loads off effectiveTab directly so
+    the tab never shows the stale "open this tab again" placeholder. */
+ useEffect(() => {
+ if (effectiveTab === "insights" && !insights && !insightsLoading) void loadInsights();
+ if (effectiveTab === "notices" && myNotices === null && !myNoticesLoading) void loadMyNotices();
+ }, [effectiveTab, insights, insightsLoading, loadInsights, myNotices, myNoticesLoading, loadMyNotices]);
+
  const loadOverview = useCallback(async () => {
  setLoading(true);
  try {
@@ -1024,7 +1032,7 @@ export function TeacherPanel({
  </motion.header>
 
  {/* ---------- stats row ---------- */}
- <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+ <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
  <StatCard icon={CalendarClock} label="Today's Classes" value={todays.length} sub={dayLabel(today) ?? "Today"} tone="amber" delay={0} />
  <StatCard icon={CalendarDays} label="Weekly Classes" value={stats.totalClasses} sub="This week" tone="violet" delay={0.06} />
  <StatCard icon={BookOpen} label="Courses" value={assignedCourseCount} sub="Assigned to you" tone="fuchsia" delay={0.12} />
@@ -2259,8 +2267,8 @@ export function TeacherPanel({
  ) : !insights ? (
  <EmptyState
  icon={TrendingUp}
- title="Insights ready to load"
- hint="Open this tab again to analyse your results."
+ title="Insights unavailable"
+ hint="We couldn't load your insights just now — switch tabs and come back, or refresh the page."
  />
  ) : insights.courseStats.length === 0 ? (
  <EmptyState

@@ -165,21 +165,27 @@ export function StatCard({
       />
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+          {/* Wrap (not truncate) on phones — "Today's Classes" must never
+              degrade to "TODAY'S CL…" on a 2-column stat grid. */}
+          <p className="line-clamp-2 text-[10px] font-bold uppercase leading-[1.4] tracking-[0.1em] text-muted-foreground sm:tracking-[0.14em]">
             {label}
           </p>
           <p className="font-display text-3xl leading-tight text-heading">
             {typeof value === "number" ? <CountUp value={value} /> : value}
           </p>
-          {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
+          {sub && (
+            <p className="truncate text-xs text-muted-foreground" title={sub}>
+              {sub}
+            </p>
+          )}
         </div>
         <div
           className={cn(
-            "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg",
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg sm:h-11 sm:w-11",
             t.chip
           )}
         >
-          <Icon className="h-5 w-5" />
+          <Icon className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
         </div>
       </div>
     </motion.div>

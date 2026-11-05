@@ -286,7 +286,6 @@ export function MetricRing({
  animate={{ opacity: 1, scale: 1 }}
  transition={{ delay, duration: 0.4 }}
  className="flex flex-col items-center gap-1.5"
- style={{ width: size }}
  >
  <div
  className="relative rounded-full"
@@ -305,7 +304,7 @@ export function MetricRing({
  </span>
  </div>
  </div>
- <p className="max-w-full truncate text-center text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+ <p className="max-w-[9rem] text-balance text-center text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
  {label}
  </p>
  </motion.div>

@@ -23,6 +23,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+ // Resolves Open Graph / Twitter absolute URLs (silences the Next.js
+ // metadataBase warning in dev + production builds).
+ metadataBase: new URL(
+  process.env.NEXT_PUBLIC_SITE_URL ?? "https://universityhub-rho.vercel.app"
+ ),
  title: "UniversityHub — University Management System",
  description:
  "One platform for every department — class routines, notices, assignments, results and real-time notifications. Multi-university PWA management system.",

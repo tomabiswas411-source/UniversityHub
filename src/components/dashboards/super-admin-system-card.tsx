@@ -187,7 +187,7 @@ export function SuperAdminSystemCard() {
       </SectionCard>
 
       <SectionCard title="Data retention & cleanup" icon={Database}>
-        {data && (
+        {data ? (
           <div className="space-y-4">
             <div className="rounded-xl border bg-muted/30 p-3">
               <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
@@ -231,6 +231,10 @@ export function SuperAdminSystemCard() {
                 </div>
               </div>
             )}
+          </div>
+        ) : (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading retention rules…
           </div>
         )}
       </SectionCard>

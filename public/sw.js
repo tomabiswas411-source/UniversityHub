@@ -1,6 +1,6 @@
 /* UniversityHub Service Worker — PWA offline shell + notification routing
- * v4: dedicated offline.html fallback page + better navigation cache */
-const CACHE = "universityhub-v4";
+ * v5: bump whenever the shell changes so existing installs refresh caches */
+const CACHE = "universityhub-v5";
 const OFFLINE_ASSETS = [
  "/",
  "/offline.html",
