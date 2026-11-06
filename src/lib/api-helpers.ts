@@ -82,11 +82,11 @@ export function rateLimit(
 ): void {
   const now = Date.now();
 
-  // Opportunistic cleanup keeps the map bounded on abusive traffic.
-  if (rateBuckets.size > 200) {
-    for (const [k, v] of rateBuckets) {
-      if (v.resetAt <= now) rateBuckets.delete(k);
-    }
+  // Opportunistic cleanup keeps the map bounded on abusive traffic —
+  // sweeping on every check is a cheap O(n) pass over a small map and
+  // stops the bucket map from growing unbounded between checks.
+  for (const [k, v] of rateBuckets) {
+    if (v.resetAt <= now) rateBuckets.delete(k);
   }
 
   const bucket = rateBuckets.get(key);

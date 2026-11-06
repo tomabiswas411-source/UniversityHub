@@ -20,21 +20,47 @@ export async function GET() {
  throw new ApiError(403, "Student access required");
  }
 
- const rows = await db.attendance.findMany({
+ // Grid cells stay a bounded fetch (take 600) — the newest rows keep the
+ // sheet readable — but the per-course summary/% come from grouped counts
+ // so the ALL-TIME percentages stay exact no matter how large the history.
+ const [rows, summaryGroups] = await Promise.all([
+ db.attendance.findMany({
  where: { studentId: session.userId },
  select: { courseId: true, courseCode: true, date: true, status: true },
  // Newest-first + cap: once a student passes the cap the sheet must keep
  // the NEWEST records (ascending order used to silently drop them).
  orderBy: [{ date: "desc" }],
  take: 600, // a semester batch — bounded like every list endpoint
- });
+ }),
+ db.attendance.groupBy({
+ by: ["courseId", "courseCode", "status"],
+ where: { studentId: session.userId },
+ _count: true,
+ }),
+ ]);
 
- if (rows.length === 0) {
+ if (rows.length === 0 && summaryGroups.length === 0) {
  return { hasData: false, courses: [] };
  }
  rows.reverse(); // back to oldest → newest for display within the cap
 
- // Group per course, preserving date order
+ // All-time per-course totals from the groupBy (no row-slice limits)
+ const totals = new Map<
+ string,
+ { code: string; present: number; absent: number; late: number; excused: number }
+ >();
+ for (const g of summaryGroups) {
+ const cur =
+ totals.get(g.courseId) ??
+ { code: g.courseCode, present: 0, absent: 0, late: 0, excused: 0 };
+ if (g.status === "present") cur.present = g._count;
+ else if (g.status === "absent") cur.absent = g._count;
+ else if (g.status === "late") cur.late = g._count;
+ else if (g.status === "excused") cur.excused = g._count;
+ totals.set(g.courseId, cur);
+ }
+
+ // Group grid cells per course, preserving date order
  const byCourse = new Map<string, { code: string; days: { date: string; status: string }[] }>();
  for (const r of rows) {
  let entry = byCourse.get(r.courseId);
@@ -47,31 +73,29 @@ export async function GET() {
 
  // Course display names — one tiny query for the handful of course ids
  const names = await db.course.findMany({
- where: { id: { in: [...byCourse.keys()] } },
+ where: { id: { in: [...totals.keys()] } },
  select: { id: true, name: true },
  });
  const nameById = new Map(names.map((c) => [c.id, c.name]));
 
- const courses = [...byCourse.entries()].map(([courseId, entry]) => {
- let present = 0, absent = 0, late = 0, excused = 0;
- for (const d of entry.days) {
- if (d.status === "present") present += 1;
- else if (d.status === "absent") absent += 1;
- else if (d.status === "late") late += 1;
- else if (d.status === "excused") excused += 1;
- }
- const counted = present + late + absent; // excused excluded, same as Performance
+ // Union: courses with all-time rows even if their grid rows fell
+ // outside the 600-cell cap.
+ const courseIds = new Set([...byCourse.keys(), ...totals.keys()]);
+ const courses = [...courseIds].map((courseId) => {
+ const entry = byCourse.get(courseId);
+ const t = totals.get(courseId) ?? { code: "", present: 0, absent: 0, late: 0, excused: 0 };
+ const counted = t.present + t.late + t.absent; // excused excluded, same as Performance
  return {
  courseId,
- courseCode: entry.code,
- courseName: nameById.get(courseId) ?? entry.code,
- dates: entry.days,
- present,
- absent,
- late,
- excused,
- total: entry.days.length,
- pct: counted > 0 ? Math.round(((present + late) / counted) * 100) : 0,
+ courseCode: entry?.code ?? t.code,
+ courseName: nameById.get(courseId) ?? entry?.code ?? t.code,
+ dates: entry?.days ?? [],
+ present: t.present,
+ absent: t.absent,
+ late: t.late,
+ excused: t.excused,
+ total: t.present + t.absent + t.late + t.excused,
+ pct: counted > 0 ? Math.round(((t.present + t.late) / counted) * 100) : 0,
  };
  });
 

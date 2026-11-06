@@ -44,7 +44,7 @@ export async function GET() {
  },
  });
 
- const [schedules, changes, notices, assignments, results, unreadCount, timeSlots, calendar, attendance] =
+ const [schedules, changes, notices, assignments, results, unreadCount, timeSlots, calendar, attByStatus, attByCourseGroups] =
  await Promise.all([
  programId
  ? db.schedule.findMany({
@@ -119,13 +119,18 @@ export async function GET() {
  orderBy: { date: "asc" },
  take: 6,
  }),
- db.attendance.findMany({
- where: { departmentId, studentId: user.id },
- select: { courseId: true, status: true, courseCode: true },
- // Bounded + deterministic: without an explicit order Prisma returns an
- // unspecified slice, so the all-time % could come from a random subset.
- orderBy: { date: "desc" },
- take: 300,
+ // ALL-TIME attendance summary — grouped counts instead of a row slice.
+ // The old take-300 findMany made the % drift once history outgrew the
+ // cap; a groupBy has no row limit and stays exact at any size.
+ db.attendance.groupBy({
+ by: ["status"],
+ where: { studentId: user.id },
+ _count: true,
+ }),
+ db.attendance.groupBy({
+ by: ["courseId", "courseCode", "status"],
+ where: { studentId: user.id },
+ _count: true,
  }),
  ]);
 
@@ -273,27 +278,31 @@ export async function GET() {
  .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime())
  .slice(0, 5);
 
- /* ---------- Attendance analytics ---------- */
+ /* ---------- Attendance analytics (all-time grouped counts) ---------- */
  const attCounts = { present: 0, absent: 0, late: 0, excused: 0 };
+ for (const g of attByStatus) {
+ if (g.status === "present") attCounts.present += g._count;
+ else if (g.status === "absent") attCounts.absent += g._count;
+ else if (g.status === "late") attCounts.late += g._count;
+ else if (g.status === "excused") attCounts.excused += g._count;
+ }
  const attByCourse = new Map<
  string,
  { courseCode: string; present: number; late: number; absent: number; excused: number }
  >();
- for (const a of attendance) {
- if (a.status === "present") attCounts.present++;
- else if (a.status === "absent") attCounts.absent++;
- else if (a.status === "late") attCounts.late++;
- else if (a.status === "excused") attCounts.excused++;
+ let attTotal = 0;
+ for (const g of attByCourseGroups) {
+ const n = g._count;
+ attTotal += n;
  const cur =
- attByCourse.get(a.courseId) ??
- { courseCode: a.courseCode, present: 0, late: 0, absent: 0, excused: 0 };
- if (a.status === "present") cur.present++;
- else if (a.status === "absent") cur.absent++;
- else if (a.status === "late") cur.late++;
- else if (a.status === "excused") cur.excused++;
- attByCourse.set(a.courseId, cur);
+ attByCourse.get(g.courseId) ??
+ { courseCode: g.courseCode, present: 0, late: 0, absent: 0, excused: 0 };
+ if (g.status === "present") cur.present += n;
+ else if (g.status === "absent") cur.absent += n;
+ else if (g.status === "late") cur.late += n;
+ else if (g.status === "excused") cur.excused += n;
+ attByCourse.set(g.courseId, cur);
  }
- const attTotal = attendance.length;
  const attendanceAnalytics = {
  hasData: attTotal > 0,
  rate: attendanceRate(attCounts.present, attCounts.late, attCounts.absent, attCounts.excused),

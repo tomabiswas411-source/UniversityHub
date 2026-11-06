@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   motion,
+  MotionConfig,
   useMotionValue,
   useScroll,
   useSpring,
@@ -141,6 +142,14 @@ export function ScrollProgress() {
       className="fixed inset-x-0 top-0 z-[70] h-[3px] origin-left bg-gradient-to-r from-[#2D4F35] via-[#4A7C58] to-[#FFE01B]"
     />
   );
+}
+
+/* ---------------- MotionRoot — app-wide reduce-motion respect ----------------
+   Wraps the app root so every Reveal / Stagger / hero animation inside
+   framer-motion's tree honours the OS "reduce motion" setting
+   (TiltCard already checks it manually). */
+export function MotionRoot({ children }: { children: ReactNode }) {
+  return <MotionConfig reducedMotion="user">{children}</MotionConfig>;
 }
 
 /* ---------------- TiltCard — subtle pointer-driven 3D tilt ---------------- */

@@ -27,6 +27,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { canSeePricing } from "@/lib/role-access";
 import { ROLE_LABELS } from "@/lib/role-labels";
 import { dashboardSectionsFor } from "@/components/dashboards/dashboard-shared";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import type { AppView } from "@/app/page";
 
@@ -250,9 +251,24 @@ export function AppSidebar({ view, navigate, tab }: AppSidebarProps) {
               type="button"
               aria-label="Log out"
               title="Log out"
-              onClick={async () => {
-                await logout();
-                navigate("home");
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await logout();
+                  } catch {
+                    /* The store clears the local user regardless — the
+                       server session may linger, so say so instead of
+                       failing silently. */
+                    toast({
+                      title: "Sign-out failed",
+                      description:
+                        "Sign-out failed on the server — you are signed out here.",
+                      variant: "destructive",
+                    });
+                  } finally {
+                    navigate("home");
+                  }
+                })();
               }}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/50 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
             >

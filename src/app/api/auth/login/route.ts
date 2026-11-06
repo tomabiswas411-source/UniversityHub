@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { handle, getClientIp, rateLimit } from "@/lib/api-helpers";
-import { findStaffByEmail, verifyPassword, toSafeUser } from "@/lib/auth";
+import { findStaffByEmail, verifyPassword, toSessionUser } from "@/lib/auth";
 import { createSession, ApiError } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
  name: user.fullName,
  });
 
- return { user: toSafeUser(user) };
+ // Flat session-user shape (contract C1) — same fields as /api/auth/me.
+ return { user: toSessionUser(user) };
  });
 }

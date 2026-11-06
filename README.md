@@ -29,6 +29,7 @@ A production-ready, **installable PWA** that lets any university run **all of it
    | `TURSO_DATABASE_URL` | `libsql://…` (from [Turso](https://turso.tech)) |
    | `TURSO_AUTH_TOKEN` | Turso auth token |
    | `AUTH_SECRET` | long random string (`openssl rand -hex 32`) |
+   | `CRON_SECRET` | long random string — **required on Vercel**: the daily retention cron (`vercel.json` → 03:00) sends it as a Bearer token; without it the sweep 401s and never runs |
 
 3. Deploy — done. Run `bun run db:push` + `bun scripts/seed.ts` locally (with the same env) to provision the schema & demo data.
 

@@ -3,7 +3,7 @@
  */
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
-import { ApiError, type SessionPayload, type UserRole } from "@/lib/session";
+import { ApiError, type SessionPayload } from "@/lib/session";
 import type { User } from "@prisma/client";
 
 export async function hashPassword(password: string): Promise<string> {
@@ -26,9 +26,12 @@ export type SafeUser = Omit<User, "password">;
 
 /** Staff login: email + password */
 export async function findStaffByEmail(email: string) {
+ // Emails are stored normalized (trim + lowercase) — lookups must match
+ // that or mixed-case input silently misses the account.
+ const emailNorm = email.trim().toLowerCase();
  return db.user.findFirst({
  where: {
- email: { equals: email, },
+ email: { equals: emailNorm, },
  role: { in: ["super_admin", "dept_admin", "teacher"] },
  isActive: true,
  },
@@ -68,7 +71,7 @@ export async function findStudentForLogin(
 /** Load a full user record for a session (used by /api/auth/me) */
 export async function loadSessionUser(
  session: SessionPayload
-): Promise<SafeUser & { universityName?: string | null; departmentName?: string | null }> {
+): Promise<ReturnType<typeof toSessionUser>> {
  const user = await db.user.findUnique({
  where: { id: session.userId },
  include: {
@@ -79,11 +82,28 @@ export async function loadSessionUser(
  if (!user || !user.isActive) {
  throw new ApiError(401, "Session user no longer exists");
  }
+ return toSessionUser(user);
+}
+
+/**
+ * CONTRACT (C1): the ONE flat session-user shape shared by both login
+ * routes and /api/auth/me — flat universitySlug, universityName,
+ * departmentName, departmentShortName, departmentId, universityId fields
+ * so the client SessionUser type always resolves the same way.
+ */
+export function toSessionUser(
+ user: User & {
+ university?: { name: string | null; slug: string | null } | null;
+ department?: { name: string | null; shortName: string | null } | null;
+ }
+) {
  const safe = toSafeUser(user);
  return {
  ...safe,
  universityName: user.university?.name ?? null,
+ universitySlug: user.university?.slug ?? null,
  departmentName: user.department?.name ?? null,
+ departmentShortName: user.department?.shortName ?? null,
  };
 }
 
@@ -101,9 +121,6 @@ export function assertDepartmentAccess(
  throw new ApiError(403, "Access denied for this department");
 }
 
-export const ROLE_LABELS: Record<UserRole, string> = {
- super_admin: "Super Admin",
- dept_admin: "Department Head",
- teacher: "Teacher",
- student: "Student",
-};
+// Single source of truth for role display labels (client-safe consts).
+// The duplicate literal that lived here drifted from the client copy.
+export { ROLE_LABELS } from "@/lib/role-labels";

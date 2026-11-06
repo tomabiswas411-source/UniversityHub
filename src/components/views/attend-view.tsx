@@ -22,11 +22,13 @@ import {
   KeyRound,
   Loader2,
   MapPin,
+  RefreshCcw,
   ScanLine,
   UserCheck,
   XCircle,
 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { fmtDateOnly } from "@/lib/date-bd";
 import { useAuthStore } from "@/store/auth-store";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -93,6 +95,38 @@ function getDeviceId(): string {
   }
 }
 
+/**
+ * GET /api/attendance/scan — a small local fetch (not apiGet) because
+ * the retry button must tell "invalid QR" (400/404 — retrying never
+ * helps) apart from transient failures (500/503/offline). The shared
+ * wrapper throws a plain Error and drops the HTTP status.
+ */
+async function loadScanInfo(token: string): Promise<ScanInfo> {
+  const res = await fetch(
+    `/api/attendance/scan?token=${encodeURIComponent(token)}`,
+    { credentials: "same-origin", headers: { "Content-Type": "application/json" } }
+  );
+  const json = (await res.json().catch(() => null)) as
+    | { success: boolean; data?: ScanInfo; error?: string }
+    | null;
+  if (json && json.success && json.data) return json.data;
+  throw Object.assign(
+    new Error(json?.error || "Server is unreachable. Please try again."),
+    { status: res.status }
+  );
+}
+
+/** HTTP status attached to loadScanInfo failures (undefined on network errors). */
+function loadErrStatus(err: unknown): number | undefined {
+  return (err as { status?: number }).status;
+}
+
+/** Retryable = transient (5xx, offline). Malformed/unknown tokens are not. */
+function isRetryableLoad(err: unknown): boolean {
+  const status = loadErrStatus(err);
+  return status !== 400 && status !== 404;
+}
+
 /** One-shot browser position fix; resolves null when unavailable/denied. */
 function getPosition(): Promise<{ lat: number; lng: number } | null> {
   return new Promise((resolve) => {
@@ -111,6 +145,7 @@ export function AttendView({ token }: { token: string | null }) {
 
   const [info, setInfo] = useState<ScanInfo | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [loadRetryable, setLoadRetryable] = useState(false);
   const [loading, setLoading] = useState(true);
 
   /* inline student login (when the phone had no session) */
@@ -140,30 +175,41 @@ export function AttendView({ token }: { token: string | null }) {
   const [nowTick, setNowTick] = useState<number | null>(null);
   const [clockSkew, setClockSkew] = useState(0);
 
-  const load = useCallback(async () => {
-    if (!token) {
-      setLoadErr("This link has no QR token. Scan the QR shown in your classroom.");
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      const data = await apiGet<ScanInfo>(
-        `/api/attendance/scan?token=${encodeURIComponent(token)}`,
-        { skipAuthRedirect: true } // public scan page — never bounce to login
-      );
-      setInfo(data);
-      setLoadErr(null);
-      // remember how far the server clock is ahead of this device so the
-      // countdown matches the teacher's window, not the phone's clock
-      const serverMs = Date.parse(data.serverTime);
-      if (Number.isFinite(serverMs)) setClockSkew(serverMs - Date.now());
-    } catch (err) {
-      setLoadErr(errMsg(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
+  /**
+   * Loads the scan page info. `silent` = background refresh after a
+   * successful check-in: no spinner, and any failure is swallowed so
+   * the "You are marked PRESENT" success screen is never replaced by
+   * an error card.
+   */
+  const load = useCallback(
+    async (silent = false) => {
+      if (!token) {
+        setLoadErr("This link has no QR token. Scan the QR shown in your classroom.");
+        setLoadRetryable(false);
+        setLoading(false);
+        return;
+      }
+      if (!silent) setLoading(true);
+      try {
+        const data = await loadScanInfo(token);
+        setInfo(data);
+        setLoadErr(null);
+        setLoadRetryable(false);
+        // remember how far the server clock is ahead of this device so the
+        // countdown matches the teacher's window, not the phone's clock
+        const serverMs = Date.parse(data.serverTime);
+        if (Number.isFinite(serverMs)) setClockSkew(serverMs - Date.now());
+      } catch (err) {
+        if (!silent) {
+          setLoadErr(errMsg(err));
+          setLoadRetryable(isRetryableLoad(err));
+        }
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [token]
+  );
 
   useEffect(() => {
     void load();
@@ -191,9 +237,19 @@ export function AttendView({ token }: { token: string | null }) {
     }
   }, [info, coords, geoBusy, askGeo]);
 
-  /* a fresh QR token (new scan) gets a fresh auto-attempt */
+  /* a fresh QR token (new scan) gets a fresh auto-attempt and a clean
+     marking state — editing the URL to another class's code must start
+     from zero, never inherit code A's "already marked" screen */
   useEffect(() => {
     autoGeoTriedRef.current = false;
+    markedOnce.current = false;
+    setResult(null);
+    setMarkErr(null);
+    setLoadErr(null);
+    setLoadRetryable(false);
+    setLoginErr(null);
+    setCoords(null);
+    setGeoDenied(false);
   }, [token]);
 
   /* tick every second while the window is open so the countdown runs */
@@ -233,7 +289,7 @@ export function AttendView({ token }: { token: string | null }) {
       if (data.corrected) setResult("corrected");
       else if (data.already) setResult("already");
       else setResult("success");
-      void load(); // refresh myStatus (one tiny GET)
+      void load(true); // silent refresh of myStatus/presentCount — UI untouched on failure
     } catch (err) {
       setMarkErr(errMsg(err));
     } finally {
@@ -307,12 +363,25 @@ export function AttendView({ token }: { token: string | null }) {
 
   if (loadErr || !info) {
     return (
-      <StatusCard
-        tone="rose"
-        icon={XCircle}
-        title="Something went wrong"
-        message={loadErr ?? "This QR code is not valid."}
-      />
+      <div className="mx-auto max-w-lg py-2">
+        <StatusCard
+          tone="rose"
+          icon={XCircle}
+          title="Something went wrong"
+          message={loadErr ?? "This QR code is not valid."}
+          action={
+            loadRetryable ? (
+              <Button
+                variant="outline"
+                onClick={() => void load()}
+                className="h-11 rounded-xl"
+              >
+                <RefreshCcw className="mr-2 h-4 w-4" /> Try again
+              </Button>
+            ) : undefined
+          }
+        />
+      </div>
     );
   }
 
@@ -393,7 +462,7 @@ export function AttendView({ token }: { token: string | null }) {
             {result === "corrected" && "Your status was corrected to PRESENT"}
           </p>
           <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-400/80">
-            {info.courseCode} · {info.date}
+            {info.courseCode} · {fmtDateOnly(info.date)}
           </p>
         </motion.div>
       )}
@@ -545,7 +614,7 @@ export function AttendView({ token }: { token: string | null }) {
                   <Input
                     id="att-roll"
                     inputMode="numeric"
-                    autoComplete="current-password"
+                    autoComplete="off"
                     placeholder="e.g. 05"
                     value={roll}
                     onChange={(e) => setRoll(e.target.value)}
@@ -600,11 +669,13 @@ function StatusCard({
   icon: Icon,
   title,
   message,
+  action,
 }: {
   tone: "rose" | "amber";
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   message: string;
+  action?: React.ReactNode;
 }) {
   const tones = {
     rose: {
@@ -625,6 +696,7 @@ function StatusCard({
       <Icon className={cn("mx-auto mb-3 h-10 w-10", tones.icon)} />
       <p className={cn("text-base font-bold", tones.title)}>{title}</p>
       <p className={cn("mt-1 text-xs", tones.msg)}>{message}</p>
+      {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
     </div>
   );
 }

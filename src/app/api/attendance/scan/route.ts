@@ -187,6 +187,15 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- GEO-FENCE: student must be inside the classroom area ----
+    // GPS accuracy slack: a phone-reported accuracy of ±15m can push a
+    // real in-class fix past a tight radius, so the check-in passes when
+    // distance <= radius + min(accuracy, 30) — bounded so a spoofed huge
+    // "accuracy" value buys nothing.
+    const rawAccuracy =
+      typeof body.accuracy === "number" && Number.isFinite(body.accuracy)
+        ? body.accuracy
+        : null;
+    const gpsSlack = Math.min(Math.max(rawAccuracy ?? 0, 0), 30);
     let distance: number | null = null;
     if (s.geoRadiusM != null) {
       if (!isSaneCoords(body.lat, body.lng)) {
@@ -199,10 +208,12 @@ export async function POST(req: NextRequest) {
         { lat: s.geoLat as number, lng: s.geoLng as number },
         { lat: body.lat as number, lng: body.lng as number }
       );
-      if (distance > s.geoRadiusM) {
+      if (distance > s.geoRadiusM + gpsSlack) {
         throw new ApiError(
           403,
-          `You appear to be ${Math.round(distance)}m away from the classroom — outside the check-in area (${s.geoRadiusM}m). Please be present in class.`
+          gpsSlack > 0
+            ? `You appear to be ${Math.round(distance)}m away from the classroom — outside the check-in area (${s.geoRadiusM}m + ${Math.round(gpsSlack)}m GPS accuracy). Please be present in class.`
+            : `You appear to be ${Math.round(distance)}m away from the classroom — outside the check-in area (${s.geoRadiusM}m). Please be present in class.`
         );
       }
     }

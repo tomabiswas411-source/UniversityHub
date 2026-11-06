@@ -12,12 +12,20 @@ interface AuthState {
  logout: () => Promise<void>;
 }
 
+/* In-flight dedupe for refresh(): concurrent callers (dashboard mount,
+   notification bell, 401 recovery…) share ONE /api/auth/me request and
+   all resolve with the same single response — no duplicate fetches and
+   no resolution-order races. */
+let refreshInFlight: Promise<void> | null = null;
+
 export const useAuthStore = create<AuthState>((set) => ({
  user: null,
  loading: false,
  initialized: false,
  setUser: (user) => set({ user, initialized: true }),
- refresh: async () => {
+ refresh: () => {
+ if (!refreshInFlight) {
+ refreshInFlight = (async () => {
  set({ loading: true });
  try {
  const res = await fetch("/api/auth/me");
@@ -43,9 +51,21 @@ export const useAuthStore = create<AuthState>((set) => ({
  // logged-in user doesn't get logged-out by a hiccup.
  set({ initialized: true, loading: false });
  }
+ })().finally(() => {
+ refreshInFlight = null;
+ });
+ }
+ return refreshInFlight;
  },
  logout: async () => {
+ try {
  await fetch("/api/auth/logout", { method: "POST" });
+ } catch {
+ // Network failure must never trap the user in a dead session —
+ // local state is cleared below no matter what; the cookie is
+ // dropped server-side on the next authenticated request.
+ } finally {
  set({ user: null });
+ }
  },
 }));

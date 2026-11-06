@@ -28,6 +28,7 @@ import {
   MapPinOff,
   Maximize2,
   QrCode,
+  RefreshCw,
   ScanLine,
   Timer,
   UserCheck,
@@ -124,6 +125,11 @@ export function QRAttendanceCard({
   const [closing, setClosing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [summary, setSummary] = useState<{ present: number; absent: number; total: number } | null>(null);
+  /* Fetching the closed-session summary on demand (see the closed branch) */
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  /* Radius the live session was actually created with — the geoRadius
+     Select resets on reload, so the chip must not trust it. */
+  const [sessionRadius, setSessionRadius] = useState<number | null>(null);
   /* Fullscreen projector view — classroom displays show the QR huge */
   const [fullscreen, setFullscreen] = useState(false);
   /* Bulk "mark rest absent" runs behind a confirmation dialog */
@@ -158,7 +164,13 @@ export function QRAttendanceCard({
           );
           onRosterRefresh();
         } catch {
-          /* best-effort — never block the new window on this */
+          /* best-effort — never block the new window on this, but do tell
+             the teacher the old window may still hold unmarked absentees. */
+          toast({
+            title: "Could not auto-mark absentees of the previous window",
+            description: "Finalize it manually if needed before the new window takes over.",
+            variant: "destructive",
+          });
         }
       }
       // One-time position fix when location check is on (HTTPS required;
@@ -211,6 +223,7 @@ export function QRAttendanceCard({
       setLeftSec(Math.max(0, Math.round((exp - Date.now()) / 1000)));
       setPhase("active");
       setSummary(null);
+      setSessionRadius(data.geo ? data.geo.radiusM : null);
       toast({
         title: "QR check-in is live",
         description: data.geo
@@ -333,6 +346,7 @@ export function QRAttendanceCard({
     setQrData(null);
     setLive(null);
     setSummary(null);
+    setSessionRadius(null);
   }, [scheduleId, date]);
 
   const finalize = useCallback(async () => {
@@ -371,6 +385,31 @@ export function QRAttendanceCard({
     await finalize();
     setAbsentConfirmOpen(false);
   }, [finalize]);
+
+  /* When the poll reports "closed" but this client has no summary (the
+     window was finalized elsewhere, or auto-closed while the teacher
+     was away), the closed branch would render blank. Fetch the
+     authoritative counts: the finalize endpoint returns them and is
+     idempotent for an already-finalized session — nobody gets re-marked. */
+  const fetchClosedSummary = useCallback(async () => {
+    if (!sessionRef.current) return;
+    setSummaryLoading(true);
+    try {
+      const data = await apiPost<{ absentMarked: number; absentTotal: number; present: number; total: number }>(
+        "/api/teacher/attendance-finalize",
+        { sessionId: sessionRef.current.id }
+      );
+      setSummary({ present: data.present, absent: data.absentTotal, total: data.total });
+    } catch (err) {
+      toast({
+        title: "Could not fetch the summary",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, []);
 
   const copyLink = useCallback(async () => {
     if (!session) return;
@@ -575,7 +614,7 @@ export function QRAttendanceCard({
               {live?.geo && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
                   <MapPin className="h-3 w-3" />
-                  Location · {geoRadius}m
+                  Location · {sessionRadius ?? Number(geoRadius)}m
                 </span>
               )}
             </div>
@@ -644,22 +683,40 @@ export function QRAttendanceCard({
             </Button>
           </div>
         </div>
-      ) : (
-        /* closed */
-        summary && (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
-              <CheckCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-              <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
-                Session closed — {summary.present} present · {summary.absent} absent · {summary.total} total
-              </p>
-            </div>
-            <Button variant="outline" size="sm" className="h-9" onClick={() => void startSession()} disabled={starting}>
-              {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}
-              Open another QR window
-            </Button>
+      ) : summary ? (
+        /* closed — with counts */
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+            <CheckCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
+              Session closed — {summary.present} present · {summary.absent} absent · {summary.total} total
+            </p>
           </div>
-        )
+          <Button variant="outline" size="sm" className="h-9" onClick={() => void startSession()} disabled={starting}>
+            {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}
+            Open another QR window
+          </Button>
+        </div>
+      ) : (
+        /* closed — counts not on this client yet (finalized elsewhere /
+           auto-closed): never render blank, offer a summary fetch. */
+        <div className="flex flex-col items-center gap-3">
+          <EmptyState
+            icon={CheckCheck}
+            title="Session closed"
+            hint="This window was closed on the server — fetch the final counts to see the present/absent totals."
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={() => void fetchClosedSummary()}
+            disabled={summaryLoading}
+          >
+            {summaryLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+            Fetch summary
+          </Button>
+        </div>
       )}
     </SectionCard>
 
@@ -683,7 +740,7 @@ export function QRAttendanceCard({
               <UserCheck className="h-4 w-4" /> {scanned}/{totalStudents}
               {live?.geo && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-[10px]">
-                  <MapPin className="h-3 w-3" /> {geoRadius}m
+                  <MapPin className="h-3 w-3" /> {sessionRadius ?? Number(geoRadius)}m
                 </span>
               )}
             </p>

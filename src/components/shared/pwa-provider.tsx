@@ -1,19 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Download, X, BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuthStore } from "@/store/auth-store";
 
 interface BeforeInstallPromptEvent extends Event {
- prompt: () => Promise<void>;
- userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
 /**
  * Registers the service worker, shows a custom "Install App" prompt,
- * and politely asks for browser notification permission once.
+ * and politely asks for browser notification permission once the user
+ * is signed in and interacts with the page.
  */
 export function PwaProvider() {
+ const router = useRouter();
  const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
  const [showInstall, setShowInstall] = useState(false);
 
@@ -34,28 +38,48 @@ export function PwaProvider() {
  const onInstalled = () => setShowInstall(false);
  window.addEventListener("appinstalled", onInstalled);
 
+ // ---- SW → page messages: notification clicks deep-link into the app ----
+ const onSwMessage = (e: MessageEvent) => {
+ const data = e.data as { type?: string; link?: string } | null | undefined;
+ if (data?.type === "NOTIF_NAVIGATE" && typeof data.link === "string" && data.link) {
+ router.push(data.link);
+ }
+ };
+ if ("serviceWorker" in navigator) {
+ navigator.serviceWorker.addEventListener("message", onSwMessage);
+ }
+
  // ---- Ask notification permission after first interaction (once) ----
+ // Gated behind a signed-in user: anonymous visitors never get the
+ // prompt. The listeners stay armed until a user exists, so someone
+ // who signs in later still gets asked on their next interaction.
+ const ask = () => {
+ if (!useAuthStore.getState().user) return; // wait for a signed-in user
+ localStorage.setItem("uh-notif-asked", "1");
+ Notification.requestPermission().catch(() => {});
+ window.removeEventListener("pointerdown", ask);
+ window.removeEventListener("keydown", ask);
+ };
  if (
  typeof window !== "undefined" &&
  "Notification" in window &&
  Notification.permission === "default" &&
  localStorage.getItem("uh-notif-asked") !== "1"
  ) {
- const ask = () => {
- localStorage.setItem("uh-notif-asked", "1");
- Notification.requestPermission().catch(() => {});
- window.removeEventListener("pointerdown", ask);
- window.removeEventListener("keydown", ask);
- };
- window.addEventListener("pointerdown", ask, { once: true });
- window.addEventListener("keydown", ask, { once: true });
+ window.addEventListener("pointerdown", ask);
+ window.addEventListener("keydown", ask);
  }
 
  return () => {
  window.removeEventListener("beforeinstallprompt", onBeforeInstall);
  window.removeEventListener("appinstalled", onInstalled);
+ if ("serviceWorker" in navigator) {
+ navigator.serviceWorker.removeEventListener("message", onSwMessage);
+ }
+ window.removeEventListener("pointerdown", ask);
+ window.removeEventListener("keydown", ask);
  };
- }, []);
+ }, [router]);
 
  const doInstall = async () => {
  if (!installEvent) return;
@@ -73,7 +97,9 @@ export function PwaProvider() {
  if (!showInstall || !installEvent) return null;
 
  return (
- <div className="fixed bottom-20 left-1/2 z-50 w-[min(420px,92vw)] -translate-x-1/2 md:bottom-5">
+ /* Below lg the fixed MobileNav tab bar (56px + safe area) owns the
+    bottom edge — hover above it; from lg up the tab bar is gone. */
+ <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-1/2 z-50 w-[min(420px,92vw)] -translate-x-1/2 lg:bottom-5">
  <div className="glass-card flex items-center gap-3 rounded-2xl p-3 shadow-xl shadow-[#2D4F35]/10">
  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-white shadow-md">
  <BellRing className="h-5 w-5" />

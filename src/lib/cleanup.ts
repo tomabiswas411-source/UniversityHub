@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { bdTodayISO } from "@/lib/date-bd";
+import { bdTodayISO, bdDaysAgoISO } from "@/lib/date-bd";
 
 /**
  * Data-retention sweep — the platform's cost-effective auto-cleanup.
@@ -34,9 +34,9 @@ import { bdTodayISO } from "@/lib/date-bd";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function daysAgoISO(days: number): string {
-  return new Date(Date.now() - days * DAY_MS).toISOString().slice(0, 10);
-}
+// BD-calendar cutoffs — the old UTC-based slice filed "N days ago" under
+// the wrong calendar day for the first 6 hours of each Bangladesh day.
+const daysAgoISO = bdDaysAgoISO;
 function daysAgoDate(days: number): Date {
   return new Date(Date.now() - days * DAY_MS);
 }
@@ -139,9 +139,11 @@ export function maybeRunCleanup(): void {
   const now = Date.now();
   if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) return;
   if (inFlight) return;
-  lastCleanupAt = now;
   inFlight = runCleanup()
     .then((res) => {
+      // Record the throttle timestamp ONLY on success — a failed sweep
+      // must retry on the next request instead of going quiet for 24h.
+      lastCleanupAt = Date.now();
       const total =
         res.attendanceSessions +
         res.notificationsRead +

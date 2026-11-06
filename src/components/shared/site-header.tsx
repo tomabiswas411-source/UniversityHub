@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ROLE_LABELS } from "@/lib/role-labels";
 import { canSeePricing, type RoleUser } from "@/lib/role-access";
+import { initials } from "@/lib/format";
 import { NotificationBell } from "@/components/shared/notification-bell";
 import { GRADIENT_BTN } from "@/components/dashboards/dashboard-shared";
 import { cn } from "@/lib/utils";
@@ -56,13 +57,9 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  return () => window.removeEventListener("scroll", onScroll);
  }, []);
 
- const initials = user?.fullName
- ?.split(" ")
- .filter((p) => !p.includes("."))
- .slice(0, 2)
- .map((p) => p[0])
- .join("")
- .toUpperCase();
+ /* Avatar monogram — shared initials() so it matches faculty cards
+    ("Dr. A. Rahman" → "AR", honorifics skipped). */
+ const userInitials = user?.fullName ? initials(user.fullName) : "";
 
  return (
  <motion.header
@@ -118,6 +115,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  >
  <button
  onClick={() => navigate("home")}
+ aria-current={view === "home" ? "page" : undefined}
  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
  view === "home"
  ? "bg-[#2D4F35] text-white shadow-md shadow-[#2D4F35]/30"
@@ -129,6 +127,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  {canSeePricing(user) && (
  <button
  onClick={() => navigate("pricing")}
+ aria-current={view === "pricing" ? "page" : undefined}
  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
  view === "pricing"
  ? "bg-[#2D4F35] text-white shadow-md shadow-[#2D4F35]/30"
@@ -141,6 +140,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  {user && (
  <button
  onClick={() => navigate("dashboard")}
+ aria-current={view === "dashboard" ? "page" : undefined}
  className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
  view === "dashboard"
  ? "bg-[#2D4F35] text-white shadow-md shadow-[#2D4F35]/30"
@@ -161,7 +161,11 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  className="rounded-full"
  onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
  >
- {mounted && theme === "dark" ? (
+ {/* Neutral same-size placeholder until mounted — a dark-theme user
+     would otherwise see a Moon flash on first paint. */}
+ {!mounted ? (
+ <span className="h-5 w-5" aria-hidden />
+ ) : theme === "dark" ? (
  <Sun className="w-5 h-5" />
  ) : (
  <Moon className="w-5 h-5" />
@@ -180,7 +184,7 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  >
  <Avatar className="w-9 h-9 border-2 border-[#2D4F35]/50 shadow-md shadow-[#2D4F35]/20">
  <AvatarFallback className="bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-white text-xs font-bold">
- {initials || "U"}
+ {userInitials || "U"}
  </AvatarFallback>
  </Avatar>
  </button>

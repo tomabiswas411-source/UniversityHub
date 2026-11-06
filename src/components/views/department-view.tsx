@@ -575,6 +575,25 @@ export function DepartmentView({
  const [viewMode, setViewMode] = useState<ViewMode>("grid");
  const [openNotice, setOpenNotice] = useState<NoticeDTO | null>(null);
 
+ /* "Today" comes from the Asia/Dhaka clock (bdWeekday) and is held in
+    state: a render-time call goes stale across BD midnight and for
+    anyone who leaves the tab open. It re-syncs when the tab becomes
+    visible again and on a 60s interval, so the Today banner, TODAY
+    badges and the grid column highlight roll over on their own. */
+ const [todayDow, setTodayDow] = useState<DayOfWeek | "friday">(
+ () => bdWeekday() as DayOfWeek | "friday"
+ );
+
+ useEffect(() => {
+ const syncToday = () => setTodayDow(bdWeekday() as DayOfWeek | "friday");
+ const interval = window.setInterval(syncToday, 60_000);
+ document.addEventListener("visibilitychange", syncToday);
+ return () => {
+ window.clearInterval(interval);
+ document.removeEventListener("visibilitychange", syncToday);
+ };
+ }, []);
+
  const selection: Selection =
  selState.deptId === departmentId
  ? selState
@@ -718,8 +737,7 @@ export function DepartmentView({
  return grouped;
  }, [schedules]);
 
- // ---- today (Asia/Dhaka clock — never the device's local timezone) ----
- const todayDow = bdWeekday() as DayOfWeek | "friday";
+ // ---- today (Asia/Dhaka clock — held in state, re-synced above) ----
  const todaySchedules =
  todayDow !== "friday" ? byDay[todayDow] ?? [] : [];
  const todayCancelled = todaySchedules.filter(
@@ -903,7 +921,7 @@ export function DepartmentView({
  aria-pressed={viewMode === m.key}
  onClick={() => setViewMode(m.key)}
  className={cn(
- "flex h-9 w-11 items-center justify-center rounded-lg transition-all sm:h-8 sm:w-9",
+ "flex h-11 w-11 items-center justify-center rounded-lg transition-all sm:h-9 sm:w-9",
  viewMode === m.key
  ? "bg-gradient-to-r from-[#2D4F35] to-[#4A7C58] text-white shadow-md shadow-[#2D4F35]/25"
  : "text-muted-foreground hover:bg-green/10 hover:text-green"
@@ -1031,8 +1049,11 @@ export function DepartmentView({
  · {c.courseName}
  </p>
  <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+ {/* describeChange() already folds the reason into cancelled text —
+     appending it again would show the reason twice. Other change
+     types still get the reason spelled out here. */}
  {describeChange(c)}
- {c.reason ? ` — ${c.reason}` : ""}
+ {c.reason && c.changeType !== "cancelled" ? ` — ${c.reason}` : ""}
  </p>
  </div>
  );
@@ -1085,7 +1106,9 @@ export function DepartmentView({
  {/* ---------- GRID MODE ---------- */}
  {viewMode === "grid" ? (
  <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm ">
- <table className="w-full min-w-[840px] border-collapse text-sm">
+ {/* Responsive floor (like the dashboard tables): 560px on phones,
+     720px from sm, full 840px from lg — smaller phones scroll less. */}
+ <table className="w-full min-w-[560px] border-collapse text-sm sm:min-w-[720px] lg:min-w-[840px]">
  <thead>
  <tr>
  <th className="sticky left-0 z-10 w-28 min-w-28 border-b bg-card px-3 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -1323,7 +1346,7 @@ export function DepartmentView({
  variant="ghost"
  size="sm"
  onClick={() => setOpenNotice(n)}
- className="-mr-2 h-8 shrink-0 text-green hover:bg-green/10 hover:text-green"
+ className="-mr-2 h-11 shrink-0 text-green hover:bg-green/10 hover:text-green sm:h-8"
  >
  Read more <ArrowRight className="h-3.5 w-3.5" />
  </Button>

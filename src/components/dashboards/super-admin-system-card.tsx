@@ -5,8 +5,8 @@
  *
  * • Live row counts for every model (platform health at a glance)
  * • The data-retention policy in plain numbers
- * • "Run cleanup now" — triggers the same idempotent retention sweep
- *   the daily cron uses, so the admin never waits for 3:00 AM.
+ * • "Run retention sweep now" — triggers the same idempotent retention
+ *   sweep the daily cron uses, so the admin never waits for 3:00 AM.
  *
  * COST GUARD: one GET of bounded counts on tab open, one POST per
  * manual sweep.
@@ -72,17 +72,25 @@ interface SystemResponse {
   };
 }
 
+/* POST /api/maintenance/cleanup contract: { ranAt, counts: {...}, durationMs }.
+   counts is a name→rows map — unknown future keys still add to the total. */
 interface CleanupResult {
-  attendanceSessions: number;
-  notificationsRead: number;
-  notificationsUnread: number;
-  scheduleChangesDeleted: number;
-  scheduleChangesDeactivated: number;
-  autoNotices: number;
-  expiredNotices: number;
-  calendarEvents: number;
   ranAt: string;
+  counts: Record<string, number>;
+  durationMs: number;
 }
+
+/* Human-readable labels for the sweep counters we know about. */
+const SWEEP_COUNT_LABELS: Record<string, string> = {
+  attendanceSessions: "QR sessions",
+  notificationsRead: "Read notifications",
+  notificationsUnread: "Unread notifications",
+  scheduleChangesDeleted: "Changes deleted",
+  scheduleChangesDeactivated: "Changes deactivated",
+  autoNotices: "Auto notices",
+  expiredNotices: "Expired notices",
+  calendarEvents: "Calendar events",
+};
 
 export function SuperAdminSystemCard() {
   const [data, setData] = useState<SystemResponse | null>(null);
@@ -114,19 +122,15 @@ export function SuperAdminSystemCard() {
   const runSweep = useCallback(async () => {
     setSweeping(true);
     try {
-      const d = await apiPost<{ cleanup: CleanupResult }>("/api/admin/system-cleanup", {});
-      setLastSweep(d.cleanup);
-      const total =
-        d.cleanup.attendanceSessions +
-        d.cleanup.notificationsRead +
-        d.cleanup.notificationsUnread +
-        d.cleanup.scheduleChangesDeleted +
-        d.cleanup.autoNotices +
-        d.cleanup.expiredNotices +
-        d.cleanup.calendarEvents;
+      const d = await apiPost<CleanupResult>("/api/maintenance/cleanup", {});
+      setLastSweep(d);
+      // Sum EVERY returned counter — deactivated schedule changes are rows
+      // purged from the active set too, and unknown future keys stay honest.
+      const total = Object.values(d.counts ?? {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
       toast({
         title: `Cleanup complete — ${total} row${total === 1 ? "" : "s"} purged`,
-        description: "The database stays small; permanent records are never touched.",
+        description:
+          `Finished in ${(d.durationMs / 1000).toFixed(1)}s. The database stays small; permanent records are never touched.`,
       });
       void load();
     } catch (err) {
@@ -223,14 +227,16 @@ export function SuperAdminSystemCard() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              {/* Destructive-subtle: this purges expired rows platform-wide,
+                  so it reads as a warning action, not a primary one. */}
               <button
                 type="button"
                 onClick={() => setSweepOpen(true)}
                 disabled={sweeping}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#2D4F35] px-4 text-sm font-semibold text-white shadow-md shadow-[#2D4F35]/25 transition-colors hover:bg-[#3A6B47] disabled:opacity-60"
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-700 shadow-sm transition-colors hover:bg-rose-100 disabled:opacity-60 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
               >
                 {sweeping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                {sweeping ? "Sweeping…" : "Run cleanup now"}
+                {sweeping ? "Sweeping…" : "Run retention sweep now"}
               </button>
               <span className="text-[11px] text-muted-foreground">
                 Same idempotent sweep the daily cron runs — safe to repeat anytime.
@@ -239,12 +245,18 @@ export function SuperAdminSystemCard() {
 
             {lastSweep && (
               <div className="rounded-xl border border-dashed p-3 text-xs">
-                <p className="mb-1.5 font-bold">Last manual sweep ({fmtSweepTime(lastSweep.ranAt)})</p>
+                <p className="mb-1.5 font-bold">
+                  Last manual sweep ({fmtSweepTime(lastSweep.ranAt)})
+                  {lastSweep.durationMs > 0 && ` · ${(lastSweep.durationMs / 1000).toFixed(1)}s`}
+                </p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground sm:grid-cols-4">
-                  <span>QR sessions: <b className="text-foreground">{lastSweep.attendanceSessions}</b></span>
-                  <span>Notifications: <b className="text-foreground">{lastSweep.notificationsRead + lastSweep.notificationsUnread}</b></span>
-                  <span>Changes: <b className="text-foreground">{lastSweep.scheduleChangesDeleted}</b></span>
-                  <span>Notices: <b className="text-foreground">{lastSweep.autoNotices + lastSweep.expiredNotices}</b></span>
+                  {Object.entries(lastSweep.counts ?? {})
+                    .filter(([, n]) => Number(n) > 0)
+                    .map(([key, n]) => (
+                      <span key={key}>
+                        {SWEEP_COUNT_LABELS[key] ?? key}: <b className="text-foreground">{n}</b>
+                      </span>
+                    ))}
                 </div>
               </div>
             )}
@@ -269,17 +281,17 @@ export function SuperAdminSystemCard() {
       <AlertDialog open={sweepOpen} onOpenChange={setSweepOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Run retention cleanup?</AlertDialogTitle>
+            <AlertDialogTitle>Run retention sweep now?</AlertDialogTitle>
             <AlertDialogDescription>
               This purges expired QR attendance sessions, read notifications, old notices and ended
-              calendar events, per the retention rules above. Permanent records (attendance,
-              results, users, routines) are never touched.
+              calendar events platform-wide — across every university — per the retention rules
+              above. Permanent records (attendance, results, users, routines) are never touched.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={sweeping}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-[#2D4F35] text-white hover:bg-[#3A6B47]"
+              className="bg-rose-600 text-white hover:bg-rose-700"
               disabled={sweeping}
               onClick={(e) => {
                 e.preventDefault();
@@ -296,11 +308,18 @@ export function SuperAdminSystemCard() {
   );
 }
 
+/* Sweep timestamps are absolute instants — render them on the university's
+   Asia/Dhaka clock so the "swept at 3:00" retention story reads consistently
+   no matter where the admin is sitting. */
 function fmtSweepTime(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? iso
-    : d.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+    : new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Dhaka",
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(d) + " (Dhaka)";
 }
 
 function HealthTile({

@@ -1,18 +1,13 @@
 "use client";
 
 import { GraduationCap, Heart, ShieldCheck } from "lucide-react";
-import type { AppView } from "@/app/page";
 import { useAuthStore } from "@/store/auth-store";
 import { canSeePricing } from "@/lib/role-access";
 
-interface SiteFooterProps {
- navigate?: (v: AppView, params?: Record<string, string>) => void;
-}
-
-export function SiteFooter(_props: SiteFooterProps) {
+export function SiteFooter() {
  const { user } = useAuthStore();
  return (
- <footer className="mt-auto hidden w-full border-t border-border bg-gradient-to-b from-secondary to-background dark:from-[#241C15] dark:to-[#1A1612] md:block md:pb-8">
+ <footer className="mt-auto hidden w-full border-t border-border bg-gradient-to-b from-secondary to-background dark:from-[#241C15] dark:to-[#1A1612] lg:block lg:pb-8">
  <div className="max-w-7xl mx-auto px-4 md:px-6 py-8">
  <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
  {/* Brand */}
@@ -99,8 +94,8 @@ export function SiteFooter(_props: SiteFooterProps) {
  Platform
  </span>
  <span className="flex items-center gap-1">
- Developed with <Heart className="w-3 h-3 text-red-500 fill-red-500" />{" "}
- by <span className="font-semibold text-green">Topu Biswas (AI)</span>
+ <Heart className="w-3 h-3 text-red-500 fill-red-500" />
+ Developed by <span className="font-semibold text-green">Topu Biswas</span>
  </span>
  </div>
  </div>

@@ -9,6 +9,7 @@ import {
  useCallback,
  useEffect,
  useMemo,
+ useRef,
  useState,
  type ChangeEvent,
  type ReactNode,
@@ -27,6 +28,7 @@ import {
  Pencil,
  Pin,
  Plus,
+ Power,
  Search,
  Trash2,
  Users,
@@ -406,6 +408,7 @@ function ConfirmDialog({
  title,
  description,
  loading = false,
+ confirmLabel = "Delete",
  onConfirm,
 }: {
  open: boolean;
@@ -413,6 +416,8 @@ function ConfirmDialog({
  title: string;
  description: string;
  loading?: boolean;
+ /** "Deactivate" for user rows (the API soft-deletes accounts). */
+ confirmLabel?: string;
  onConfirm: () => void;
 }) {
  return (
@@ -434,7 +439,7 @@ function ConfirmDialog({
  disabled={loading}
  >
  {loading && <Loader2 className="h-4 w-4 animate-spin" />}
- Delete
+ {confirmLabel}
  </AlertDialogAction>
  </AlertDialogFooter>
  </AlertDialogContent>
@@ -510,6 +515,11 @@ export function DeptAdminPanel({
 
  /* ---------------- loaders ---------------- */
 
+ /* Monotonic request id — a stale overview/stats response (e.g. one
+ that was in flight while a save's silent reload landed) must never
+ overwrite the fresher post-save data. */
+ const loadReqSeq = useRef(0);
+
  const load = useCallback(
  async (silent = false) => {
  if (!departmentId) {
@@ -517,12 +527,14 @@ export function DeptAdminPanel({
  return;
  }
  if (!silent) setLoading(true);
+ const seq = ++loadReqSeq.current;
  try {
  const q = `?departmentId=${departmentId}`;
  const [ov, st] = await Promise.all([
  apiGet<ManageOverview>(`/api/manage/overview${q}`),
  apiGet<DeptStatsDTO>(`/api/manage/stats${q}`),
  ]);
+ if (seq !== loadReqSeq.current) return; // stale — a newer load superseded it
  setTeachers(ov.teachers ?? []);
  setStudents(ov.students ?? []);
  setCourses(ov.courses ?? []);
@@ -533,13 +545,14 @@ export function DeptAdminPanel({
  setSchedules(ov.schedules ?? []);
  setStats(st ?? null);
  } catch (err) {
+ if (seq !== loadReqSeq.current) return;
  toast({
  title: "Failed to load department data",
  description: errMsg(err),
  variant: "destructive",
  });
  } finally {
- if (!silent) setLoading(false);
+ if (!silent && seq === loadReqSeq.current) setLoading(false);
  }
  },
  [departmentId]
@@ -569,10 +582,10 @@ export function DeptAdminPanel({
  }, [departmentId, analyticsLoading]);
 
  useEffect(() => {
- if (activeTab === "analytics" && !analytics && !analyticsLoading) {
+ if (activeTab === "analytics" && !analytics && !analyticsLoading && !analyticsError) {
  void loadAnalytics();
  }
- }, [activeTab, analytics, analyticsLoading, loadAnalytics]);
+ }, [activeTab, analytics, analyticsLoading, analyticsError, loadAnalytics]);
 
  /* ---------------- generic save / delete ---------------- */
 
@@ -612,6 +625,27 @@ export function DeptAdminPanel({
  toast({ title: "Delete failed", description: errMsg(err), variant: "destructive" });
  } finally {
  setDeleting(false);
+ }
+ }
+
+ /* Activate / deactivate a teacher or student — the same soft-delete
+ contract the delete action uses (PUT /api/manage/users { id, isActive }),
+ so admins can restore accounts instead of only removing them. */
+ const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
+
+ async function toggleUserActive(u: { id: string; fullName: string; isActive: boolean }) {
+ setTogglingUserId(u.id);
+ try {
+ await apiPut("/api/manage/users", { id: u.id, isActive: !u.isActive });
+ toast({
+ title: u.isActive ? "Account deactivated" : "Account activated",
+ description: `${u.fullName} is now ${u.isActive ? "inactive" : "active"}.`,
+ });
+ await load(true);
+ } catch (err) {
+ toast({ title: "Could not update the account", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setTogglingUserId(null);
  }
  }
 
@@ -1218,6 +1252,21 @@ export function DeptAdminPanel({
  <Button
  variant="ghost"
  size="icon"
+ aria-label={t.isActive ? `Deactivate ${t.fullName}` : `Activate ${t.fullName}`}
+ title={t.isActive ? "Deactivate (they lose sign-in access)" : "Activate (they can sign in again)"}
+ className="h-10 w-10 sm:h-9 sm:w-9 text-muted-foreground hover:text-foreground"
+ disabled={togglingUserId === t.id}
+ onClick={() => void toggleUserActive(t)}
+ >
+ {togglingUserId === t.id ? (
+ <Loader2 className="h-4 w-4 animate-spin" />
+ ) : (
+ <Power className="h-4 w-4" />
+ )}
+ </Button>
+ <Button
+ variant="ghost"
+ size="icon"
  aria-label={`Edit ${t.fullName}`}
  className="h-10 w-10 sm:h-9 sm:w-9"
  onClick={() => openEditTeacher(t)}
@@ -1321,6 +1370,21 @@ export function DeptAdminPanel({
  {s.section && <Badge variant="outline">Sec {s.section}</Badge>}
  </div>
  </div>
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label={s.isActive ? `Deactivate ${s.fullName}` : `Activate ${s.fullName}`}
+ title={s.isActive ? "Deactivate (they lose sign-in access)" : "Activate (they can sign in again)"}
+ className="h-10 w-10 sm:h-9 sm:w-9 text-muted-foreground hover:text-foreground"
+ disabled={togglingUserId === s.id}
+ onClick={() => void toggleUserActive(s)}
+ >
+ {togglingUserId === s.id ? (
+ <Loader2 className="h-4 w-4 animate-spin" />
+ ) : (
+ <Power className="h-4 w-4" />
+ )}
+ </Button>
  <Button
  variant="ghost"
  size="icon"
@@ -1773,16 +1837,29 @@ export function DeptAdminPanel({
  </Tabs>
 
  {/* ---------- shared delete confirm ---------- */}
+ {/* Teachers/students are soft-deleted (deactivated) by the API — the
+ copy must say "deactivate", not "permanently removed". */}
  <ConfirmDialog
  open={!!deleteTarget}
  onOpenChange={(open) => {
  if (!open) setDeleteTarget(null);
  }}
- title="Delete this item?"
+ title={
+ deleteTarget?.kind === "teachers" || deleteTarget?.kind === "students"
+ ? "Deactivate this account?"
+ : "Delete this item?"
+ }
  description={
  deleteTarget
- ? `${deleteTarget.label} will be permanently removed. This action cannot be undone.`
+ ? deleteTarget.kind === "teachers" || deleteTarget.kind === "students"
+ ? `${deleteTarget.label} will be deactivated and can no longer sign in. Their records are kept — you can reactivate them anytime from their row.`
+ : `${deleteTarget.label} will be permanently removed. This action cannot be undone.`
  : ""
+ }
+ confirmLabel={
+ deleteTarget?.kind === "teachers" || deleteTarget?.kind === "students"
+ ? "Deactivate"
+ : "Delete"
  }
  loading={deleting}
  onConfirm={() => void confirmDelete()}
@@ -2002,6 +2079,16 @@ function TeacherDialog({
  });
  return;
  }
+ // Server rejects passwords under 6 characters — catch it client-side.
+ const pwTrimmed = form.password.trim();
+ if (pwTrimmed && pwTrimmed.length < 6) {
+ toast({
+ title: "Password too short",
+ description: "Passwords must be at least 6 characters.",
+ variant: "destructive",
+ });
+ return;
+ }
  const payload: TeacherPayload = {
  fullName: form.fullName.trim(),
  email: form.email.trim(),
@@ -2010,8 +2097,7 @@ function TeacherDialog({
  officeRoom: form.officeRoom.trim() || null,
  bio: form.bio.trim() || null,
  };
- const pw = form.password.trim();
- if (!isEdit || pw) payload.password = pw;
+ if (!isEdit || pwTrimmed) payload.password = pwTrimmed;
  setSaving(true);
  const ok = await onSubmit(payload);
  setSaving(false);
@@ -2044,6 +2130,9 @@ function TeacherDialog({
  onChange={upd("password")}
  placeholder={isEdit ? "Leave blank to keep current" : "Set a login password"}
  />
+ {form.password.trim().length > 0 && form.password.trim().length < 6 && (
+ <p className="text-[11px] text-rose-600">Password must be at least 6 characters.</p>
+ )}
  </Field>
  </div>
  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -3174,7 +3263,10 @@ function AddScheduleDialog({
  <SelectValue placeholder="Select teacher" />
  </SelectTrigger>
  <SelectContent>
- {teachers.map((t) => (
+ {/* Inactive teachers can't take classes — keep them out of the picker */}
+ {teachers
+ .filter((t) => t.isActive)
+ .map((t) => (
  <SelectItem key={t.id} value={t.id}>
  {t.fullName}
  {t.designation ? ` · ${t.designation}` : ""}
@@ -3182,6 +3274,11 @@ function AddScheduleDialog({
  ))}
  </SelectContent>
  </Select>
+ {form.teacherId && !teachers.some((t) => t.id === form.teacherId && t.isActive) && (
+ <p className="text-[11px] text-rose-600">
+ The selected teacher is inactive — pick an active one or reactivate them from the Teachers tab.
+ </p>
+ )}
  </Field>
  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
  <Field label="Day" required>

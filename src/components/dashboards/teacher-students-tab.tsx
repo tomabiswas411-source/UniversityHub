@@ -27,8 +27,8 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { downloadCsvText } from "@/lib/csv";
 import { cn } from "@/lib/utils";
-import { downloadCsv } from "@/components/dashboards/teacher-documents-tab";
 import { EmptyState, GRADIENT_BTN, SectionCard } from "@/components/dashboards/dashboard-shared";
 import {
   AlertDialog,
@@ -219,6 +219,16 @@ export function TeacherStudentsTab({
  const [targetSemester, setTargetSemester] = useState("");
  const [moving, setMoving] = useState(false);
 
+ /* Cancelling the move dialog must disarm the selection — otherwise the
+ whole batch stays selected ("Promote all" pre-selects it) with the
+ bulk Deactivate bar still armed. The success path in confirmMove
+ already clears the selection; this covers cancel / ESC / overlay. */
+ function closeMoveDialog() {
+ setMoveOpen(false);
+ setTargetSemester("");
+ onScopeChange({ selectedIds: [] });
+ }
+
  async function confirmMove() {
  const target = Number(targetSemester);
  if (!Number.isInteger(target) || target < 1) {
@@ -308,7 +318,7 @@ export function TeacherStudentsTab({
  const res = await apiGet<{ filename: string; csv: string }>(
  `/api/teacher/export?type=students&${scopeQuery}`
  );
- downloadCsv(res.filename, res.csv);
+ downloadCsvText(res.filename, res.csv);
  const n = students.length;
  toast({
  title: n > 0 ? `Exported ${n} student${n === 1 ? "" : "s"} (full batch)` : "Exported full batch",
@@ -588,7 +598,13 @@ export function TeacherStudentsTab({
  </SectionCard>
 
  {/* move confirm dialog */}
- <Dialog open={moveOpen} onOpenChange={setMoveOpen}>
+ <Dialog
+ open={moveOpen}
+ onOpenChange={(open) => {
+ if (open) setMoveOpen(true);
+ else closeMoveDialog();
+ }}
+ >
  <DialogContent className="sm:max-w-md">
  <DialogHeader>
  <DialogTitle>Move {selected.size} student{selected.size === 1 ? "" : "s"}</DialogTitle>
@@ -617,7 +633,7 @@ export function TeacherStudentsTab({
  </Select>
  </div>
  <DialogFooter>
- <Button variant="outline" onClick={() => setMoveOpen(false)}>
+ <Button variant="outline" onClick={closeMoveDialog}>
  Cancel
  </Button>
  <Button className={GRADIENT_BTN} onClick={() => void confirmMove()} disabled={moving || !targetSemester}>

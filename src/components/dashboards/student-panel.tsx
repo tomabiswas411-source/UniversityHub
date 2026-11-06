@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, apiPatch } from "@/lib/api-client";
+import { toast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/store/auth-store";
 import {
  CategoryBadge,
@@ -180,6 +181,10 @@ const CHANGE_BORDER: Record<string, string> = {
  room_changed: "border-l-amber-500",
  extra_class: "border-l-emerald-500",
 };
+
+/* Bangladesh's official weekend days — typed loosely because the schedule
+   type (DayOfWeek) deliberately omits "friday" (no classes ever land on it). */
+const WEEKEND_DAYS: readonly string[] = ["friday", "saturday"];
 
 const EVENT_BADGE: Record<string, string> = {
  holiday: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
@@ -338,17 +343,28 @@ export function StudentPanel({
 
  const markAllNotifsRead = useCallback(async () => {
  setMarkingAll(true);
+ // Snapshot for the optimistic revert — if the API fails the feed must
+ // go back to exactly what it showed before the flush.
+ const prevNotifs = notifs;
+ const prevUnread = notifUnread;
  setNotifs((prev) => prev.map((n) => ({ ...n, isRead: true })));
  setNotifUnread(0);
  try {
  await apiPatch("/api/notifications", { all: true });
  await loadNotifications(); // re-sync with the server
  } catch {
- // optimistic — keep local state on failure
+ // Revert the optimistic state and tell the student it didn't stick.
+ setNotifs(prevNotifs);
+ setNotifUnread(prevUnread);
+ toast({
+ title: "Couldn't mark all as read",
+ description: "Please check your connection and try again.",
+ variant: "destructive",
+ });
  } finally {
  setMarkingAll(false);
  }
- }, [loadNotifications]);
+ }, [notifs, notifUnread, loadNotifications]);
 
  const markNotifRead = useCallback(
  async (id: string) => {
@@ -361,7 +377,17 @@ export function StudentPanel({
  try {
  await apiPatch("/api/notifications", { ids: [id] });
  } catch {
- // optimistic — silent
+ // Optimistic failure — revert the read-mark so the badge and the
+ // unread highlight stay truthful.
+ setNotifs((prev) =>
+ prev.map((n) => (n.id === id ? { ...n, isRead: false } : n))
+ );
+ setNotifUnread((c) => (c ?? 0) + 1);
+ toast({
+ title: "Couldn't mark as read",
+ description: "The notification stays unread — try again.",
+ variant: "destructive",
+ });
  }
  },
  [notifs]
@@ -405,7 +431,10 @@ export function StudentPanel({
  }, [data]);
 
  const soonestDue = sortedAssignments.find(
- (a) => a.dueDate && new Date(a.dueDate).getTime() >= Date.now()
+ // Dhaka-day math (daysUntilDate) — NOT raw Date.now(): the assignment
+ // chips render "Due today" on the Dhaka calendar, so "Next due" must
+ // agree with them in BD mornings too.
+ (a) => a.dueDate && daysUntilDate(a.dueDate.slice(0, 10)) >= 0
  );
  const assignmentsSub = soonestDue?.dueDate
  ? `Next due ${fmtDate(soonestDue.dueDate)}`
@@ -611,7 +640,10 @@ export function StudentPanel({
  {todayList.length === 0 ? (
  <EmptyState
  icon={Coffee}
- title={today === ("friday" as string) ? "Weekend — no classes today" : "No classes today"}
+ /* BD weekend: Friday is the universal off day, and Saturday is part
+ of the official weekend too (classes just rarely land on it — the
+ empty state only shows when nothing is scheduled). */
+ title={WEEKEND_DAYS.includes(today) ? "Weekend — no classes today" : "No classes today"}
  hint="Enjoy the break — check your weekly routine below."
  />
  ) : (

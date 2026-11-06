@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { handle, badRequest } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
-import { requireSession, ApiError } from "@/lib/session";
+import { requireSession, ApiError, type SessionPayload } from "@/lib/session";
 import { assertDepartmentAccess } from "@/lib/auth";
-import { percentToGrade, resultPct } from "@/lib/grades";
+import { percentToGrade, resultPct, UGC_SCALE } from "@/lib/grades";
 import { bdTodayISO, bdWeekday, bdDaysAgoISO, weekdayOfDate } from "@/lib/date-bd";
 import { windowsOverlap } from "@/lib/time-utils";
 
@@ -76,6 +76,44 @@ function parseMaxMarks(v: unknown): number {
  if (!Number.isFinite(n) || n < 1 || n > 200)
  throw new ApiError(400, "Max marks must be between 1 and 200");
  return Math.round(n);
+}
+
+/** Letter grades this platform recognizes (UGC scale in lib/grades). */
+const VALID_GRADES = new Set(UGC_SCALE.map((b) => b.letter));
+
+/**
+ * Runtime type guard for user-supplied string fields: `title: 123` used
+ * to slip past truthiness checks and explode inside `.trim()` as a 500.
+ */
+function asStr(v: unknown, name: string): string {
+ if (v === undefined || v === null) throw new ApiError(400, `${name} is required`);
+ if (typeof v !== "string") throw new ApiError(400, `${name} must be text`);
+ return v;
+}
+
+/** Query-param integer parse — "1.5" or "abc" must 400, not coerce. */
+function parseIntParam(v: string | null, name: string): number | null {
+ if (v === null || v.trim() === "") return null;
+ const n = Number(v);
+ if (!Number.isInteger(n)) throw new ApiError(400, `${name} must be a whole number`);
+ return n;
+}
+
+/**
+ * A teacher may only write against a course they actually teach —
+ * ownership rides the Schedule linkage (any schedule row), while
+ * dept_admin / super_admin keep full department scope.
+ */
+async function assertTeacherOwnsCourse(
+ session: SessionPayload,
+ courseId: string
+): Promise<void> {
+ if (session.role !== "teacher") return;
+ const own = await db.schedule.findFirst({
+ where: { courseId, teacherId: session.userId },
+ select: { id: true },
+ });
+ if (!own) throw new ApiError(403, "You can only manage courses you teach");
 }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
@@ -491,7 +529,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  }
 
  if (action === "overview") {
- const [schedules, courses, changes, rooms, timeSlots] = await Promise.all([
+ const [schedules, courses, changes, rooms, timeSlots, taughtRows] = await Promise.all([
  db.schedule.findMany({
  where: { teacherId: session.userId, isActive: true },
  orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
@@ -517,7 +555,23 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  where: { departmentId: session.departmentId!, isActive: true },
  orderBy: { slotOrder: "asc" },
  }),
+ // Course ids this teacher actually teaches (Schedule linkage) —
+ // one tiny indexed select used only for the teacher-scope filter.
+ db.schedule.findMany({
+ where: { teacherId: session.userId },
+ select: { courseId: true },
+ }),
  ]);
+ // REALITY CHECK: the course catalogue dropdown must only list courses
+ // the teacher can actually write against (same Schedule linkage the
+ // ownership guard uses); dept_admin keeps seeing the whole department.
+ const visibleCourses =
+ session.role === "teacher"
+ ? (() => {
+ const taught = new Set(taughtRows.map((s) => s.courseId));
+ return courses.filter((c) => taught.has(c.id));
+ })()
+ : courses;
  // Weekday in Asia/Dhaka (server clock may be UTC → wrong "today").
  const today = bdWeekday();
  const todayClasses = schedules.filter((s) => s.dayOfWeek === today).length;
@@ -543,14 +597,14 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
  return {
  schedules,
- courses,
+ courses: visibleCourses,
  changes,
  rooms,
  timeSlots,
  stats: {
  totalClasses: schedules.length,
  todayClasses: DAYS.includes(today) ? todayClasses : 0,
- totalCourses: courses.length,
+ totalCourses: visibleCourses.length,
  myStudents,
  },
  };
@@ -614,7 +668,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  const q = (searchParams.get("q") ?? "").trim().slice(0, 60);
 
  let scopeProgramId = programIdParam;
- let scopeSemester = semesterParam ? Number(semesterParam) : null;
+ let scopeSemester = parseIntParam(semesterParam, "Semester");
  if (courseId) {
  const course = await db.course.findUnique({ where: { id: courseId } });
  if (!course) throw new ApiError(404, "Course not found");
@@ -797,7 +851,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  const programIdParam = searchParams.get("programId");
  const semesterParam = searchParams.get("semester");
  let scopeProgramId = programIdParam;
- let scopeSemester = semesterParam ? Number(semesterParam) : null;
+ let scopeSemester = parseIntParam(semesterParam, "Semester");
  let label = "batch";
  if (courseId) {
  const course = await db.course.findUnique({
@@ -863,6 +917,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.attendance.findMany({
  where: { scheduleId },
  select: { studentId: true, date: true, status: true },
+ // Hard cap: a decades-old schedule could otherwise pull unlimited rows
+ // into one CSV build (Excel handles ~16k columns anyway).
+ take: 2000,
  }),
  ]);
  const dates = [...new Set(marks.map((m) => m.date))].sort();
@@ -1083,6 +1140,18 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  const validEntries = [...byStudent.values()];
 
+ // Previous statuses for this class-date — used to only notify students
+ // whose status actually CHANGED on re-save (re-notify spam guard).
+ const prevRows = await db.attendance.findMany({
+ where: {
+ scheduleId,
+ date: classDate,
+ studentId: { in: validEntries.map((e) => e.studentId) },
+ },
+ select: { studentId: true, status: true },
+ });
+ const prevStatus = new Map(prevRows.map((p) => [p.studentId, p.status]));
+
  // Roster validation — only students of this class batch may be marked.
  // (Same filter the roster GET uses: programId + semester + active.)
  const roster = await db.user.findMany({
@@ -1128,7 +1197,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  })
  );
  saved++;
- if (e.status === "absent") absentees.push(e.studentId);
+ // Notify only on a real status change (first-time absent included,
+ // re-saves of an already-absent student are silent).
+ if (e.status === "absent" && prevStatus.get(e.studentId) !== "absent") {
+ absentees.push(e.studentId);
+ }
  }
 
  // Batched upserts: chunked array-transactions instead of one await per
@@ -1197,8 +1270,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  assertDepartmentAccess(session, qr.departmentId);
 
+ // IDEMPOTENT + RACE-SAFE: roster read, absent sweep and session close
+ // run inside ONE transaction; an already-closed session just reports
+ // the stored state (double-tapping "Finalize" must not re-notify).
+ const summary = await db.$transaction(async (tx) => {
  // Full roster of this class batch
- const roster = await db.user.findMany({
+ const roster = await tx.user.findMany({
  where: {
  departmentId: qr.departmentId,
  role: "student",
@@ -1208,16 +1285,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  },
  select: { id: true },
  });
- const alreadyMarked = await db.attendance.findMany({
+ const alreadyMarked = await tx.attendance.findMany({
  where: { scheduleId: qr.scheduleId, date: qr.date },
  select: { studentId: true, status: true },
  });
  const markedIds = new Set(alreadyMarked.map((m) => m.studentId));
  const missing = roster.filter((st) => !markedIds.has(st.id));
 
- if (missing.length > 0) {
- await db.$transaction([
- db.attendance.createMany({
+ // Short-circuit: nothing missing OR the window was already finalized.
+ if (!qr.closed && missing.length > 0) {
+ // NOTE: no skipDuplicates — the SQLite connector does not support
+ // it. Race safety comes from the serialized transaction: `missing`
+ // is computed from rows read inside this same transaction.
+ await tx.attendance.createMany({
  data: missing.map((st) => ({
  departmentId: qr.departmentId,
  scheduleId: qr.scheduleId,
@@ -1229,8 +1309,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  markedByName: "QR auto-close",
  courseCode: qr.schedule.courseCode,
  })),
- }),
- db.notification.createMany({
+ });
+ await tx.notification.createMany({
  data: missing.map((st) => ({
  userId: st.id,
  title: `Absent marked: ${qr.schedule.courseCode}`,
@@ -1238,36 +1318,42 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  type: "general",
  link: "/?view=dashboard",
  })),
- }),
- ]);
+ });
  }
 
- await db.attendanceSession.update({
- where: { id: qr.id },
+ // Guarded close — a concurrent finalize may have closed it already.
+ await tx.attendanceSession.updateMany({
+ where: { id: qr.id, closed: false },
  data: { closed: true },
  });
 
  return {
- absentMarked: missing.length,
- absentTotal: alreadyMarked.filter((m) => m.status === "absent").length + missing.length,
+ absentMarked: qr.closed ? 0 : missing.length,
+ absentTotal:
+ alreadyMarked.filter((m) => m.status === "absent").length +
+ (qr.closed ? 0 : missing.length),
  present: alreadyMarked.filter((m) => m.status === "present").length,
  late: alreadyMarked.filter((m) => m.status === "late").length,
  excused: alreadyMarked.filter((m) => m.status === "excused").length,
  total: roster.length,
  };
+ });
+
+ return summary;
  }
 
  // ---------- Notices (teacher publishes to their department) ----------
  if (action === "notices") {
- const { title, content, category, audience, courseId, isPinned } = body as {
- title?: string;
- content?: string;
+ // Type-guard user text first — a numeric title used to 500 inside .trim().
+ const title = asStr(body.title, "Title");
+ const content = asStr(body.content, "Content");
+ const { category, audience, courseId, isPinned } = body as {
  category?: string;
  audience?: string;
  courseId?: string;
  isPinned?: boolean;
  };
- if (!title?.trim() || !content?.trim()) {
+ if (!title.trim() || !content.trim()) {
  throw new ApiError(400, "Title and content are required");
  }
  const audienceVal = ["all", "students", "teachers"].includes(String(audience))
@@ -1349,17 +1435,26 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  newDay,
  newTimeSlotId,
  newRoomId,
- reason,
  effectiveDate,
  } = body as Record<string, string>;
+ // Type-guard the free-text reason — a numeric reason used to 500.
+ const reason = asStr(body.reason, "Reason");
 
- if (!scheduleId || !changeType || !reason?.trim()) {
+ if (!scheduleId || !changeType || !reason.trim()) {
  throw new ApiError(400, "Schedule, change type and reason are required");
  }
  // Whitelist the change type (the route only supports these five modes),
  // the target day, and the effective date format.
  if (!(CHANGE_TYPES as readonly string[]).includes(changeType)) {
  throw new ApiError(400, "Invalid change type");
+ }
+ // REALITY CHECK: "rescheduled" with no new day/slot/room is a no-op
+ // that used to produce a change record that changed nothing.
+ if (changeType === "rescheduled" && !newDay && !newTimeSlotId && !newRoomId) {
+ throw new ApiError(
+ 400,
+ "A reschedule needs at least a new day, time slot or room"
+ );
  }
  if (newDay && !DAYS.includes(newDay)) {
  throw new ApiError(400, "Invalid day of week");
@@ -1542,9 +1637,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
  // ---------- Assignments ----------
  if (action === "assignments") {
- const { courseId, title, description, dueDate, maxMarks } =
- body as Record<string, string>;
- if (!courseId || !title?.trim() || !description?.trim()) {
+ // Type-guard user text first — a numeric title used to 500 inside .trim().
+ const title = asStr(body.title, "Title");
+ const description = asStr(body.description, "Description");
+ const courseId = body.courseId as string | undefined;
+ const dueDate = body.dueDate as string | undefined;
+ const maxMarks = body.maxMarks as string | number | undefined;
+ if (!courseId || !title.trim() || !description.trim()) {
  throw new ApiError(400, "Course, title and description are required");
  }
  // REALITY CHECK: a deadline in the past would mark every submission
@@ -1561,6 +1660,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const course = await db.course.findUnique({ where: { id: courseId } });
  if (!course) throw new ApiError(404, "Course not found");
  assertDepartmentAccess(session, course.departmentId);
+ // Ownership guard: teachers write only against their own courses.
+ await assertTeacherOwnsCourse(session, courseId);
 
  const assignment = await db.assignment.create({
  data: {
@@ -1617,6 +1718,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const course = await db.course.findUnique({ where: { id: courseId } });
  if (!course) throw new ApiError(404, "Course not found");
  assertDepartmentAccess(session, course.departmentId);
+ // Ownership guard: teachers publish results only for their own courses.
+ await assertTeacherOwnsCourse(session, courseId);
 
  // Marks scale: default 20 (existing convention) — a custom maxMarks is
  // accepted so other scales don't corrupt the percentage math.
@@ -1657,6 +1760,23 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  `Marks must be a number between 0 and ${maxMarks}`
  );
  }
+ // Grade must be a real UGC letter — free-text grades corrupted the
+ // analytics group-bys; unknown letters are rejected up-front.
+ const gradeVal =
+ e.grade === undefined || e.grade === null || e.grade === ""
+ ? null
+ : String(e.grade);
+ if (gradeVal !== null && !VALID_GRADES.has(gradeVal)) {
+ throw new ApiError(
+ 400,
+ `Invalid grade "${gradeVal}" — valid grades are: ${[...VALID_GRADES].join(", ")}`
+ );
+ }
+ // Remarks are an annotation, not an essay — cap at 500 chars.
+ const remarksVal =
+ e.remarks === undefined || e.remarks === null
+ ? null
+ : String(e.remarks).slice(0, 500);
  ops.push(
  db.result.upsert({
  where: {
@@ -1674,20 +1794,20 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  examType,
  marks,
  maxMarks,
- grade: e.grade ?? null,
- remarks: e.remarks ?? null,
+ grade: gradeVal,
+ remarks: remarksVal,
  },
  update: {
  marks,
- grade: e.grade ?? null,
- remarks: e.remarks ?? null,
+ grade: gradeVal,
+ remarks: remarksVal,
  },
  })
  );
  notifications.push({
  userId: e.studentId,
  title: `Result Published: ${course.code}`,
- body: `Your ${examType.toUpperCase()} result for ${course.code} is published: ${marks}/${maxMarks}${e.grade ? ` (Grade ${e.grade})` : ""}`,
+ body: `Your ${examType.toUpperCase()} result for ${course.code} is published: ${marks}/${maxMarks}${gradeVal ? ` (Grade ${gradeVal})` : ""}`,
  type: "result",
  });
  saved++;
@@ -1812,7 +1932,21 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (typeof body.description === "string")
  data.description = body.description.trim().slice(0, 5000);
  if (body.dueDate !== undefined) {
- data.dueDate = body.dueDate ? new Date(String(body.dueDate)) : null;
+ // Same validation POST applies: garbage dates 400 (a raw `new Date`
+ // used to store Invalid Date → opaque Prisma 500) and the deadline
+ // must still be in the future on edit.
+ if (body.dueDate === null || body.dueDate === "") {
+ data.dueDate = null;
+ } else {
+ const due = new Date(String(body.dueDate));
+ if (Number.isNaN(due.getTime())) {
+ throw new ApiError(400, "Due date is not a valid date");
+ }
+ if (due.getTime() < Date.now() - 60_000) {
+ throw new ApiError(400, "Due date must be in the future");
+ }
+ data.dueDate = due;
+ }
  }
  if (body.maxMarks !== undefined) {
  data.maxMarks =

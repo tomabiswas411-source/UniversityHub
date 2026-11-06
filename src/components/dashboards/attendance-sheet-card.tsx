@@ -22,9 +22,10 @@ import {
   Download,
   Grid3x3,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
-import { toast } from "@/hooks/use-toast";
 import { apiGet } from "@/lib/api-client";
+import { downloadCsv } from "@/lib/csv";
 import { gradeTone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { bdTodayISO } from "@/lib/date-bd";
@@ -79,6 +80,9 @@ export function AttendanceSheetCard({
   const [data, setData] = useState<SheetResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  /* Load failure — kept apart from "no attendance yet" so a broken request
+     never renders the misleading empty state below. */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const reqSeq = useRef(0);
 
   const load = useCallback(async (cid: string) => {
@@ -90,14 +94,11 @@ export function AttendanceSheetCard({
       );
       if (seq !== reqSeq.current) return;
       setData(d);
+      setLoadError(null);
     } catch (err) {
       if (seq !== reqSeq.current) return;
       setData(null);
-      toast({
-        title: "Could not load the attendance sheet",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
+      setLoadError(err instanceof Error ? err.message : "Please try again.");
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
@@ -107,45 +108,37 @@ export function AttendanceSheetCard({
     if (!courseId) {
       reqSeq.current += 1;
       setData(null);
+      setLoadError(null);
       return;
     }
     void load(courseId);
   }, [courseId, refreshSignal, load]);
 
-  const downloadCsv = useCallback(() => {
+  const downloadSheet = useCallback(() => {
     if (!data) return;
     setDownloading(true);
     try {
-      const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-      const lines: string[] = [
-        [`Attendance sheet — ${data.course.courseCode} (${data.course.courseName}) — all class days, one register`].join(","),
-        "",
-        ["Roll", "Student ID", "Name", ...data.columns.map((c) => (c.slot ? `${c.date} (${c.slot})` : c.date)), "Present", "Absent", "Late", "Excused", "Marked", "Attendance %"].join(","),
+      const rows: (string | number)[][] = [
+        [`Attendance sheet — ${data.course.courseCode} (${data.course.courseName}) — all class days, one register`],
+        [""],
+        ["Roll", "Student ID", "Name", ...data.columns.map((c) => (c.slot ? `${c.date} (${c.slot})` : c.date)), "Present", "Absent", "Late", "Excused", "Marked", "Attendance %"],
       ];
       for (const st of data.students) {
         const s = data.summary[st.id];
-        lines.push(
-          [
-            st.rollNumber ?? "",
-            esc(st.studentIdNumber ?? ""),
-            esc(st.fullName),
-            ...data.columns.map((c) => (data.cells[st.id]?.[c.key] ? data.cells[st.id][c.key].toUpperCase() : "")),
-            s?.present ?? 0,
-            s?.absent ?? 0,
-            s?.late ?? 0,
-            s?.excused ?? 0,
-            s?.total ?? 0,
-            `${s?.pct ?? 0}%`,
-          ].join(",")
-        );
+        rows.push([
+          st.rollNumber ?? "",
+          st.studentIdNumber ?? "",
+          st.fullName,
+          ...data.columns.map((c) => (data.cells[st.id]?.[c.key] ? data.cells[st.id][c.key].toUpperCase() : "")),
+          s?.present ?? 0,
+          s?.absent ?? 0,
+          s?.late ?? 0,
+          s?.excused ?? 0,
+          s?.total ?? 0,
+          `${s?.pct ?? 0}%`,
+        ]);
       }
-      // UTF-8 BOM → Excel renders Bangla names correctly
-      const blob = new Blob([`\uFEFF${lines.join("\n")}`], { type: "text/csv;charset=utf-8" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `attendance-sheet-${data.course.courseCode}-all-days.csv`;
-      a.click();
-      URL.revokeObjectURL(a.href);
+      downloadCsv(`attendance-sheet-${data.course.courseCode}-all-days.csv`, rows);
     } finally {
       setDownloading(false);
     }
@@ -164,7 +157,7 @@ export function AttendanceSheetCard({
             variant="outline"
             size="sm"
             className="h-8"
-            onClick={downloadCsv}
+            onClick={downloadSheet}
             disabled={downloading}
           >
             {downloading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
@@ -182,6 +175,15 @@ export function AttendanceSheetCard({
       ) : loading ? (
         <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" /> Building the sheet…
+        </div>
+      ) : loadError && !data ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+          <p className="text-sm font-bold text-rose-800 dark:text-rose-200">Couldn&apos;t load the attendance sheet</p>
+          <p className="max-w-sm text-xs text-rose-700/90 dark:text-rose-300/80">{loadError}</p>
+          <Button variant="outline" size="sm" className="mt-1" onClick={() => void load(courseId)}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </Button>
         </div>
       ) : !data || !hasDates ? (
         <EmptyState

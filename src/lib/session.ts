@@ -108,14 +108,34 @@ export async function requireSession(): Promise<SessionPayload> {
  if (!session) {
  throw new ApiError(401, "Authentication required");
  }
- // Cheap liveness re-check: a deactivated (or deleted) account must not
+ // Liveness re-check: a deactivated (or deleted) account must not
  // keep calling mutations on a session cookie that is still unexpired.
+ // The same row reload also re-reads role/department/university so stale
+ // token claims (user moved departments, or was demoted) are caught
+ // instead of silently granting the old permissions for up to 7 days.
  const user = await db.user.findUnique({
  where: { id: session.userId },
- select: { isActive: true },
+ select: {
+ isActive: true,
+ role: true,
+ departmentId: true,
+ universityId: true,
+ },
  });
  if (!user || !user.isActive) {
  throw new ApiError(401, "Your account is no longer active. Please contact your administrator.");
+ }
+ // Claim freshness check — null token fields match null DB fields.
+ // The token payload always carries all three fields, so compare directly.
+ if (
+ user.role !== session.role ||
+ user.universityId !== (session.universityId ?? null) ||
+ user.departmentId !== (session.departmentId ?? null)
+ ) {
+ throw new ApiError(
+ 403,
+ "Your role or department changed — please sign in again."
+ );
  }
  return session;
 }

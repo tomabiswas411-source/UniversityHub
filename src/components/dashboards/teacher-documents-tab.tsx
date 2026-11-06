@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiGet } from "@/lib/api-client";
+import { downloadCsvText } from "@/lib/csv";
 import { bdTodayISO } from "@/lib/date-bd";
 import { GRADIENT_BTN, SectionCard } from "@/components/dashboards/dashboard-shared";
 import { Button } from "@/components/ui/button";
@@ -48,18 +49,8 @@ import {
 } from "@/components/ui/select";
 import type { CourseDTO, ScheduleDTO } from "@/types";
 
-/* Shared CSV downloader — UTF-8 BOM keeps Bangla names intact in Excel */
-export function downloadCsv(filename: string, csv: string) {
- const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
- const url = URL.createObjectURL(blob);
- const a = document.createElement("a");
- a.href = url;
- a.download = filename;
- document.body.appendChild(a);
- a.click();
- a.remove();
- URL.revokeObjectURL(url);
-}
+/* Shared CSV downloader moved to @/lib/csv (downloadCsvText) — same UTF-8
+   BOM + anchor discipline for every export in the app. */
 
 /* "Today" uses the Asia/Dhaka clock (bdTodayISO) so the day-sheet date
    picker never defaults to the wrong calendar day near midnight. */
@@ -109,7 +100,7 @@ function useDownloader() {
  setBusyKey(key);
  try {
  const res = await apiGet<{ filename: string; csv: string }>(`/api/teacher/export?${query}`);
- downloadCsv(res.filename, res.csv);
+ downloadCsvText(res.filename, res.csv);
  toast({ title: "Download started", description: res.filename });
  } catch (err) {
  toast({

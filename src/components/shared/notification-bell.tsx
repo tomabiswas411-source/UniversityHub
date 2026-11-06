@@ -95,12 +95,26 @@ export function NotificationBell({ className }: { className?: string }) {
     latch would stay false forever after a single 401 (e.g. a temporary
     session expiry) and never resume once the user logs back in. */
  const user = useAuthStore((s) => s.user);
+ /* Request cancellation: after unmount no setState may fire, and a
+    stale response must never overwrite a newer one. */
+ const mountedRef = useRef(true);
+ const fetchSeqRef = useRef(0);
+
+ useEffect(() => {
+ mountedRef.current = true;
+ return () => {
+ mountedRef.current = false;
+ };
+ }, []);
 
  const fetchNotifications = useCallback(
  async (silent = false) => {
  if (!useAuthStore.getState().user) return;
+ const seq = ++fetchSeqRef.current;
  try {
  const data = await apiGet<NotificationsResponse>("/api/notifications");
+ // A newer fetch already landed (or we unmounted) — drop this one.
+ if (seq !== fetchSeqRef.current || !mountedRef.current) return;
  setItems(data.notifications);
  setUnreadCount(data.unreadCount);
  setListError(false);
@@ -119,28 +133,46 @@ export function NotificationBell({ className }: { className?: string }) {
  // network hiccups / 401 (store already cleared by api-client) —
  // surface an inline retry hint instead of stale silence; polling
  // resumes when a user is present again
+ if (seq !== fetchSeqRef.current || !mountedRef.current) return;
  setListError(true);
  }
  },
  [play]
  );
 
+ /* Reset the "first load" latch + newest-notification pointer when the
+    signed-in user CHANGES — keyed by user id, not object identity
+    (refresh() churns the user object and would otherwise re-trigger
+    the new-notification sound for the same person). */
+ const userId = user?.id ?? null;
+ const prevUserIdRef = useRef<string | null>(null);
+ useEffect(() => {
+ if (prevUserIdRef.current !== userId) {
+ prevUserIdRef.current = userId;
+ firstLoadRef.current = true;
+ newestIdRef.current = null;
+ }
+ }, [userId]);
+
  /* COST GUARD: background ticks use the tiny ping endpoint. The full
     50-row list is fetched only when the dropdown opens or the ping
     reports a changed unread count. ~100× less bandwidth than polling
     the full list every 30s. */
  useEffect(() => {
- firstLoadRef.current = true;
- newestIdRef.current = null;
+ let cancelled = false;
  let lastSeenUnread = -1;
 
- const initial = window.setTimeout(() => fetchNotifications(), 0);
+ const initial = window.setTimeout(() => {
+ if (!cancelled) void fetchNotifications();
+ }, 0);
 
  const ping = async () => {
+ if (cancelled) return;
  if (typeof document !== "undefined" && document.hidden) return;
  if (!useAuthStore.getState().user) return;
  try {
  const d = await apiGet<PingResponse>("/api/notifications?ping=1");
+ if (cancelled) return; // stale tick — component gone / effect re-ran
  if (d.unreadCount !== lastSeenUnread) {
  if (lastSeenUnread !== -1 && d.unreadCount > lastSeenUnread && d.latest) {
  // a genuinely new notification arrived
@@ -161,6 +193,7 @@ export function NotificationBell({ className }: { className?: string }) {
 
  const interval = window.setInterval(ping, 45000);
  return () => {
+ cancelled = true;
  window.clearTimeout(initial);
  window.clearInterval(interval);
  };

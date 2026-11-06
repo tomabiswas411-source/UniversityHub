@@ -5,6 +5,27 @@ import { requireSession, ApiError } from "@/lib/session";
 import { hashPassword } from "@/lib/auth";
 import { runCleanup } from "@/lib/cleanup";
 
+/** Trimmed, hard-capped string — long-field caps keep free-text abuse
+    from bloating university rows (2000 chars max, 200 for short ones). */
+function cleanStr(v: unknown, maxLen: number): string {
+  return String(v).trim().slice(0, maxLen);
+}
+
+const PASSWORD_MIN = 6;
+const PASSWORD_MAX = 72; // bcrypt only hashes the first 72 bytes
+
+function validatePassword(pw: string): void {
+  if (pw.length < PASSWORD_MIN) {
+    throw new ApiError(400, "Password must be at least 6 characters");
+  }
+  if (pw.length > PASSWORD_MAX) {
+    throw new ApiError(
+      400,
+      "Password must be at most 72 characters (bcrypt limit)"
+    );
+  }
+}
+
 /**
  * Super Admin API.
  * GET /api/admin/overview → platform stats + universities + plans
@@ -232,19 +253,29 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  if (action === "users") {
  // Platform-wide user directory — the super admin's control panel for
  // every account on the platform. Filters are optional; q is matched
- // in JS (SQLite contains is case-sensitive — 500-row cap keeps it safe).
+ // inside the Prisma WHERE (OR contains) so the 500-row cap counts
+ // matching rows — the old JS-filter-after-fetch under-counted.
  const role = searchParams.get("role");
  const universityId = searchParams.get("universityId");
  const active = searchParams.get("active");
- const q = (searchParams.get("q") ?? "").trim().toLowerCase();
+ const q = (searchParams.get("q") ?? "").trim();
 
  const where: Record<string, unknown> = {};
  if (role && ["super_admin", "dept_admin", "teacher", "student"].includes(role)) {
  where.role = role;
  }
  if (universityId) where.universityId = universityId;
+ // C3: active=true → only active, false → only inactive, absent/all → everyone.
  if (active === "true") where.isActive = true;
  if (active === "false") where.isActive = false;
+ if (q) {
+ where.OR = [
+ { fullName: { contains: q } },
+ { email: { contains: q } },
+ { rollNumber: { contains: q } },
+ { studentIdNumber: { contains: q } },
+ ];
+ }
 
  const users = await db.user.findMany({
  where,
@@ -266,14 +297,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  take: 500,
  });
 
- const filtered = q
- ? users.filter((u) =>
- [u.fullName, u.email, u.rollNumber, u.studentIdNumber]
- .some((v) => (v ?? "").toLowerCase().includes(q))
- )
- : users;
-
- return { users: filtered, total: filtered.length };
+ return { users, total: users.length };
  }
 
  if (action === "system") {
@@ -343,10 +367,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!name || !slug) {
  throw new ApiError(400, "University name and slug are required");
  }
+ // Hard caps: short fields 200, long free-text fields 2000.
+ const cleanName = cleanStr(name, 200);
+ const cleanShort = shortName ? cleanStr(shortName, 200) : null;
+ const cleanAddress = address ? cleanStr(address, 2000) : null;
+ const cleanEmail = contactEmail ? cleanStr(contactEmail, 200) : null;
+ const cleanPhone = contactPhone ? cleanStr(contactPhone, 200) : null;
+ const cleanWebsite = websiteURL ? cleanStr(websiteURL, 2000) : null;
+ const cleanAbout = aboutText ? cleanStr(aboutText, 2000) : null;
  const cleanSlug = slug
  .toLowerCase()
  .trim()
- .replace(/[^a-z0-9-]/g, "-");
+ .replace(/[^a-z0-9-]/g, "-")
+ .slice(0, 100);
  if (!cleanSlug || cleanSlug === "-") {
  throw new ApiError(400, "Slug must contain letters or numbers");
  }
@@ -361,23 +394,26 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!plan) throw new ApiError(400, "Selected plan does not exist");
  }
 
- const university = await db.university.create({
+ // University + its default SiteSettings row are born together — one
+ // transaction so a half-created tenant (no settings) can never exist.
+ const { university } = await db.$transaction(async (tx) => {
+ const university = await tx.university.create({
  data: {
- name,
+ name: cleanName,
  slug: cleanSlug,
- shortName: shortName || null,
- address: address || null,
- contactEmail: contactEmail || null,
- contactPhone: contactPhone || null,
- websiteURL: websiteURL || null,
- aboutText: aboutText || null,
+ shortName: cleanShort,
+ address: cleanAddress,
+ contactEmail: cleanEmail,
+ contactPhone: cleanPhone,
+ websiteURL: cleanWebsite,
+ aboutText: cleanAbout,
  planId: planId || null,
  },
  });
-
- // default site settings
- await db.siteSettings.create({
- data: { universityId: university.id, siteName: name },
+ await tx.siteSettings.create({
+ data: { universityId: university.id, siteName: cleanName },
+ });
+ return { university };
  });
 
  return { university };
@@ -398,9 +434,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
  throw new ApiError(400, "Please provide a valid email address");
  }
- if (password.length < 6) {
- throw new ApiError(400, "Password must be at least 6 characters");
- }
+ validatePassword(password);
 
  const department = await db.department.findUnique({
  where: { id: departmentId },
@@ -459,16 +493,19 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (action === "universities") {
  if (!id) throw new ApiError(400, "id is required");
  const data: Record<string, unknown> = {};
- for (const f of [
- "name",
- "shortName",
- "address",
- "contactEmail",
- "contactPhone",
- "websiteURL",
- "aboutText",
- ]) {
- if (body[f] !== undefined) data[f] = body[f] ? String(body[f]) : null;
+ // Hard caps per field — short fields 200, long free-text 2000.
+ const STRING_CAPS: Record<string, number> = {
+ name: 200,
+ shortName: 200,
+ address: 2000,
+ contactEmail: 200,
+ contactPhone: 200,
+ websiteURL: 2000,
+ aboutText: 2000,
+ };
+ for (const f of Object.keys(STRING_CAPS)) {
+ if (body[f] !== undefined)
+ data[f] = body[f] ? cleanStr(body[f], STRING_CAPS[f]) : null;
  }
  if (body.planId !== undefined) {
  if (body.planId) {
@@ -485,7 +522,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  const cleanSlug = String(body.slug)
  .toLowerCase()
  .trim()
- .replace(/[^a-z0-9-]/g, "-");
+ .replace(/[^a-z0-9-]/g, "-")
+ .slice(0, 100);
  const existing = await db.university.findFirst({
  where: { slug: cleanSlug, id: { not: id } },
  });
@@ -541,9 +579,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  }
  if (body.password !== undefined) {
  const pw = String(body.password);
- if (pw.length < 6) {
- throw new ApiError(400, "Password must be at least 6 characters");
- }
+ validatePassword(pw);
  data.password = await hashPassword(pw);
  }
  if (Object.keys(data).length === 0) {
@@ -574,14 +610,37 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (body.priceYearly !== undefined)
  data.priceYearly = num(body.priceYearly, "Yearly price", { min: 0 });
  if (body.maxDepartments !== undefined)
- data.maxDepartments = num(body.maxDepartments, "Max departments", { min: 0 });
+ data.maxDepartments = num(body.maxDepartments, "Max departments", { min: -1 });
  if (body.maxStudents !== undefined)
- data.maxStudents = num(body.maxStudents, "Max students", { min: 0 });
+ data.maxStudents = num(body.maxStudents, "Max students", { min: -1 });
  if (body.maxTeachers !== undefined)
- data.maxTeachers = num(body.maxTeachers, "Max teachers", { min: 0 });
+ data.maxTeachers = num(body.maxTeachers, "Max teachers", { min: -1 });
  if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
- if (body.features !== undefined)
- data.features = JSON.stringify(body.features);
+ if (body.features !== undefined) {
+ // Contract C5: features arrive as an array of strings OR as a JSON
+ // string of one — normalize here so the column is stringify-once.
+ let features: unknown = body.features;
+ if (typeof features === "string") {
+ try {
+ features = JSON.parse(features);
+ } catch {
+ throw new ApiError(
+ 400,
+ "features must be an array of strings (or a JSON array string)"
+ );
+ }
+ }
+ if (
+ !Array.isArray(features) ||
+ features.some((f) => typeof f !== "string")
+ ) {
+ throw new ApiError(
+ 400,
+ "features must be an array of strings (or a JSON array string)"
+ );
+ }
+ data.features = JSON.stringify(features);
+ }
  return db.plan.update({ where: { id }, data });
  }
 

@@ -27,7 +27,9 @@ export const UGC_SCALE: GradeBand[] = [
 ];
 
 export function percentToGrade(pct: number): GradeBand {
-  const clamped = Math.max(0, Math.min(100, pct));
+  // UGC rounding: 79.5 → 80 rounds up into the A+ band, so fractional
+  // averages never strand a student just below a band edge.
+  const clamped = Math.max(0, Math.min(100, Math.round(pct)));
   return UGC_SCALE.find((b) => clamped >= b.min) ?? UGC_SCALE[UGC_SCALE.length - 1];
 }
 
@@ -95,10 +97,10 @@ export function computeCoursePerformance(
 export function computeGPA(courses: CoursePerformance[]): number {
   const graded = courses.filter((c) => c.examCount > 0);
   if (graded.length === 0) return 0;
-  const totalCredits = graded.reduce((acc, c) => acc + (c.creditHours || 3), 0);
+  const totalCredits = graded.reduce((acc, c) => acc + (c.creditHours ?? 3), 0);
   if (totalCredits <= 0) return 0;
   const weighted = graded.reduce(
-    (acc, c) => acc + c.gpaPoint * (c.creditHours || 3),
+    (acc, c) => acc + c.gpaPoint * (c.creditHours ?? 3),
     0
   );
   return Math.round((weighted / totalCredits) * 100) / 100;

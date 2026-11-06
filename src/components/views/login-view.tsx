@@ -35,17 +35,20 @@ import {
 
 interface LoginViewProps {
  navigate: (v: "home" | "department" | "login" | "pricing" | "dashboard", params?: Record<string, string>) => void;
+ /** Deep-link support: "?tab=staff" opens straight on the Staff tab. */
+ initialTab?: "student" | "staff";
 }
 
-export function LoginView({ navigate }: LoginViewProps) {
+export function LoginView({ navigate, initialTab }: LoginViewProps) {
  const { user, setUser } = useAuthStore();
  const [universities, setUniversities] = useState<UniversityDTO[]>([]);
  const [staffLoading, setStaffLoading] = useState(false);
  const [studentLoading, setStudentLoading] = useState(false);
  const [error, setError] = useState<string | null>(null);
  const [showPassword, setShowPassword] = useState(false);
- /* students are the majority — open on the Student tab */
- const [tab, setTab] = useState("student");
+ /* students are the majority — default to the Student tab unless a
+    deep link (?view=login&tab=staff) says otherwise */
+ const [tab, setTab] = useState<string>(initialTab ?? "student");
  const [uniError, setUniError] = useState<string | null>(null);
  const [uniLoading, setUniLoading] = useState(true);
 
@@ -64,15 +67,24 @@ export function LoginView({ navigate }: LoginViewProps) {
  apiGet<{ universities: UniversityDTO[] }>("/api/portal")
  .then((d) => {
  setUniversities(d.universities);
- if (d.universities.length > 0) {
- setUniSlug((prev) => prev || d.universities[0].slug);
- }
  })
  .catch(() => {
  setUniError("Couldn't load universities. Check your connection and retry.");
  })
  .finally(() => setUniLoading(false));
  }, []);
+
+ /* Auto-pick when there is EXACTLY one university — done in an effect
+    (render context) rather than inside the fetch .then, where state
+    updates from the promise were observed not to commit reliably.
+    With several universities the placeholder stays so students
+    actively choose — silently preselecting the first makes it far
+    too easy to submit credentials against the wrong campus. */
+ useEffect(() => {
+ if (universities.length === 1) {
+ setUniSlug(universities[0].slug);
+ }
+ }, [universities]);
 
  useEffect(() => {
  loadUniversities();
@@ -201,6 +213,7 @@ export function LoginView({ navigate }: LoginViewProps) {
  id="email"
  type="email"
  required
+ autoComplete="email"
  placeholder="you@university.edu"
  className="pl-9 h-11"
  value={email}
@@ -216,6 +229,7 @@ export function LoginView({ navigate }: LoginViewProps) {
  id="password"
  type={showPassword ? "text" : "password"}
  required
+ autoComplete="current-password"
  placeholder="••••••••"
  className="pl-9 pr-10 h-11"
  value={password}
@@ -258,18 +272,54 @@ export function LoginView({ navigate }: LoginViewProps) {
  <form onSubmit={studentLogin} className="space-y-4">
  <div className="space-y-2">
  <Label htmlFor="university-select">University</Label>
- <Select value={uniSlug} onValueChange={setUniSlug} required>
  {uniLoading ? (
+ <Select value={uniSlug} onValueChange={setUniSlug}>
  <SelectTrigger id="university-select" className="h-11" disabled aria-busy="true">
  <Loader2 className="w-4 h-4 mr-2 animate-spin text-muted-foreground" />
  <span className="text-muted-foreground">Loading universities…</span>
  </SelectTrigger>
+ </Select>
+ ) : universities.length === 0 && !uniError ? (
+ /* Portal came back empty — an empty <select> would silently
+    block sign-in with no explanation. */
+ <div className="rounded-xl border border-dashed border-border bg-secondary/40 px-4 py-5 text-center">
+ <Building2 className="mx-auto mb-1.5 h-5 w-5 text-muted-foreground" />
+ <p className="text-sm font-medium">
+ No universities are accepting sign-ins right now
+ </p>
+ <p className="mt-0.5 text-xs text-muted-foreground">
+ Please check back soon or contact your department.
+ </p>
+ <Button
+ type="button"
+ variant="outline"
+ size="sm"
+ className="mt-3 min-h-9 px-3"
+ onClick={loadUniversities}
+ disabled={uniLoading}
+ >
+ Retry
+ </Button>
+ </div>
  ) : (
+ <Select
+ value={uniSlug}
+ /* Radix can emit an empty change while its item registry warms up
+    (content mounts lazily) — ignoring it stops the auto-picked
+    single university from being silently cleared. */
+ onValueChange={(v) => {
+ if (v) setUniSlug(v);
+ }}
+ >
  <SelectTrigger id="university-select" className="h-11">
  <Building2 className="w-4 h-4 mr-2 text-muted-foreground" />
- <SelectValue placeholder="Select your university" />
+ {/* Render the label from OUR state, not Radix's item registry —
+     the registry is empty until the dropdown is first opened, which
+     made the trigger show the placeholder even with a value set. */}
+ <SelectValue placeholder="Select your university">
+ {universities.find((u) => u.slug === uniSlug)?.name}
+ </SelectValue>
  </SelectTrigger>
- )}
  <SelectContent>
  {universities.map((u) => (
  <SelectItem key={u.id} value={u.slug}>
@@ -278,6 +328,7 @@ export function LoginView({ navigate }: LoginViewProps) {
  ))}
  </SelectContent>
  </Select>
+ )}
  </div>
  {uniError && (
  <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">

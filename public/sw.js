@@ -1,6 +1,6 @@
 /* UniversityHub Service Worker — PWA offline shell + notification routing
- * v6: bump whenever the shell changes so existing installs refresh caches */
-const CACHE = "universityhub-v6";
+ * v7: bump whenever the shell changes so existing installs refresh caches */
+const CACHE = "universityhub-v7";
 const OFFLINE_ASSETS = [
  "/",
  "/offline.html",
@@ -34,7 +34,11 @@ self.addEventListener("activate", (event) => {
 /* Strategies:
    - API ............ network-first (offline → JSON 503)
    - Navigations .... network-first (offline → cached shell)
-   - Static assets .. cache-first (immutable _next/static, icons, fonts) */
+   - Static assets .. cache-first, but ONLY for the immutable buckets
+     below (_next/static, /icons/, /logo.svg). Everything else —
+     manifest.json, robots.txt, ad-hoc files — falls through to the
+     network so a stale copy can never get stuck in the cache. */
+const CACHEABLE_STATIC = ["/_next/static/", "/icons/", "/logo.svg"];
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
@@ -63,7 +67,10 @@ self.addEventListener("fetch", (event) => {
         .then((res) => {
           if (res && res.status === 200 && res.type === "basic") {
             const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(req, copy));
+            // Keep the worker alive until the shell copy is written.
+            event.waitUntil(
+              caches.open(CACHE).then((cache) => cache.put(req, copy))
+            );
           }
           return res;
         })
@@ -72,7 +79,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: cache-first (hashed/immutable)
+  // Static assets: cache-first (hashed/immutable) — restricted to the
+  // buckets above; anything else goes straight to the network.
+  const cacheable = CACHEABLE_STATIC.some(
+    (p) => url.pathname === p || url.pathname.startsWith(p)
+  );
+  if (!cacheable) return;
+
   event.respondWith(
     caches.match(req).then(
       (cached) =>
@@ -80,7 +93,9 @@ self.addEventListener("fetch", (event) => {
         fetch(req).then((res) => {
           if (res && res.status === 200 && res.type === "basic") {
             const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(req, copy));
+            event.waitUntil(
+              caches.open(CACHE).then((cache) => cache.put(req, copy))
+            );
           }
           return res;
         })
@@ -100,7 +115,12 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       const existing = clients.find((c) => c.url.includes(self.location.origin));
-      if (existing) return existing.focus();
+      if (existing) {
+        // Deliver the deep link to the open tab (the page listens for
+        // NOTIF_NAVIGATE and router.push-es it), then bring it forward.
+        existing.postMessage({ type: "NOTIF_NAVIGATE", link: target });
+        return existing.focus();
+      }
       return self.clients.openWindow(target);
     })
   );

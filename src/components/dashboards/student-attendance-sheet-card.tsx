@@ -12,10 +12,10 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Grid3x3, Loader2 } from "lucide-react";
-import { toast } from "@/hooks/use-toast";
+import { ChevronDown, ChevronRight, Grid3x3, Loader2, RefreshCw } from "lucide-react";
 import { apiGet } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { EmptyState, SectionCard } from "@/components/dashboards/dashboard-shared";
 
 interface CourseSheet {
@@ -52,6 +52,9 @@ function fmtDay(iso: string): string {
 export function StudentAttendanceSheetCard() {
   const [courses, setCourses] = useState<CourseSheet[] | null>(null);
   const [loading, setLoading] = useState(true);
+  /* Load failure vs "no attendance yet" — a broken request gets its own
+     retryable card instead of the misleading empty state. */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -61,13 +64,11 @@ export function StudentAttendanceSheetCard() {
         "/api/student/attendance-sheet"
       );
       setCourses(d.courses ?? []);
+      setLoadError(null);
     } catch (err) {
-      toast({
-        title: "Could not load your attendance sheet",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-      setCourses([]);
+      // Surfaced via the error card below — a toast on top of it is noise.
+      setCourses(null);
+      setLoadError(err instanceof Error ? err.message : "Please try again.");
     } finally {
       setLoading(false);
     }
@@ -95,6 +96,15 @@ export function StudentAttendanceSheetCard() {
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" /> Building your sheet…
+        </div>
+      ) : loadError && !courses ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+          <p className="text-sm font-bold text-rose-800 dark:text-rose-200">Couldn&apos;t load your attendance sheet</p>
+          <p className="max-w-sm text-xs text-rose-700/90 dark:text-rose-300/80">{loadError}</p>
+          <Button variant="outline" size="sm" className="mt-1" onClick={() => void load()}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </Button>
         </div>
       ) : !courses || courses.length === 0 ? (
         <EmptyState

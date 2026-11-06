@@ -327,6 +327,26 @@ export async function POST(req: NextRequest) {
  });
  if (!university) throw new ApiError(404, "University not found");
 
+ // Plan limit (fix 8e): -1 = unlimited; count ACTIVE departments with the
+ // same isActive semantics as the row we are about to create.
+ const plan = university.planId
+ ? await db.plan.findUnique({
+ where: { id: university.planId },
+ select: { maxDepartments: true },
+ })
+ : null;
+ if (plan && plan.maxDepartments >= 0) {
+ const activeCount = await db.department.count({
+ where: { universityId, isActive: true },
+ });
+ if (activeCount >= plan.maxDepartments) {
+ throw new ApiError(
+ 403,
+ `Your plan limit for departments is reached (limit ${plan.maxDepartments}). Upgrade the plan to add more.`
+ );
+ }
+ }
+
  // shortName/code are schema-required — derive a sensible default
  const shortName =
  optStr(body.shortName) ||

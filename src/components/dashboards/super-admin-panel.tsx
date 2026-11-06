@@ -397,20 +397,26 @@ export function SuperAdminPanel({
  const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
  const [analyticsLoading, setAnalyticsLoading] = useState(false);
  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+ // Monotonic request id — rapid tab toggles must not interleave responses.
+ const analyticsReqRef = useRef(0);
  // Refetch every time the analytics tab is opened — never serve a stale cache.
  const loadAnalytics = useCallback(async () => {
  if (analyticsLoading) return;
+ const seq = ++analyticsReqRef.current;
  setAnalyticsLoading(true);
  try {
- setAnalytics(await apiGet<PlatformAnalytics>("/api/admin/analytics"));
+ const data = await apiGet<PlatformAnalytics>("/api/admin/analytics");
+ if (seq !== analyticsReqRef.current) return; // stale — a newer request won
+ setAnalytics(data);
  setAnalyticsError(null);
  } catch (err) {
+ if (seq !== analyticsReqRef.current) return;
  // Silent catch left the tab looking permanently empty — surface a
  // retryable error message instead (see the Analytics tab render).
  setAnalytics(null);
  setAnalyticsError(errMsg(err));
  } finally {
- setAnalyticsLoading(false);
+ if (seq === analyticsReqRef.current) setAnalyticsLoading(false);
  }
  }, [analyticsLoading]);
 
@@ -722,10 +728,10 @@ export function SuperAdminPanel({
  });
  return;
  }
- if (password.length < 4) {
+ if (password.length < 6) {
  toast({
  title: "Weak password",
- description: "Password must be at least 4 characters.",
+ description: "Password must be at least 6 characters.",
  variant: "destructive",
  });
  return;
@@ -772,6 +778,20 @@ export function SuperAdminPanel({
  async function savePlan(id: string) {
  const d = planDrafts[id];
  if (!d) return;
+ // Plan limits accept -1 = Unlimited (server contract) — anything
+ // below that is a typo, not a limit.
+ if (
+ numOr(d.maxDepartments, -1) < -1 ||
+ numOr(d.maxStudents, -1) < -1 ||
+ numOr(d.maxTeachers, -1) < -1
+ ) {
+ toast({
+ title: "Invalid limit",
+ description: "Limits must be -1 (Unlimited) or a non-negative number.",
+ variant: "destructive",
+ });
+ return;
+ }
  setSavingPlanId(id);
  try {
  await apiPut(`/api/admin/plans?id=${id}`, {
@@ -1220,6 +1240,7 @@ export function SuperAdminPanel({
  <Field label="Max depts">
  <Input
  type="number"
+ min={-1}
  value={draft.maxDepartments}
  onChange={(e) =>
  patchPlan(p.id, { maxDepartments: e.target.value })
@@ -1229,6 +1250,7 @@ export function SuperAdminPanel({
  <Field label="Max students">
  <Input
  type="number"
+ min={-1}
  value={draft.maxStudents}
  onChange={(e) =>
  patchPlan(p.id, { maxStudents: e.target.value })
@@ -1238,6 +1260,7 @@ export function SuperAdminPanel({
  <Field label="Max teachers">
  <Input
  type="number"
+ min={-1}
  value={draft.maxTeachers}
  onChange={(e) =>
  patchPlan(p.id, { maxTeachers: e.target.value })
@@ -1246,7 +1269,7 @@ export function SuperAdminPanel({
  </Field>
  </div>
  <p className="-mt-1 text-[10px] text-muted-foreground">
- Tip: use -1 for unlimited limits.
+ Tip: -1 means Unlimited — the summary above renders it live.
  </p>
  <Field label="Features (comma separated)">
  <Input
@@ -1709,7 +1732,7 @@ export function SuperAdminPanel({
  <Input
  type="password"
  value={provisionForm.password}
- placeholder="At least 4 characters"
+ placeholder="At least 6 characters"
  onChange={(e) =>
  setProvisionForm((f) => ({ ...f, password: e.target.value }))
  }

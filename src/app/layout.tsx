@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Fraunces, Geist_Mono } from "next/font/google";
+import { Inter, Fraunces } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/shared/theme-provider";
@@ -15,11 +15,6 @@ const fraunces = Fraunces({
  variable: "--font-fraunces",
  subsets: ["latin"],
  display: "swap",
-});
-
-const geistMono = Geist_Mono({
- variable: "--font-geist-mono",
- subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
@@ -59,6 +54,13 @@ export const metadata: Metadata = {
  type: "website",
  images: ["/icons/icon-512x512.png"],
  },
+ twitter: {
+ card: "summary_large_image",
+ title: "UniversityHub — University Management System",
+ description:
+ "One platform for every department — class routines, notices, assignments, results and real-time notifications. Multi-university PWA management system.",
+ images: ["/icons/icon-512x512.png"],
+ },
 };
 
 export const viewport: Viewport = {
@@ -77,7 +79,7 @@ export default function RootLayout({
  return (
  <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
  <body
- className={`${inter.variable} ${fraunces.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+ className={`${inter.variable} ${fraunces.variable} antialiased bg-background text-foreground`}
  >
  <ThemeProvider>
  {children}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useCallback, useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAuthStore } from "@/store/auth-store";
@@ -9,7 +9,7 @@ import { SiteHeader } from "@/components/shared/site-header";
 import { SiteFooter } from "@/components/shared/site-footer";
 import { MobileNav } from "@/components/shared/mobile-nav";
 import { AppSidebar } from "@/components/shared/app-sidebar";
-import { ScrollProgress } from "@/components/shared/motion-primitives";
+import { MotionRoot, ScrollProgress } from "@/components/shared/motion-primitives";
 import { HomeView } from "@/components/views/home-view";
 import { DepartmentView } from "@/components/views/department-view";
 import { LoginView } from "@/components/views/login-view";
@@ -17,7 +17,8 @@ import { PricingView } from "@/components/views/pricing-view";
 import { DashboardView } from "@/components/views/dashboard-view";
 import { AttendView } from "@/components/views/attend-view";
 import { ScanView } from "@/components/views/scan-view";
-import { Loader2, GraduationCap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Loader2, GraduationCap, RefreshCcw } from "lucide-react";
 
 export type AppView = "home" | "department" | "login" | "pricing" | "dashboard" | "attend" | "scan";
 
@@ -53,10 +54,34 @@ function AppShell() {
  const showRail = view === "dashboard";
 
  const [booting, setBooting] = useState(true);
+ const [bootTimedOut, setBootTimedOut] = useState(false);
+
+ /* Boot must never hang forever: race the session refresh against an
+    8s timeout. On timeout we drop the spinner and show a retry screen
+    with the same boot aesthetic (a hung /api/auth/me used to freeze
+    the app on "Loading UniversityHub..." indefinitely). */
+ const runBoot = useCallback(() => {
+ setBooting(true);
+ setBootTimedOut(false);
+ let timedOut = false;
+ const timer = window.setTimeout(() => {
+ timedOut = true;
+ setBootTimedOut(true);
+ setBooting(false);
+ }, 8000);
+ refresh().finally(() => {
+ window.clearTimeout(timer);
+ if (!timedOut) setBooting(false);
+ });
+ }, [refresh]);
 
  useEffect(() => {
- refresh().finally(() => setBooting(false));
- }, [refresh]);
+ // Deferred a tick so no setState runs synchronously inside the
+ // effect body (React 19 cascading-render guard — same pattern as
+ // the ScanView camera start).
+ const t = window.setTimeout(() => runBoot(), 0);
+ return () => window.clearTimeout(t);
+ }, [runBoot]);
 
  const navigate = (
  v: AppView,
@@ -73,7 +98,13 @@ function AppShell() {
  // In-page tab switches keep the scroll position — only real
  // view changes jump to the top.
  if (opts?.scroll !== false) {
- window.scrollTo({ top: 0, behavior: "smooth" });
+ window.scrollTo({
+ top: 0,
+ // Respect the OS reduce-motion setting — jump instead of gliding.
+ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+ ? "auto"
+ : "smooth",
+ });
  }
  };
 
@@ -87,10 +118,24 @@ function AppShell() {
  <GraduationCap className="w-8 h-8 text-[#FFE01B]" />
  </div>
  </div>
+ {bootTimedOut ? (
+ <div className="flex flex-col items-center gap-3 text-center">
+ <p className="max-w-xs text-sm text-muted-foreground">
+ Still connecting… the server is taking longer than usual.
+ </p>
+ <Button
+ onClick={runBoot}
+ className="h-11 rounded-xl bg-gradient-to-r from-[#2D4F35] to-[#4A7C58] px-6 text-white shadow-lg shadow-[#2D4F35]/25 hover:from-[#233D2A] hover:to-[#3A6B47]"
+ >
+ <RefreshCcw className="w-4 h-4" /> Retry
+ </Button>
+ </div>
+ ) : (
  <div className="flex items-center gap-2 text-sm text-muted-foreground">
  <Loader2 className="w-4 h-4 animate-spin" />
  Loading UniversityHub...
  </div>
+ )}
  </div>
  </div>
  );
@@ -114,7 +159,7 @@ function AppShell() {
  <main
  id="main-content"
  tabIndex={-1}
- className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 pb-24 md:pb-8"
+ className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 pb-24 lg:pb-8"
  >
  <Suspense
  fallback={
@@ -136,7 +181,12 @@ function AppShell() {
  {view === "department" && (
  <DepartmentView departmentId={deptId} navigate={navigate} />
  )}
- {view === "login" && <LoginView navigate={navigate} />}
+ {view === "login" && (
+ <LoginView
+ navigate={navigate}
+ initialTab={tabParam === "staff" ? "staff" : undefined}
+ />
+ )}
  {view === "pricing" && <PricingView navigate={navigate} />}
  {view === "dashboard" && (
  <DashboardView
@@ -154,7 +204,7 @@ function AppShell() {
  </Suspense>
  </main>
 
- <SiteFooter navigate={navigate} />
+ <SiteFooter />
  </div>
  <MobileNav view={view} navigate={navigate} />
  </div>
@@ -163,6 +213,7 @@ function AppShell() {
 
 export default function Page() {
  return (
+ <MotionRoot>
  <Suspense
  fallback={
  <div className="min-h-screen flex items-center justify-center">
@@ -172,5 +223,6 @@ export default function Page() {
  >
  <AppShell />
  </Suspense>
+ </MotionRoot>
  );
 }

@@ -146,6 +146,7 @@ model User {
   @@unique([universityId, studentIdNumber])
   @@index([role])
   @@index([departmentId])
+  @@index([universityId]) // university-scoped queries (directory, plan counts)
 }
 
 // ============ ACADEMICS ============
@@ -308,6 +309,7 @@ model ScheduleChange {
   schedule   Schedule   @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
 
   @@index([departmentId, effectiveDate])
+  @@index([teacherId]) // teacher change-history lookups
 }
 
 // ============ NOTICES & NOTIFICATIONS ============
@@ -336,6 +338,7 @@ model Notice {
   author     User       @relation(fields: [postedBy], references: [id])
 
   @@index([departmentId, createdAt])
+  @@index([expiryDate]) // expiry sweep + public expiry filter
 }
 
 // Per-user notification (fan-out target)
@@ -384,6 +387,7 @@ model Attendance {
   @@unique([scheduleId, studentId, date])
   @@unique([scheduleId, date, deviceId])
   @@index([departmentId, date])
+  @@index([studentId, date]) // per-student all-time summary (groupBy)
   @@index([studentId, courseId])
   @@index([courseId, date])
 }
@@ -419,6 +423,7 @@ model AttendanceSession {
 
   @@index([departmentId, createdAt])
   @@index([scheduleId, date])
+  @@index([expiresAt]) // retention sweep + expiry checks
 }
 
 model Assignment {
@@ -465,6 +470,7 @@ model Result {
 
   @@unique([courseId, studentId, examType])
   @@index([studentId]) // student dashboard fetches all own results
+  @@index([enteredBy]) // teacher insights filter on enteredBy
   @@index([departmentId, examType]) // analytics aggregation
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { timingSafeEqual } from "crypto";
 import { handle } from "@/lib/api-helpers";
 import { runCleanup } from "@/lib/cleanup";
 import { requireSession, ApiError } from "@/lib/session";
@@ -11,6 +12,9 @@ import { requireSession, ApiError } from "@/lib/session";
  * configured — that is the primary auth. A logged-in super_admin may
  * also trigger it manually from the platform dashboard.
  *
+ * CONTRACT (C4): the response is
+ *   { success: true, data: { ranAt, counts: {…all sweep counters…}, durationMs } }
+ *
  * Responses are one tiny JSON line; the sweep itself is the cost saver.
  */
 
@@ -18,7 +22,12 @@ async function authorize(req: NextRequest): Promise<void> {
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const header = req.headers.get("authorization") ?? "";
-    if (header === `Bearer ${secret}`) return;
+    const expected = `Bearer ${secret}`;
+    // Length-guarded constant-time compare — never leaks the secret's
+    // length or comparison timing to a probing client.
+    const a = Buffer.from(expected);
+    const b = Buffer.from(header);
+    if (a.length === b.length && timingSafeEqual(a, b)) return;
     // fall through — maybe a super_admin is triggering it manually
   }
   const session = await requireSession().catch(() => null);
@@ -27,16 +36,14 @@ async function authorize(req: NextRequest): Promise<void> {
 }
 
 async function sweep() {
+  const startedAt = Date.now();
   const result = await runCleanup();
-  const total =
-    result.attendanceSessions +
-    result.notificationsRead +
-    result.notificationsUnread +
-    result.scheduleChangesDeleted +
-    result.autoNotices +
-    result.expiredNotices +
-    result.calendarEvents;
-  return { ok: true, totalPurged: total, ...result };
+  const { ranAt, ...counts } = result;
+  return {
+    ranAt,
+    counts,
+    durationMs: Date.now() - startedAt,
+  };
 }
 
 export async function GET(req: NextRequest) {

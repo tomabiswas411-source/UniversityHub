@@ -35,14 +35,8 @@ export async function GET(req: NextRequest) {
  },
  });
 
- const studentCount = await db.user.count({
- where: {
- universityId: university.id,
- role: "student",
- isActive: true,
- departmentId: { in: departments.map((d) => d.id) },
- },
- });
+ // (removed: an unused whole-university studentCount query — the
+ // per-department counts below are what the DTO actually consumes)
 
  // distribute student count proportionally? Simpler: count per dept.
  const studentsPerDept = await db.user.groupBy({

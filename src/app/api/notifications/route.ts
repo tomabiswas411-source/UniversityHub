@@ -87,6 +87,15 @@ export async function PATCH(req: NextRequest) {
  const body = await req.json().catch(() => ({}));
  const { ids, all } = body as { ids?: string[]; all?: boolean };
 
+ // ids must be an array of strings — anything else (an object, a bare
+ // id, numbers) previously hit Prisma's `in` filter as an opaque 500.
+ if (ids !== undefined && !Array.isArray(ids)) {
+ throw new ApiError(400, "ids must be an array of notification ids");
+ }
+ if (Array.isArray(ids) && ids.some((id) => typeof id !== "string")) {
+ throw new ApiError(400, "ids must be an array of notification ids");
+ }
+
  if (all) {
  await db.notification.updateMany({
  where: { userId: session.userId, isRead: false },

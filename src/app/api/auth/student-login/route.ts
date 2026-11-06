@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { handle, getClientIp, rateLimit } from "@/lib/api-helpers";
-import { findStudentForLogin, toSafeUser } from "@/lib/auth";
+import { findStudentForLogin, toSessionUser } from "@/lib/auth";
 import { createSession, ApiError } from "@/lib/session";
 
 /** Student login: university slug + ID number + roll number */
@@ -20,10 +20,14 @@ export async function POST(req: NextRequest) {
  );
  }
 
- // Brute-force guard: 10 attempts / 5 min per IP+ID-number pair.
- rateLimit(
- `${getClientIp(req)}:${String(studentIdNumber).trim().toLowerCase()}`
- );
+ const ip = getClientIp(req);
+
+ // Brute-force guard #1: 10 attempts / 5 min per IP+ID-number pair.
+ rateLimit(`${ip}:${String(studentIdNumber).trim().toLowerCase()}`);
+ // Brute-force guard #2 (global): one IP can only try 30 student IDs
+ // per 5 minutes ACROSS the whole platform — without this, an attacker
+ // just rotates roll numbers to sidestep the per-pair bucket.
+ rateLimit(`ip-global:${ip}`, 30);
 
  const student = await findStudentForLogin(
  universitySlug,
@@ -41,6 +45,7 @@ export async function POST(req: NextRequest) {
  semester: student.semester,
  });
 
- return { user: toSafeUser(student) };
+ // Flat session-user shape (contract C1) — same fields as /api/auth/me.
+ return { user: toSessionUser(student) };
  });
 }

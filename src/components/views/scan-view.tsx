@@ -68,6 +68,10 @@ export function ScanView({
   const timerRef = useRef<number | null>(null);
   const stoppedRef = useRef(false);
   const navigatingRef = useRef(false);
+  /* Generation counter for camera starts — a stale getUserMedia that
+     resolves after a pause/resume (or a newer start) must not attach
+     its stream or spawn a second decode loop. */
+  const startGenRef = useRef(0);
 
   const stopCamera = useCallback(() => {
     stoppedRef.current = true;
@@ -103,6 +107,7 @@ export function ScanView({
     if (camState === "starting" || camState === "scanning") return;
     setLastError(null);
     stoppedRef.current = false;
+    const gen = ++startGenRef.current;
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setCamState("unavailable");
@@ -135,6 +140,12 @@ export function ScanView({
       setCamState("unavailable");
       return;
     }
+    // The tab was hidden (visibility pause) or a newer start superseded
+    // us while awaiting the camera — release it and bail.
+    if (gen !== startGenRef.current || stoppedRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
 
     streamRef.current = stream;
     const video = videoRef.current;
@@ -149,6 +160,10 @@ export function ScanView({
       await video.play();
     } catch {
       /* autoplay policies — the poster frame + retry button cover this */
+    }
+    if (gen !== startGenRef.current || stoppedRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
     }
     setCamState("scanning");
 
@@ -194,6 +209,28 @@ export function ScanView({
     };
     // startCamera/stopCamera are stable per mount by construction
   }, []);
+
+  /* Battery + privacy: when the tab is hidden (app switch, lock
+     screen), fully stop the camera stream and the decode loop; restart
+     when it becomes visible again. wasScanningRef remembers that the
+     camera was NOT manually stopped, so only hidden→visible restores it. */
+  const wasScanningRef = useRef(false);
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (camState === "scanning" || camState === "starting") {
+          wasScanningRef.current = true;
+          stopCamera();
+          setCamState("idle");
+        }
+      } else if (wasScanningRef.current) {
+        wasScanningRef.current = false;
+        void startCamera();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [camState, startCamera, stopCamera]);
 
   const submitManual = (e: React.FormEvent) => {
     e.preventDefault();

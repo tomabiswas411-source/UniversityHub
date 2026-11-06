@@ -479,9 +479,10 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  >
  {user ? "Go to Dashboard" : "Login Portal"}
  </Button>
- {/* Institutional plans — visitors & subscription decision-makers only;
-    students/teachers never see pricing (role-visibility rule). */}
- {canSeePricing(user) && !user && (
+ {/* Institutional plans — shown to any user who canSeePricing:
+    visitors and subscription decision-makers (super_admin /
+    dept_admin). Students/teachers never see pricing (role rule). */}
+ {canSeePricing(user) && (
  <Button
  onClick={() => navigate("pricing")}
  variant="outline"
@@ -584,7 +585,17 @@ export function HomeView({ navigate }: { navigate: NavigateFn }) {
  key={u.id}
  variants={riseIn}
  whileHover={{ y: -4 }}
+ role="button"
+ tabIndex={0}
+ aria-label={`${u.name} — browse departments`}
  onClick={() => selectUniversity(u.slug, !selected)}
+ onKeyDown={(e) => {
+ // Keyboard parity for the click-to-select card.
+ if (e.key === "Enter" || e.key === " ") {
+ e.preventDefault();
+ selectUniversity(u.slug, !selected);
+ }
+ }}
  className={`group cursor-pointer rounded-2xl border bg-card p-5 text-left shadow-sm transition-all outline-none focus-visible:ring-2 focus-visible:ring-[#2D4F35] ${
  selected
  ? "border-[#2D4F35] shadow-lg shadow-[#2D4F35]/20 ring-2 ring-[#2D4F35] dark:border-[#4A7C58]"

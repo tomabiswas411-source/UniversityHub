@@ -280,7 +280,9 @@ export function PricingView({ navigate }: PricingViewProps) {
  ? GRADIENT_BTN
  : "bg-green/10 text-green hover:bg-green/20"
  }`}
- onClick={() => navigate("login")}
+ /* Institutions sign in through the Staff tab — deep-link it so the
+    plan CTA never drops a dean on the student login form. */
+ onClick={() => navigate("login", { tab: "staff" })}
  >
  {plan.slug === starterSlug ? "Start Free" : "Request Access"}
  </Button>

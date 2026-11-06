@@ -36,7 +36,8 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { letterTone } from "@/lib/format";
-import { bdTodayISO, bdWeekday, daysUntilDate } from "@/lib/date-bd";
+import { bdDaysAgoISO, bdTodayISO, bdWeekday, daysUntilDate } from "@/lib/date-bd";
+import { percentToGrade } from "@/lib/grades";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { timeAgo } from "@/components/shared/notification-bell";
@@ -238,16 +239,6 @@ function parseMarks(raw: string): number | null {
  return Number.isNaN(n) ? null : n;
 }
 
-function computeGrade(m: number): string {
- if (m >= 16) return "A+";
- if (m >= 14) return "A";
- if (m >= 12) return "A-";
- if (m >= 10) return "B";
- if (m >= 8) return "C";
- if (m >= 6) return "D";
- return "F";
-}
-
 export function TeacherPanel({
  tab,
  onTabChange,
@@ -326,12 +317,17 @@ export function TeacherPanel({
  }
  const [insights, setInsights] = useState<TeacherInsights | null>(null);
  const [insightsLoading, setInsightsLoading] = useState(false);
+ /* Load failure vs "still loading" — without this the deep-link effect
+ would refire on every failure (infinite refetch + toast spam). */
+ const [insightsError, setInsightsError] = useState<string | null>(null);
  const loadInsights = useCallback(async () => {
  setInsightsLoading(true);
  try {
  const data = await apiGet<TeacherInsights>("/api/teacher/insights");
  setInsights(data);
+ setInsightsError(null);
  } catch (err) {
+ setInsightsError(errMsg(err));
  toast({ title: "Failed to load insights", description: errMsg(err), variant: "destructive" });
  } finally {
  setInsightsLoading(false);
@@ -457,6 +453,9 @@ export function TeacherPanel({
  /* ---------------- my notices (teacher publishes) ---------------- */
  const [myNotices, setMyNotices] = useState<NoticeDTO[] | null>(null);
  const [myNoticesLoading, setMyNoticesLoading] = useState(false);
+ /* Load failure vs "still loading" — without this the deep-link effect
+ would refire on every failure (infinite refetch + toast spam). */
+ const [noticesError, setNoticesError] = useState<string | null>(null);
  const [noticeOpen, setNoticeOpen] = useState(false);
  const [nTitle, setNTitle] = useState("");
  const [nContent, setNContent] = useState("");
@@ -473,7 +472,9 @@ export function TeacherPanel({
  try {
  const data = await apiGet<{ notices: NoticeDTO[] }>("/api/teacher/notices");
  setMyNotices(data.notices);
+ setNoticesError(null);
  } catch (err) {
+ setNoticesError(errMsg(err));
  toast({ title: "Failed to load your notices", description: errMsg(err), variant: "destructive" });
  } finally {
  setMyNoticesLoading(false);
@@ -532,19 +533,21 @@ export function TeacherPanel({
  (v: string) => {
  setActiveTab(v);
  onTabChange?.(v);
- if (v === "insights" && !insights && !insightsLoading) void loadInsights();
- if (v === "notices" && myNotices === null && !myNoticesLoading) void loadMyNotices();
+ if (v === "insights" && !insights && !insightsLoading && !insightsError) void loadInsights();
+ if (v === "notices" && myNotices === null && !myNoticesLoading && !noticesError) void loadMyNotices();
  },
- [insights, insightsLoading, loadInsights, myNotices, myNoticesLoading, loadMyNotices, onTabChange]
+ [insights, insightsLoading, insightsError, loadInsights, myNotices, myNoticesLoading, noticesError, loadMyNotices, onTabChange]
  );
 
  /* Deep links (sidebar rail URL navigation, ?tab=insights) skip
     handleTabChange — drive the lazy loads off effectiveTab directly so
-    the tab never shows the stale "open this tab again" placeholder. */
+    the tab never shows the stale "open this tab again" placeholder.
+    A previous failure blocks the auto-retry; the rendered error card's
+    Retry button is the way back in. */
  useEffect(() => {
- if (effectiveTab === "insights" && !insights && !insightsLoading) void loadInsights();
- if (effectiveTab === "notices" && myNotices === null && !myNoticesLoading) void loadMyNotices();
- }, [effectiveTab, insights, insightsLoading, loadInsights, myNotices, myNoticesLoading, loadMyNotices]);
+ if (effectiveTab === "insights" && !insights && !insightsLoading && !insightsError) void loadInsights();
+ if (effectiveTab === "notices" && myNotices === null && !myNoticesLoading && !noticesError) void loadMyNotices();
+ }, [effectiveTab, insights, insightsLoading, insightsError, loadInsights, myNotices, myNoticesLoading, noticesError, loadMyNotices]);
 
  const loadOverview = useCallback(async () => {
  setLoading(true);
@@ -634,8 +637,16 @@ export function TeacherPanel({
  [schedules]
  );
 
+ /* Greeting + header date follow the Asia/Dhaka clock (DHAKA_TZ), not
+ the visitor's browser — they must match the Dhaka weekday used for
+ "Today's Classes", or a teacher abroad sees a foreign greeting/date
+ above a Dhaka-day schedule. */
  const greeting = (() => {
- const h = new Date().getHours();
+ const h = Number(
+ new Intl.DateTimeFormat("en-US", { timeZone: DHAKA_TZ, hour: "numeric", hourCycle: "h23" })
+ .formatToParts(new Date())
+ .find((p) => p.type === "hour")?.value
+ );
  if (h < 12) return "Good morning";
  if (h < 17) return "Good afternoon";
  return "Good evening";
@@ -804,9 +815,9 @@ export function TeacherPanel({
  }, [assignmentFilter]);
 
  useEffect(() => {
- if (activeTab !== "assignments") return;
+ if (effectiveTab !== "assignments") return;
  void loadAssignments();
- }, [activeTab, assignmentFilter, loadAssignments]);
+ }, [effectiveTab, assignmentFilter, loadAssignments]);
 
  function openAssignmentDialog(a?: AssignmentRow) {
  if (a) {
@@ -949,7 +960,7 @@ export function TeacherPanel({
  });
  return;
  }
- entries.push({ studentId: st.id, marks: n, grade: computeGrade(n) });
+ entries.push({ studentId: st.id, marks: n, grade: percentToGrade((n / 20) * 100).letter });
  }
  if (entries.length === 0) {
  toast({ title: "Nothing to save", description: "Fill in at least one student's marks first.", variant: "destructive" });
@@ -1001,7 +1012,12 @@ export function TeacherPanel({
 
  const teacherName = user?.fullName ?? "Teacher";
  const departmentName = user?.departmentName ?? null;
- const longToday = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+ const longToday = new Intl.DateTimeFormat("en-US", {
+ timeZone: DHAKA_TZ,
+ weekday: "long",
+ month: "long",
+ day: "numeric",
+ }).format(new Date());
 
  return (
  <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
@@ -1298,6 +1314,7 @@ export function TeacherPanel({
  id="att-date"
  type="date"
  value={attDate}
+ min={bdDaysAgoISO(7)}
  max={bdTodayISO()}
  onChange={(e) => setAttDate(e.target.value)}
  />
@@ -2044,6 +2061,9 @@ export function TeacherPanel({
  {students.map((st) => {
  const val = marks[st.id] ?? "";
  const num = parseMarks(val);
+ // Grades come from the shared UGC scale (lib/grades) — marks are out
+ // of 20 on this entry sheet, so percent = marks × 5.
+ const liveGrade = num === null ? null : percentToGrade((num / 20) * 100).letter;
  return (
  <TableRow key={st.id}>
  <TableCell>
@@ -2065,11 +2085,11 @@ export function TeacherPanel({
  />
  </TableCell>
  <TableCell className="text-center">
- {num === null ? (
+ {liveGrade === null ? (
  <span className="text-xs text-muted-foreground">—</span>
  ) : (
- <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold", letterTone(computeGrade(num)))}>
- {computeGrade(num)}
+ <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold", letterTone(liveGrade))}>
+ {liveGrade}
  </span>
  )}
  </TableCell>
@@ -2193,6 +2213,26 @@ export function TeacherPanel({
  >
  {myNoticesLoading && !myNotices ? (
  <PanelLoader label="Loading your notices…" />
+ ) : noticesError && !myNotices ? (
+ <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-rose-200 bg-rose-50/60 p-8 text-center dark:border-rose-900/60 dark:bg-rose-950/20">
+ <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 dark:bg-rose-950/50">
+ <TriangleAlert className="h-5 w-5 text-rose-600 dark:text-rose-300" />
+ </div>
+ <p className="text-sm font-bold text-rose-800 dark:text-rose-200">Couldn&apos;t load your notices</p>
+ <p className="max-w-sm text-xs text-rose-700/90 dark:text-rose-300/80">{noticesError}</p>
+ <Button
+ variant="outline"
+ size="sm"
+ className="mt-1"
+ onClick={() => {
+ setNoticesError(null);
+ void loadMyNotices();
+ }}
+ >
+ <RefreshCw className="h-3.5 w-3.5" />
+ Retry
+ </Button>
+ </div>
  ) : !myNotices || myNotices.length === 0 ? (
  <EmptyState
  icon={Megaphone}
@@ -2274,6 +2314,26 @@ export function TeacherPanel({
  <TabsContent value="insights" className="mt-4 space-y-4">
  {insightsLoading && !insights ? (
  <PanelLoader label="Analysing your class performance…" />
+ ) : insightsError && !insights ? (
+ <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-rose-200 bg-rose-50/60 p-8 text-center dark:border-rose-900/60 dark:bg-rose-950/20">
+ <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 dark:bg-rose-950/50">
+ <TriangleAlert className="h-5 w-5 text-rose-600 dark:text-rose-300" />
+ </div>
+ <p className="text-sm font-bold text-rose-800 dark:text-rose-200">Couldn&apos;t load your insights</p>
+ <p className="max-w-sm text-xs text-rose-700/90 dark:text-rose-300/80">{insightsError}</p>
+ <Button
+ variant="outline"
+ size="sm"
+ className="mt-1"
+ onClick={() => {
+ setInsightsError(null);
+ void loadInsights();
+ }}
+ >
+ <RefreshCw className="h-3.5 w-3.5" />
+ Retry
+ </Button>
+ </div>
  ) : !insights ? (
  <EmptyState
  icon={TrendingUp}
@@ -2380,9 +2440,10 @@ export function TeacherPanel({
  {insights.upcomingAssignments.map((a) => (
  <div key={a.id} className="flex items-center justify-between rounded-xl border px-3 py-2 text-sm">
  <p className="truncate font-medium">{a.title}</p>
- <Badge variant="outline">
- {a.dueDate ? new Date(a.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No due date"}
- </Badge>
+ {/* fmtDate parses date-only strings as a local calendar date —
+ new Date("YYYY-MM-DD") shifts the day for UTC-negative visitors
+ (same fix as dueChip). */}
+ <Badge variant="outline">{a.dueDate ? fmtDate(a.dueDate) : "No due date"}</Badge>
  </div>
  ))}
  </div>

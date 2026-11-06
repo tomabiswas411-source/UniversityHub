@@ -1,7 +1,6 @@
 import { handle } from "@/lib/api-helpers";
 import { getSession, clearSession, ApiError } from "@/lib/session";
 import { loadSessionUser } from "@/lib/auth";
-import { db } from "@/lib/db";
 
 export async function GET() {
  return handle(async () => {
@@ -9,19 +8,11 @@ export async function GET() {
  if (!session) return { user: null };
 
  try {
+ // Flat session-user shape (contract C1) — identical to what both
+ // login routes return: universityName, universitySlug, departmentName,
+ // departmentShortName, departmentId, universityId all flattened.
  const user = await loadSessionUser(session);
-
- // Enrich with slug for client navigation
- let universitySlug: string | null = null;
- if (user.universityId) {
- const uni = await db.university.findUnique({
- where: { id: user.universityId },
- select: { slug: true },
- });
- universitySlug = uni?.slug ?? null;
- }
-
- return { user: { ...user, universitySlug } };
+ return { user };
  } catch (err) {
  // Only auth-class failures (user deleted/deactivated → ApiError 401)
  // invalidate the cookie. Unexpected errors (DB outage etc.) must NOT

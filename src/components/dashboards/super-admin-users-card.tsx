@@ -18,8 +18,10 @@ import {
   Loader2,
   MoreVertical,
   Power,
+  RefreshCw,
   Search,
   ShieldCheck,
+  TriangleAlert,
   UserCog,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -100,6 +102,9 @@ const ROLE_CLS: Record<string, string> = {
 export function SuperAdminUsersCard({ universities }: { universities: UniOption[] }) {
   const [users, setUsers] = useState<DirectoryUser[] | null>(null);
   const [loading, setLoading] = useState(true);
+  /* Load failure — kept separate from "no users match" so a broken
+     request never renders the misleading empty state below. */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [role, setRole] = useState("all");
   const [universityId, setUniversityId] = useState("all");
   const [active, setActive] = useState("all");
@@ -118,14 +123,13 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
       const d = await apiGet<{ users: DirectoryUser[] }>(`/api/admin/users?${qs.toString()}`);
       if (seq !== reqSeq.current) return;
       setUsers(d.users);
+      setLoadError(null);
     } catch (err) {
       if (seq !== reqSeq.current) return;
-      toast({
-        title: "Could not load users",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-      setUsers([]);
+      // users stays null — the render shows a retryable error card
+      // instead of the misleading "No users match these filters".
+      setUsers(null);
+      setLoadError(err instanceof Error ? err.message : "Please try again.");
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
@@ -241,7 +245,7 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
       }
     >
       {/* filters */}
-      <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
         <div className="relative col-span-2">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -276,12 +280,40 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
             ))}
           </SelectContent>
         </Select>
+        {/* GET /api/admin/users supports ?active=true|false (absent = all). */}
+        <Select value={active} onValueChange={setActive}>
+          <SelectTrigger aria-label="Filter by account status" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="true">Active only</SelectItem>
+            <SelectItem value="false">Inactive only</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* list */}
       {loading && !users ? (
         <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading users…
+        </div>
+      ) : loadError && !users ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-rose-200 bg-rose-50/60 p-8 text-center dark:border-rose-900/60 dark:bg-rose-950/20">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 dark:bg-rose-950/50">
+            <TriangleAlert className="h-5 w-5 text-rose-600 dark:text-rose-300" />
+          </div>
+          <p className="text-sm font-bold text-rose-800 dark:text-rose-200">Couldn&apos;t load users</p>
+          <p className="max-w-sm text-xs text-rose-700/90 dark:text-rose-300/80">{loadError}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-1"
+            onClick={() => void load()}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </Button>
         </div>
       ) : !users || users.length === 0 ? (
         <EmptyState

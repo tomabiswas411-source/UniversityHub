@@ -99,25 +99,74 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Close any still-open sessions for this class+date to avoid confusion
-    await db.attendanceSession.updateMany({
-      where: { scheduleId: schedule.id, date: classDate, closed: false },
-      data: { closed: true },
-    });
-
+    // Close any still-open windows for this class+date. Before closing the
+    // SUPERSEDED ones, run the same absent-sweep finalize the teacher's
+    // manual finalize uses — students who never scanned those windows
+    // still get their absent record instead of an abandoned session.
+    // Close+create are one transaction so a parallel POST can never open
+    // two live windows for the same class-date.
     const expiresAt = new Date(Date.now() + duration * 1000);
-    const created = await db.attendanceSession.create({
-      data: {
-        departmentId: schedule.departmentId,
-        scheduleId: schedule.id,
-        courseId: schedule.courseId,
-        teacherId: schedule.teacherId,
-        token: randomBytes(16).toString("hex"),
-        date: classDate,
-        durationSec: duration,
-        expiresAt,
-        ...(geo ?? {}),
-      },
+    const created = await db.$transaction(async (tx) => {
+      const superseded = await tx.attendanceSession.findMany({
+        where: { scheduleId: schedule.id, date: classDate, closed: false },
+        select: { id: true },
+      });
+      if (superseded.length > 0) {
+        // Every superseded window shares this schedule+date, so one sweep
+        // covers them all: mark roster students with no attendance record
+        // for the date+schedule as absent (skipDuplicates keeps races safe).
+        const roster = await tx.user.findMany({
+          where: {
+            departmentId: schedule.departmentId,
+            role: "student",
+            isActive: true,
+            programId: schedule.programId,
+            semester: schedule.semester,
+          },
+          select: { id: true },
+        });
+        const marked = await tx.attendance.findMany({
+          where: { scheduleId: schedule.id, date: classDate },
+          select: { studentId: true },
+        });
+        const markedIds = new Set(marked.map((m) => m.studentId));
+        const missing = roster.filter((st) => !markedIds.has(st.id));
+        if (missing.length > 0) {
+          // No skipDuplicates: the SQLite connector does not support it —
+          // race safety comes from the serialized transaction re-reading
+          // `marked` right before this insert.
+          await tx.attendance.createMany({
+            data: missing.map((st) => ({
+              departmentId: schedule.departmentId,
+              scheduleId: schedule.id,
+              courseId: schedule.courseId,
+              studentId: st.id,
+              date: classDate,
+              status: "absent",
+              markedBy: session.userId,
+              markedByName: "QR auto-close",
+              courseCode: schedule.courseCode,
+            })),
+          });
+        }
+      }
+      await tx.attendanceSession.updateMany({
+        where: { scheduleId: schedule.id, date: classDate, closed: false },
+        data: { closed: true },
+      });
+      return tx.attendanceSession.create({
+        data: {
+          departmentId: schedule.departmentId,
+          scheduleId: schedule.id,
+          courseId: schedule.courseId,
+          teacherId: schedule.teacherId,
+          token: randomBytes(16).toString("hex"),
+          date: classDate,
+          durationSec: duration,
+          expiresAt,
+          ...(geo ?? {}),
+        },
+      });
     });
 
     return {

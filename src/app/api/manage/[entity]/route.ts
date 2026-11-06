@@ -94,6 +94,55 @@ function validateSemester(v: unknown, label = "Semester"): number {
  return n;
 }
 
+/**
+ * Plan-cap guard (fix 8e): counts ACTIVE rows with the same isActive
+ * semantics as the rows about to be created; -1 = unlimited.
+ */
+async function assertPlanLimit(
+ universityId: string,
+ cap: "maxDepartments" | "maxTeachers" | "maxStudents",
+ thing: string
+): Promise<void> {
+ const uni = await db.university.findUnique({
+ where: { id: universityId },
+ select: {
+ plan: { select: { maxDepartments: true, maxTeachers: true, maxStudents: true } },
+ },
+ });
+ const limit = uni?.plan?.[cap] ?? -1;
+ if (limit < 0) return; // -1 = unlimited
+ const activeCount =
+ cap === "maxDepartments"
+ ? await db.department.count({ where: { universityId, isActive: true } })
+ : await db.user.count({
+ where: {
+ universityId,
+ role: cap === "maxTeachers" ? "teacher" : "student",
+ isActive: true,
+ },
+ });
+ if (activeCount >= limit) {
+ throw new ApiError(
+ 403,
+ `Your plan limit for ${thing} is reached (limit ${limit}). Upgrade the plan to add more.`
+ );
+ }
+}
+
+/**
+ * programId must reference a program of THIS department — a mismatched
+ * or foreign programId previously produced confusing cross-dept data.
+ */
+async function assertProgramInDepartment(
+ programId: string,
+ departmentId: string
+): Promise<void> {
+ const program = await db.program.findUnique({ where: { id: programId } });
+ if (!program) throw new ApiError(404, "Program not found");
+ if (program.departmentId !== departmentId)
+ throw new ApiError(403, "Program belongs to another department");
+}
+
 /** 409 with a friendly "in use" message when reference rows exist. */
 async function assertNotReferenced(
  refs: { label: string; count: number }[]
@@ -468,6 +517,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  // universityId comes from the department row so a super_admin can
  // provision any department without creating an orphaned user.
  const universityId = await resolveUniversityId(departmentId);
+ await assertPlanLimit(universityId, "maxTeachers", "teachers");
  const existing = await db.user.findFirst({
  where: { universityId, email: emailNorm },
  });
@@ -504,6 +554,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!fullName || !studentIdNumber || !rollNumber)
  throw new ApiError(400, "Name, ID number and roll number are required");
  const universityId = await resolveUniversityId(departmentId);
+ await assertPlanLimit(universityId, "maxStudents", "students");
+ if (programId) {
+ await assertProgramInDepartment(String(programId), departmentId);
+ }
  const existing = await db.user.findFirst({
  where: { universityId, studentIdNumber: String(studentIdNumber) },
  });
@@ -531,6 +585,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  body as Record<string, string | number>;
  if (!code || !name || !programId)
  throw new ApiError(400, "Code, name and program are required");
+ // Tenant guard: the course's program must live in THIS department.
+ await assertProgramInDepartment(String(programId), departmentId);
  return db.course.create({
  data: {
  departmentId,
@@ -602,6 +658,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  if (category && !VALID_CATEGORIES.has(String(category))) {
  throw new ApiError(400, "Invalid notice category");
+ }
+ if (programId) {
+ await assertProgramInDepartment(String(programId), departmentId);
  }
  return db.notice.create({
  data: {
@@ -833,8 +892,17 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  for (const f of policy.bool) {
  if (body[f] !== undefined) data[f] = Boolean(body[f]);
  }
- if (body.programId !== undefined)
+ // programId is only a real column on students/courses/notices/schedules —
+ // letting it ride through for rooms/timeslots/programs hit Prisma with
+ // an unknown argument (opaque 500), so it is dropped for those entities.
+ const PROGRAM_ID_ENTITIES = new Set(["students", "courses", "notices", "schedules"]);
+ if (body.programId !== undefined && PROGRAM_ID_ENTITIES.has(entity)) {
  data.programId = body.programId ? String(body.programId) : null;
+ }
+ // Student PUT applies the same semester validation POST uses.
+ if (entity === "students" && data.semester !== undefined) {
+ validateSemester(data.semester);
+ }
  // audience: enum whitelist on update too (POST already enforces this) —
  // previously it rode the generic string list and bypassed validation.
  if (entity === "notices" && body.audience !== undefined && body.audience !== null) {
@@ -883,19 +951,78 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  throw new ApiError(409, "A user with this email already exists");
  data.email = emailNorm;
  }
+ // A reassigned program must belong to this department (null clears it).
+ if (data.programId) {
+ await assertProgramInDepartment(String(data.programId), departmentId);
+ }
  const updated = await db.user.update({ where: { id }, data });
  return stripPassword(updated);
  }
- case "courses":
- return db.course.update({ where: { id }, data });
- case "rooms":
- return db.room.update({ where: { id }, data });
- case "timeslots":
- return db.timeSlot.update({ where: { id }, data });
+ case "courses": {
+ // A reassigned program must belong to this department — verified
+ // BEFORE the write so a rejected request cannot half-apply.
+ if (data.programId) {
+ await assertProgramInDepartment(String(data.programId), departmentId);
+ }
+ const updated = await db.course.update({ where: { id }, data });
+ // Denormalized label sync (best-effort): schedules cache code/name so
+ // the timetable renders without a join — keep the cache honest.
+ if (data.code !== undefined || data.name !== undefined) {
+ try {
+ await db.schedule.updateMany({
+ where: { courseId: id },
+ data: {
+ ...(data.code !== undefined ? { courseCode: updated.code } : {}),
+ ...(data.name !== undefined ? { courseName: updated.name } : {}),
+ },
+ });
+ } catch (syncErr) {
+ console.warn("[manage/courses] schedule label sync failed:", syncErr);
+ }
+ }
+ return updated;
+ }
+ case "rooms": {
+ const updated = await db.room.update({ where: { id }, data });
+ // Denormalized label sync (best-effort): schedules cache roomNumber.
+ if (data.roomNumber !== undefined) {
+ try {
+ await db.schedule.updateMany({
+ where: { roomId: id },
+ data: { roomNumber: updated.roomNumber },
+ });
+ } catch (syncErr) {
+ console.warn("[manage/rooms] schedule label sync failed:", syncErr);
+ }
+ }
+ return updated;
+ }
+ case "timeslots": {
+ const updated = await db.timeSlot.update({ where: { id }, data });
+ // Denormalized label sync (best-effort): schedules cache start/end.
+ if (data.startTime !== undefined || data.endTime !== undefined) {
+ try {
+ await db.schedule.updateMany({
+ where: { timeSlotId: id },
+ data: {
+ ...(data.startTime !== undefined ? { startTime: updated.startTime } : {}),
+ ...(data.endTime !== undefined ? { endTime: updated.endTime } : {}),
+ },
+ });
+ } catch (syncErr) {
+ console.warn("[manage/timeslots] schedule label sync failed:", syncErr);
+ }
+ }
+ return updated;
+ }
  case "programs":
  return db.program.update({ where: { id }, data });
- case "notices":
+ case "notices": {
+ if (data.programId) {
+ await assertProgramInDepartment(String(data.programId), departmentId);
+ }
  return db.notice.update({ where: { id }, data });
+ }
  case "schedules": {
  // If slot/day changed, re-run conflict detection
  const existing = await db.schedule.findUnique({ where: { id } });
@@ -918,6 +1045,11 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (!slot) throw new ApiError(404, "Time slot not found");
  if (slot.departmentId !== departmentId)
  throw new ApiError(403, "Resource belongs to another department");
+ // REALITY CHECK: a break slot is not a class slot — moving a class
+ // into one is only rejected when the slot actually changes.
+ if (slot.isBreak) {
+ throw new ApiError(400, "A class cannot be scheduled in a break time slot");
+ }
  data.timeSlotId = slot.id;
  data.startTime = slot.startTime;
  data.endTime = slot.endTime;
@@ -979,11 +1111,19 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
  // Clash re-check must see the NEW room/teacher values, not just the
  // existing row's — and compare *overlapping time windows*, not slot ids.
+ // It runs when ANY of the fields the clashes depend on changes
+ // (day/slot/room/teacher/semester/program), not just day+slot.
  const day = (data.dayOfWeek as string) ?? existing.dayOfWeek;
  const timeSlotId = (data.timeSlotId as string) ?? existing.timeSlotId;
+ const changed = (field: string) =>
+ data[field] !== undefined && data[field] !== existing[field as keyof typeof existing];
  if (
- (data.timeSlotId && data.timeSlotId !== existing.timeSlotId) ||
- (data.dayOfWeek && data.dayOfWeek !== existing.dayOfWeek)
+ changed("dayOfWeek") ||
+ changed("timeSlotId") ||
+ changed("roomId") ||
+ changed("teacherId") ||
+ changed("semester") ||
+ changed("programId")
  ) {
  const sameDay = await db.schedule.findMany({
  where: {
@@ -1033,6 +1173,14 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  case "students": {
  const user = await db.user.findUnique({ where: { id } });
  if (!user) throw new ApiError(404, "User not found");
+ // REALITY CHECK: super admins anchor the platform and you must not be
+ // able to lock yourself out of the panel with one misclick.
+ if (user.role === "super_admin") {
+ throw new ApiError(403, "Super admin accounts cannot be deleted here");
+ }
+ if (user.id === session.userId) {
+ throw new ApiError(400, "You cannot delete your own account");
+ }
  await assertDeptAccess(session, user.departmentId!);
  // Soft-delete: schedules/results/attendance reference users, so a
  // hard delete would either cascade-wipe history or fail with a 500.
