@@ -2,9 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  /* config options here */
+  /* Type errors now FAIL the build — src/ compiles clean and sandbox
+     dirs are excluded in tsconfig, so a regression becomes visible at
+     deploy time instead of shipping silently. */
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   reactStrictMode: false,
   /* Day 45 — long-lived immutable caching for versioned static assets;

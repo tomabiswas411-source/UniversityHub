@@ -18,6 +18,13 @@ interface AuthState {
    no resolution-order races. */
 let refreshInFlight: Promise<void> | null = null;
 
+/** Hard ceiling for the /api/auth/me round-trip. Without it a hung
+    request (stalled connection, captive portal) leaves refreshInFlight
+    set forever: every later refresh() call re-awaits the same dead
+    promise and the boot "Retry" button can never re-issue a fresh
+    request. */
+const REFRESH_TIMEOUT_MS = 15_000;
+
 export const useAuthStore = create<AuthState>((set) => ({
  user: null,
  loading: false,
@@ -25,10 +32,17 @@ export const useAuthStore = create<AuthState>((set) => ({
  setUser: (user) => set({ user, initialized: true }),
  refresh: () => {
  if (!refreshInFlight) {
+ const controller = new AbortController();
+ const timeoutId = setTimeout(
+ () => controller.abort(),
+ REFRESH_TIMEOUT_MS
+ );
  refreshInFlight = (async () => {
  set({ loading: true });
  try {
- const res = await fetch("/api/auth/me");
+ const res = await fetch("/api/auth/me", {
+ signal: controller.signal,
+ });
  if (res.status === 401 || res.status === 403) {
  // Server explicitly says "no session" — clear the user.
  set({ user: null, initialized: true, loading: false });
@@ -47,13 +61,16 @@ export const useAuthStore = create<AuthState>((set) => ({
  loading: false,
  });
  } catch {
- // Network failure (offline, timeout) — keep the previous state so a
- // logged-in user doesn't get logged-out by a hiccup.
+ // Network failure (offline, timeout abort) — keep the previous
+ // state so a logged-in user doesn't get logged-out by a hiccup.
  set({ initialized: true, loading: false });
- }
- })().finally(() => {
+ } finally {
+ clearTimeout(timeoutId);
+ // Settled (success, failure or abort) → release the dedupe slot
+ // so the next refresh()/Retry issues a FRESH request.
  refreshInFlight = null;
- });
+ }
+ })();
  }
  return refreshInFlight;
  },

@@ -363,6 +363,21 @@ export function SuperAdminPanel({
  const [plans, setPlans] = useState<PlanRow[]>([]);
  const [planDrafts, setPlanDrafts] = useState<Record<string, PlanDraft>>({});
  const [savingPlanId, setSavingPlanId] = useState<string | null>(null);
+ /* -------- plan create dialog + plan delete confirm -------- */
+ const [planDialogOpen, setPlanDialogOpen] = useState(false);
+ const [planForm, setPlanForm] = useState({
+ name: "",
+ tagline: "",
+ priceMonthly: "0",
+ priceYearly: "0",
+ maxDepartments: "1",
+ maxStudents: "100",
+ maxTeachers: "5",
+ features: "",
+ });
+ const [creatingPlan, setCreatingPlan] = useState(false);
+ const [planDeleteTarget, setPlanDeleteTarget] = useState<PlanRow | null>(null);
+ const [deletingPlan, setDeletingPlan] = useState(false);
 
  /* -------- university dialog -------- */
  const [uniDialogOpen, setUniDialogOpen] = useState(false);
@@ -728,10 +743,10 @@ export function SuperAdminPanel({
  });
  return;
  }
- if (password.length < 6) {
+ if (password.length < 8) {
  toast({
  title: "Weak password",
- description: "Password must be at least 6 characters.",
+ description: "Password must be at least 8 characters.",
  variant: "destructive",
  });
  return;
@@ -818,6 +833,69 @@ export function SuperAdminPanel({
  });
  } finally {
  setSavingPlanId(null);
+ }
+ }
+
+ /* Plan create — the server derives the slug from the name and 409s on
+ duplicates, so the form only asks for the human fields. */
+ async function createPlan() {
+ if (!planForm.name.trim()) {
+ toast({
+ title: "Plan name is required",
+ variant: "destructive",
+ });
+ return;
+ }
+ if (
+ numOr(planForm.maxDepartments, -1) < -1 ||
+ numOr(planForm.maxStudents, -1) < -1 ||
+ numOr(planForm.maxTeachers, -1) < -1
+ ) {
+ toast({
+ title: "Invalid limit",
+ description: "Limits must be -1 (Unlimited) or a non-negative number.",
+ variant: "destructive",
+ });
+ return;
+ }
+ setCreatingPlan(true);
+ try {
+ await apiPost("/api/admin/plans", {
+ name: planForm.name.trim(),
+ tagline: planForm.tagline.trim() || null,
+ priceMonthly: numOr(planForm.priceMonthly, 0),
+ priceYearly: numOr(planForm.priceYearly, 0),
+ maxDepartments: numOr(planForm.maxDepartments, 1),
+ maxStudents: numOr(planForm.maxStudents, 100),
+ maxTeachers: numOr(planForm.maxTeachers, 5),
+ isActive: true,
+ features: planForm.features
+ .split(",")
+ .map((s) => s.trim())
+ .filter(Boolean),
+ });
+ toast({ title: "Plan created", description: `${planForm.name.trim()} is now selectable for universities.` });
+ setPlanDialogOpen(false);
+ setPlanForm({ name: "", tagline: "", priceMonthly: "0", priceYearly: "0", maxDepartments: "1", maxStudents: "100", maxTeachers: "5", features: "" });
+ await load(true);
+ } catch (err) {
+ toast({ title: "Could not create plan", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setCreatingPlan(false);
+ }
+ }
+
+ async function deletePlan(p: PlanRow) {
+ setDeletingPlan(true);
+ try {
+ await apiDelete(`/api/admin/plans?id=${p.id}`);
+ toast({ title: "Plan deleted", description: p.name });
+ setPlanDeleteTarget(null);
+ await load(true);
+ } catch (err) {
+ toast({ title: "Could not delete plan", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setDeletingPlan(false);
  }
  }
 
@@ -1134,7 +1212,17 @@ export function SuperAdminPanel({
  title="Plans & Billing"
  icon={CreditCard}
  action={
+ <div className="flex items-center gap-2">
  <Badge variant="outline">{plans.length} plans</Badge>
+ <Button
+ size="sm"
+ className="h-8 bg-[#2D4F35] text-white hover:bg-[#3A6B47]"
+ onClick={() => setPlanDialogOpen(true)}
+ >
+ <Plus className="mr-1 h-3.5 w-3.5" />
+ Add plan
+ </Button>
+ </div>
  }
  >
  {plans.length === 0 ? (
@@ -1290,9 +1378,9 @@ export function SuperAdminPanel({
  </div>
  </div>
 
- <div className="mt-auto pt-3">
+ <div className="mt-auto grid grid-cols-[1fr_auto] gap-2 pt-3">
  <Button
- className={cn("h-10 w-full", GRADIENT_BTN)}
+ className={cn(GRADIENT_BTN, "h-10")}
  disabled={savingPlanId === p.id}
  onClick={() => void savePlan(p.id)}
  >
@@ -1302,6 +1390,15 @@ export function SuperAdminPanel({
  <Check className="h-4 w-4" />
  )}
  Save plan
+ </Button>
+ <Button
+ variant="outline"
+ className="h-10 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-300 dark:hover:bg-rose-950/40"
+ aria-label={`Delete ${p.name}`}
+ disabled={deletingPlan}
+ onClick={() => setPlanDeleteTarget(p)}
+ >
+ <Trash2 className="h-4 w-4" />
  </Button>
  </div>
  </motion.div>
@@ -1440,6 +1537,142 @@ export function SuperAdminPanel({
  <SuperAdminSystemCard />
  </TabsContent>
  </Tabs>
+
+ {/* ---------- add plan dialog ---------- */}
+ <Dialog open={planDialogOpen} onOpenChange={setPlanDialogOpen}>
+ <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+ <DialogHeader>
+ <DialogTitle>Add subscription plan</DialogTitle>
+ <DialogDescription>
+ The plan appears on the public pricing page immediately. Limits accept -1 for unlimited.
+ </DialogDescription>
+ </DialogHeader>
+ <div className="grid gap-3 py-1">
+ <div className="space-y-1.5">
+ <Label htmlFor="plan-name">Plan name</Label>
+ <Input
+ id="plan-name"
+ value={planForm.name}
+ onChange={(e) => setPlanForm((f) => ({ ...f, name: e.target.value }))}
+ placeholder="e.g. Premium Plus"
+ maxLength={60}
+ />
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="plan-tagline">Tagline</Label>
+ <Input
+ id="plan-tagline"
+ value={planForm.tagline}
+ onChange={(e) => setPlanForm((f) => ({ ...f, tagline: e.target.value }))}
+ placeholder="e.g. For large universities"
+ maxLength={200}
+ />
+ </div>
+ <div className="grid grid-cols-2 gap-3">
+ <div className="space-y-1.5">
+ <Label htmlFor="plan-mo">Monthly price (৳)</Label>
+ <Input
+ id="plan-mo"
+ type="number"
+ min="0"
+ value={planForm.priceMonthly}
+ onChange={(e) => setPlanForm((f) => ({ ...f, priceMonthly: e.target.value }))}
+ />
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="plan-yr">Yearly price (৳)</Label>
+ <Input
+ id="plan-yr"
+ type="number"
+ min="0"
+ value={planForm.priceYearly}
+ onChange={(e) => setPlanForm((f) => ({ ...f, priceYearly: e.target.value }))}
+ />
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="plan-dept">Max departments</Label>
+ <Input
+ id="plan-dept"
+ type="number"
+ min="-1"
+ value={planForm.maxDepartments}
+ onChange={(e) => setPlanForm((f) => ({ ...f, maxDepartments: e.target.value }))}
+ />
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="plan-stu">Max students</Label>
+ <Input
+ id="plan-stu"
+ type="number"
+ min="-1"
+ value={planForm.maxStudents}
+ onChange={(e) => setPlanForm((f) => ({ ...f, maxStudents: e.target.value }))}
+ />
+ </div>
+ <div className="space-y-1.5 sm:col-span-2">
+ <Label htmlFor="plan-tea">Max teachers</Label>
+ <Input
+ id="plan-tea"
+ type="number"
+ min="-1"
+ value={planForm.maxTeachers}
+ onChange={(e) => setPlanForm((f) => ({ ...f, maxTeachers: e.target.value }))}
+ />
+ </div>
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="plan-feat">Features (comma separated)</Label>
+ <Textarea
+ id="plan-feat"
+ value={planForm.features}
+ onChange={(e) => setPlanForm((f) => ({ ...f, features: e.target.value }))}
+ placeholder="Unlimited routines, QR attendance, Analytics"
+ rows={2}
+ />
+ </div>
+ </div>
+ <DialogFooter>
+ <Button variant="outline" onClick={() => setPlanDialogOpen(false)} disabled={creatingPlan}>
+ Cancel
+ </Button>
+ <Button
+ className="bg-[#2D4F35] text-white hover:bg-[#3A6B47]"
+ disabled={creatingPlan || !planForm.name.trim()}
+ onClick={() => void createPlan()}
+ >
+ {creatingPlan && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+ Create plan
+ </Button>
+ </DialogFooter>
+ </DialogContent>
+ </Dialog>
+
+ {/* ---------- delete plan confirm ---------- */}
+ <AlertDialog open={planDeleteTarget !== null} onOpenChange={(o) => { if (!o) setPlanDeleteTarget(null); }}>
+ <AlertDialogContent>
+ <AlertDialogHeader>
+ <AlertDialogTitle>Delete “{planDeleteTarget?.name}”?</AlertDialogTitle>
+ <AlertDialogDescription>
+ Universities still subscribed to this plan block the deletion — move them first. This
+ permanently removes the plan from pricing.
+ </AlertDialogDescription>
+ </AlertDialogHeader>
+ <AlertDialogFooter>
+ <AlertDialogCancel disabled={deletingPlan}>Cancel</AlertDialogCancel>
+ <AlertDialogAction
+ className="bg-rose-600 text-white hover:bg-rose-700"
+ disabled={deletingPlan}
+ onClick={(e) => {
+ e.preventDefault();
+ if (planDeleteTarget) void deletePlan(planDeleteTarget);
+ }}
+ >
+ {deletingPlan && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+ Delete plan
+ </AlertDialogAction>
+ </AlertDialogFooter>
+ </AlertDialogContent>
+ </AlertDialog>
 
  {/* ---------- add / edit university dialog ---------- */}
  <Dialog open={uniDialogOpen} onOpenChange={setUniDialogOpen}>
@@ -1732,7 +1965,7 @@ export function SuperAdminPanel({
  <Input
  type="password"
  value={provisionForm.password}
- placeholder="At least 6 characters"
+ placeholder="At least 8 characters"
  onChange={(e) =>
  setProvisionForm((f) => ({ ...f, password: e.target.value }))
  }

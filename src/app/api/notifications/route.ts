@@ -6,13 +6,22 @@ import type { NotificationDTO } from "@/types";
 import { maybeRunCleanup } from "@/lib/cleanup";
 
 /**
- * GET /api/notifications            — full list (last 50) + unreadCount
+ * GET /api/notifications            — full list (first 50 by default) + unreadCount
  * GET /api/notifications?ping=1     — COST GUARD: ~150-byte poll payload
  *                                     {unreadCount, latest?} used by the
  *                                     header bell every 45s; the full
  *                                     list is only fetched when the
  *                                     unread count actually changes or
  *                                     the dropdown opens.
+ * GET /api/notifications?page=N     — offset pagination (50/page, capped)
+ *                                     so unread history beyond the first
+ *                                     50 rows stays reachable; the
+ *                                     response also carries
+ *                                     {total, hasMore} for "Load older"
+ *                                     controls. Page 1 is byte-identical
+ *                                     in shape-plus to the legacy
+ *                                     response, so existing callers are
+ *                                     unaffected.
  *
  * Each authenticated GET also acts as the lazy trigger for the platform
  * data-retention sweep (throttled to once per 24h per cold start) —
@@ -55,15 +64,25 @@ export async function GET(req: NextRequest) {
  };
  }
 
- const [notifications, unreadCount] = await Promise.all([
+ // Offset pagination — 50/page, hard-capped so a forged ?page=9000
+ // cannot walk the whole table in one request.
+ const PAGE_SIZE = 50;
+ const pageRaw = Number.parseInt(searchParams.get("page") ?? "", 10);
+ const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.min(pageRaw, 200) : 1;
+ const skip = (page - 1) * PAGE_SIZE;
+
+ const listWhere = { userId: session.userId };
+ const [notifications, unreadCount, total] = await Promise.all([
  db.notification.findMany({
- where: { userId: session.userId },
+ where: listWhere,
  orderBy: { createdAt: "desc" },
- take: 50,
+ take: PAGE_SIZE,
+ skip,
  }),
  db.notification.count({
  where: { userId: session.userId, isRead: false },
  }),
+ db.notification.count({ where: listWhere }),
  ]);
 
  const dtos: NotificationDTO[] = notifications.map((n) => ({
@@ -76,7 +95,12 @@ export async function GET(req: NextRequest) {
  createdAt: n.createdAt.toISOString(),
  }));
 
- return { notifications: dtos, unreadCount };
+ return {
+ notifications: dtos,
+ unreadCount,
+ total,
+ hasMore: skip + notifications.length < total,
+ };
  });
 }
 

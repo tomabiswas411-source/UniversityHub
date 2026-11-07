@@ -335,17 +335,6 @@ export async function POST(req: NextRequest) {
  select: { maxDepartments: true },
  })
  : null;
- if (plan && plan.maxDepartments >= 0) {
- const activeCount = await db.department.count({
- where: { universityId, isActive: true },
- });
- if (activeCount >= plan.maxDepartments) {
- throw new ApiError(
- 403,
- `Your plan limit for departments is reached (limit ${plan.maxDepartments}). Upgrade the plan to add more.`
- );
- }
- }
 
  // shortName/code are schema-required — derive a sensible default
  const shortName =
@@ -356,7 +345,22 @@ export async function POST(req: NextRequest) {
 
  await assertNoDeptConflict(universityId, { name, code });
 
- const department = await db.department.create({
+ // Plan-limit count + create run inside ONE transaction — SQLite
+ // serializes writers, so a concurrent create can no longer slip past
+ // the count check (TOCTOU).
+ const department = await db.$transaction(async (tx) => {
+ if (plan && plan.maxDepartments >= 0) {
+ const activeCount = await tx.department.count({
+ where: { universityId, isActive: true },
+ });
+ if (activeCount >= plan.maxDepartments) {
+ throw new ApiError(
+ 403,
+ `Your plan limit for departments is reached (limit ${plan.maxDepartments}). Upgrade the plan to add more.`
+ );
+ }
+ }
+ return tx.department.create({
  data: {
  universityId,
  name,
@@ -367,6 +371,7 @@ export async function POST(req: NextRequest) {
  contactEmail: optStr(body.contactEmail),
  contactPhone: optStr(body.contactPhone),
  },
+ });
  });
  return { department };
  });
@@ -440,6 +445,7 @@ export async function DELETE(req: NextRequest) {
  results,
  attendance,
  scheduleChanges,
+ calendarEvents,
  ] = await Promise.all([
  db.user.count({ where: { departmentId: id } }),
  db.course.count({ where: { departmentId: id } }),
@@ -452,6 +458,9 @@ export async function DELETE(req: NextRequest) {
  db.result.count({ where: { departmentId: id } }),
  db.attendance.count({ where: { departmentId: id } }),
  db.scheduleChange.count({ where: { departmentId: id } }),
+ // AcademicCalendar rows cascade with the department too — deleting one
+ // used to silently wipe university/department-wide calendar events.
+ db.academicCalendar.count({ where: { departmentId: id } }),
  ]);
  const blocks: string[] = [];
  if (users) blocks.push(`${users} user${users === 1 ? "" : "s"}`);
@@ -465,6 +474,7 @@ export async function DELETE(req: NextRequest) {
  if (results) blocks.push(`${results} result${results === 1 ? "" : "s"}`);
  if (attendance) blocks.push(`${attendance} attendance record${attendance === 1 ? "" : "s"}`);
  if (scheduleChanges) blocks.push(`${scheduleChanges} schedule change${scheduleChanges === 1 ? "" : "s"}`);
+ if (calendarEvents) blocks.push(`${calendarEvents} calendar event${calendarEvents === 1 ? "" : "s"}`);
  if (blocks.length > 0) {
  throw new ApiError(
  409,

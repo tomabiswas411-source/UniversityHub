@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
  Award,
@@ -280,6 +281,7 @@ export function StudentPanel({
  const [error, setError] = useState<string | null>(null);
  const [expandedNotices, setExpandedNotices] = useState<Record<string, boolean>>({});
  const authUser = useAuthStore((s) => s.user);
+ const router = useRouter();
 
  /* Section state — URL-driven when valid (sidebar rail), local pill
     clicks sync back to the URL via onTabChange. */
@@ -293,17 +295,24 @@ export function StudentPanel({
  onTabChange?.(v);
  };
 
+ /* Request-sequence guard: a slow dashboard response landing after a
+    newer load() (tab re-entry, manual retry) must never overwrite it. */
+ const loadSeqRef = useRef(0);
+
  const load = useCallback(async () => {
+ const seq = ++loadSeqRef.current;
  setLoading(true);
  setError(null);
  try {
  const res = await apiGet<StudentDashboardData>("/api/student/dashboard");
+ if (seq !== loadSeqRef.current) return; // stale — drop
  setData(res);
  } catch (err) {
+ if (seq !== loadSeqRef.current) return; // stale — drop
  // surfaced via the error card below — a toast on top of it is noise
  setError(err instanceof Error ? err.message : "Something went wrong");
  } finally {
- setLoading(false);
+ if (seq === loadSeqRef.current) setLoading(false);
  }
  }, []);
 
@@ -317,29 +326,57 @@ export function StudentPanel({
  const [notifsLoading, setNotifsLoading] = useState(true);
  const [notifsErr, setNotifsErr] = useState<string | null>(null);
  const [markingAll, setMarkingAll] = useState(false);
+ const [notifsHasMore, setNotifsHasMore] = useState(false);
+ const [loadingOlder, setLoadingOlder] = useState(false);
+ const notifsPageRef = useRef(1);
+ /* Loaded-once latch for the Alerts tab: the feed loads on mount (the
+    “Unread Alerts” stat card needs a fresh count) and re-loads each
+    time the tab is RE-entered. Without the latch, mounting directly on
+    /?tab=alerts would fire both the mount fetch and the activation
+    fetch. */
+ const alertsLoadedOnceRef = useRef(false);
 
- const loadNotifications = useCallback(async () => {
- setNotifsLoading(true);
+ const loadNotifications = useCallback(async (page = 1) => {
+ if (page === 1) setNotifsLoading(true);
+ else setLoadingOlder(true);
  setNotifsErr(null);
  try {
  const res = await apiGet<{
  notifications: NotificationDTO[];
  unreadCount: number;
- }>("/api/notifications");
- setNotifs(res.notifications);
+ total: number;
+ hasMore: boolean;
+ }>(`/api/notifications?page=${page}`);
+ setNotifs((prev) => {
+ if (page === 1) return res.notifications;
+ // “Load older” appends — de-dupe by id in case a new notification
+ // shifted the offset between page fetches.
+ const seen = new Set(prev.map((n) => n.id));
+ return [...prev, ...res.notifications.filter((n) => !seen.has(n.id))];
+ });
  setNotifUnread(res.unreadCount);
+ setNotifsHasMore(res.hasMore);
+ notifsPageRef.current = page;
  } catch (err) {
  setNotifsErr(
  err instanceof Error ? err.message : "Couldn't load notifications"
  );
  } finally {
- setNotifsLoading(false);
+ if (page === 1) setNotifsLoading(false);
+ else setLoadingOlder(false);
  }
  }, []);
 
  useEffect(() => {
  void loadNotifications();
  }, [loadNotifications]);
+
+ // Refetch whenever the Alerts tab becomes active.
+ useEffect(() => {
+ if (activeTab !== "alerts") return;
+ if (alertsLoadedOnceRef.current) void loadNotifications();
+ alertsLoadedOnceRef.current = true;
+ }, [activeTab, loadNotifications]);
 
  const markAllNotifsRead = useCallback(async () => {
  setMarkingAll(true);
@@ -370,6 +407,11 @@ export function StudentPanel({
  async (id: string) => {
  const target = notifs.find((n) => n.id === id);
  if (!target || target.isRead) return;
+ // Snapshot the PRE-optimistic values — the revert must restore what
+ // was actually shown before the click (a blind “(c ?? 0) + 1” would
+ // fabricate an unread the badge never had).
+ const prevNotifs = notifs;
+ const prevUnread = notifUnread;
  setNotifs((prev) =>
  prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
  );
@@ -377,12 +419,10 @@ export function StudentPanel({
  try {
  await apiPatch("/api/notifications", { ids: [id] });
  } catch {
- // Optimistic failure — revert the read-mark so the badge and the
- // unread highlight stay truthful.
- setNotifs((prev) =>
- prev.map((n) => (n.id === id ? { ...n, isRead: false } : n))
- );
- setNotifUnread((c) => (c ?? 0) + 1);
+ // Optimistic failure — revert to the exact pre-click state so the
+ // badge and the unread highlight stay truthful.
+ setNotifs(prevNotifs);
+ setNotifUnread(prevUnread);
  toast({
  title: "Couldn't mark as read",
  description: "The notification stays unread — try again.",
@@ -390,7 +430,7 @@ export function StudentPanel({
  });
  }
  },
- [notifs]
+ [notifs, notifUnread]
  );
 
  /* ---- profile (API is source of truth, auth store as fallback) ---- */
@@ -1207,8 +1247,10 @@ export function StudentPanel({
  type="button"
  onClick={() => {
  void markNotifRead(n.id);
- // Deep-link to the related page when the notification carries one
- if (n.link) followNotificationLink(n.link);
+ // Deep-link through the Next router — SPA navigation instead of the
+ // full page reload window.location.assign caused (same helper the
+ // header bell uses).
+ followNotificationLink(n.link, router);
  }}
  title={n.link ? "Open related page" : n.isRead ? undefined : "Mark as read"}
  className={cn(
@@ -1249,6 +1291,22 @@ export function StudentPanel({
  </button>
  );
  })}
+ </div>
+ )}
+ {notifsHasMore && !notifsLoading && (
+ <div className="mt-3 flex justify-center">
+ <Button
+ variant="outline"
+ size="sm"
+ onClick={() => void loadNotifications(notifsPageRef.current + 1)}
+ disabled={loadingOlder}
+ >
+ <RefreshCw
+ className={cn("mr-2 h-4 w-4", loadingOlder && "animate-spin")}
+ aria-hidden
+ />
+ {loadingOlder ? "Loading…" : "Load older"}
+ </Button>
  </div>
  )}
  </SectionCard>

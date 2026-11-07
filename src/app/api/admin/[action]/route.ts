@@ -16,7 +16,7 @@ const PASSWORD_MAX = 72; // bcrypt only hashes the first 72 bytes
 
 function validatePassword(pw: string): void {
   if (pw.length < PASSWORD_MIN) {
-    throw new ApiError(400, "Password must be at least 6 characters");
+    throw new ApiError(400, "Password must be at least 8 characters");
   }
   if (pw.length > PASSWORD_MAX) {
     throw new ApiError(
@@ -97,11 +97,27 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  // Day 43 — platform growth & revenue insights
  // Month buckets for "new users per month" — 12 bounded count() queries
  // instead of a take-limited findMany, which undercounts at scale.
- const now = new Date();
- const monthBuckets = Array.from({ length: 12 }, (_, i) => ({
- start: new Date(now.getFullYear(), now.getMonth() - (11 - i), 1),
- end: new Date(now.getFullYear(), now.getMonth() - (11 - i) + 1, 1),
- }));
+ // Buckets split at Dhaka midnight (+06:00, no DST): the old local-clock
+ // `new Date(y, m, 1)` bounds filed 00:00–06:00 Dhaka signups under the
+ // previous month whenever the server ran UTC.
+ const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
+ const dhakaNow = new Date(Date.now() + DHAKA_OFFSET_MS);
+ const baseYear = dhakaNow.getUTCFullYear();
+ const baseMonth = dhakaNow.getUTCMonth();
+ const dhakaMonthStart = (m0: number) => {
+ const year = baseYear + Math.floor(m0 / 12);
+ const month = ((m0 % 12) + 12) % 12;
+ return {
+ date: new Date(`${year}-${String(month + 1).padStart(2, "0")}-01T00:00:00+06:00`),
+ year,
+ month,
+ };
+ };
+ const monthBuckets = Array.from({ length: 12 }, (_, i) => {
+ const start = dhakaMonthStart(baseMonth - (11 - i));
+ const end = dhakaMonthStart(baseMonth - (11 - i) + 1);
+ return { start: start.date, end: end.date };
+ });
  const [universities, plans, roleCounts, scheduleGroups, deptUniRows, userGrowthCounts] =
  await Promise.all([
  db.university.findMany({
@@ -153,14 +169,19 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  }
  }
 
- // Growth: universities joined per month (last 8 months)
+ // Growth: universities joined per month (last 8 months) — Dhaka months,
+ // matching the signup buckets above.
  const months: { label: string; value: number }[] = [];
  for (let i = 7; i >= 0; i--) {
- const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
- const label = d.toLocaleDateString("en-US", { month: "short" });
+ const d = dhakaMonthStart(baseMonth - i);
+ const label = d.date.toLocaleDateString("en-US", {
+ month: "short",
+ timeZone: "Asia/Dhaka",
+ });
  const count = universities.filter((u) => {
- const c = new Date(u.createdAt);
- return c.getFullYear() === d.getFullYear() && c.getMonth() === d.getMonth();
+ // Shift createdAt into the Dhaka calendar, then compare UTC fields.
+ const c = new Date(new Date(u.createdAt).getTime() + DHAKA_OFFSET_MS);
+ return c.getUTCFullYear() === d.year && c.getUTCMonth() === d.month;
  }).length;
  months.push({ label, value: count });
  }
@@ -168,7 +189,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  // User growth per month — new signups in each calendar month (last 12)
  const userMonths: { label: string; value: number }[] = monthBuckets.map(
  (b, i) => ({
- label: b.start.toLocaleDateString("en-US", { month: "short" }),
+ label: b.start.toLocaleDateString("en-US", {
+ month: "short",
+ timeZone: "Asia/Dhaka",
+ }),
  value: userGrowthCounts[i],
  })
  );
@@ -182,8 +206,13 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  if (unassignedCount > 0) planDist.push({ label: "No plan", value: unassignedCount });
 
  const activeUnis = universities.filter((u) => u.isActive);
- const mrr = activeUnis.reduce((acc, u) => acc + (u.plan?.priceMonthly ?? 0), 0);
- const arr = mrr * 12;
+ // Money aggregates drift into float dust (e.g. 3 × 19.99 → 59.97000…);
+ // round MRR/ARR to 2dp so the dashboard shows clean currency values.
+ const mrr =
+ Math.round(
+ activeUnis.reduce((acc, u) => acc + (u.plan?.priceMonthly ?? 0), 0) * 100
+ ) / 100;
+ const arr = Math.round(mrr * 12 * 100) / 100;
 
  // Per-university usage
  const perUniversity = universities
@@ -253,12 +282,18 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  if (action === "users") {
  // Platform-wide user directory — the super admin's control panel for
  // every account on the platform. Filters are optional; q is matched
- // inside the Prisma WHERE (OR contains) so the 500-row cap counts
- // matching rows — the old JS-filter-after-fetch under-counted.
+ // inside the Prisma WHERE so counts reflect matching rows. Results are
+ // paginated (?page=, 1-based; default page size 100, max 500) — the
+ // old silent take-500 cap hid rows past the ceiling with no signal.
  const role = searchParams.get("role");
  const universityId = searchParams.get("universityId");
  const active = searchParams.get("active");
  const q = (searchParams.get("q") ?? "").trim();
+ const page = Math.max(1, Math.floor(Number(searchParams.get("page")) || 1));
+ const pageSize = Math.min(
+ 500,
+ Math.max(1, Math.floor(Number(searchParams.get("pageSize")) || 100))
+ );
 
  const where: Record<string, unknown> = {};
  if (role && ["super_admin", "dept_admin", "teacher", "student"].includes(role)) {
@@ -277,7 +312,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  ];
  }
 
- const users = await db.user.findMany({
+ const [users, total] = await Promise.all([
+ db.user.findMany({
  where,
  select: {
  id: true,
@@ -294,10 +330,14 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  department: { select: { id: true, name: true, shortName: true } },
  },
  orderBy: { createdAt: "desc" },
- take: 500,
- });
+ skip: (page - 1) * pageSize,
+ take: pageSize,
+ }),
+ // Real total (not users.length) — the client paginates against it.
+ db.user.count({ where }),
+ ]);
 
- return { users, total: users.length };
+ return { users, total, page, pages: Math.max(1, Math.ceil(total / pageSize)) };
  }
 
  if (action === "system") {
@@ -339,6 +379,52 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  };
  }
 
+ if (action === "sessions") {
+ // Active QR attendance windows, platform-wide — the super admin's
+ // kill-switch for a rogue/forgotten window (the teacher UI cannot
+ // close another teacher's session).
+ const now = new Date();
+ const [active, closedToday] = await Promise.all([
+ db.attendanceSession.findMany({
+ where: { closed: false, expiresAt: { gt: now } },
+ select: {
+ id: true,
+ date: true,
+ durationSec: true,
+ startsAt: true,
+ expiresAt: true,
+ presentCount: true,
+ geoRadiusM: true,
+ schedule: {
+ select: {
+ courseCode: true,
+ courseName: true,
+ semester: true,
+ department: { select: { name: true, shortName: true, university: { select: { shortName: true, name: true } } } },
+ },
+ },
+ teacher: { select: { fullName: true } },
+ },
+ orderBy: { startsAt: "desc" },
+ take: 100,
+ }),
+ db.attendanceSession.findMany({
+ where: { closed: true, expiresAt: { gte: new Date(now.getTime() - 24 * 3600 * 1000) } },
+ select: {
+ id: true,
+ date: true,
+ closed: true,
+ presentCount: true,
+ expiresAt: true,
+ schedule: { select: { courseCode: true, department: { select: { shortName: true } } } },
+ },
+ orderBy: { expiresAt: "desc" },
+ take: 50,
+ }),
+ ]);
+ return { active, closedToday };
+ }
+
  throw new ApiError(404, "Unknown action");
  });
 }
@@ -378,10 +464,21 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const cleanSlug = slug
  .toLowerCase()
  .trim()
- .replace(/[^a-z0-9-]/g, "-")
+ .replace(/[^a-z0-9]+/g, "-")
+ .replace(/-{2,}/g, "-")
+ .replace(/^-+|-+$/g, "")
  .slice(0, 100);
  if (!cleanSlug || cleanSlug === "-") {
  throw new ApiError(400, "Slug must contain letters or numbers");
+ }
+ // Same format rules as the manage route — a typo'd email/URL used to
+ // land in the DB and render straight onto the public portal page.
+ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+ if (cleanEmail && !EMAIL_RE.test(cleanEmail)) {
+ throw new ApiError(400, "Contact email is not a valid email address");
+ }
+ if (cleanWebsite && !/^https?:\/\/.+/i.test(cleanWebsite)) {
+ throw new ApiError(400, "Website URL must start with http:// or https://");
  }
  const existing = await db.university.findUnique({
  where: { slug: cleanSlug },
@@ -396,7 +493,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
  // University + its default SiteSettings row are born together — one
  // transaction so a half-created tenant (no settings) can never exist.
- const { university } = await db.$transaction(async (tx) => {
+ // P2002 on the slug (concurrent create) → friendly 409.
+ const { university } = await db
+ .$transaction(async (tx) => {
  const university = await tx.university.create({
  data: {
  name: cleanName,
@@ -414,6 +513,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  data: { universityId: university.id, siteName: cleanName },
  });
  return { university };
+ })
+ .catch((err) => {
+ if (err && typeof err === "object" && "code" in err && err.code === "P2002") {
+ throw new ApiError(409, "Slug already in use");
+ }
+ throw err;
  });
 
  return { university };
@@ -474,6 +579,96 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const result = await runCleanup();
  return { cleanup: result };
  }
+
+ if (action === "plans") {
+ // Create a plan — previously edit-only, so super admins could never
+ // add pricing tiers without a DB console.
+ const { name, tagline, priceMonthly, priceYearly, maxDepartments, maxStudents, maxTeachers, features, isActive, sortOrder } =
+ body as Record<string, unknown>;
+ const cleanName = typeof name === "string" ? name.trim() : "";
+ if (!cleanName) throw new ApiError(400, "Plan name is required");
+ const slug = cleanName
+ .toLowerCase()
+ .trim()
+ .replace(/[^a-z0-9]+/g, "-")
+ .replace(/-{2,}/g, "-")
+ .replace(/^-+|-+$/g, "");
+ if (!slug) throw new ApiError(400, "Plan name must contain letters or numbers");
+ const existing = await db.plan.findUnique({ where: { slug } });
+ if (existing) throw new ApiError(409, "A plan with this name already exists");
+ const intLimit = (v: unknown, label: string, fallback: number): number => {
+ if (v === undefined || v === null || v === "") return fallback;
+ const n = Math.round(Number(v));
+ if (!Number.isInteger(n) || n < -1 || n > 2147483647) {
+ throw new ApiError(400, `${label} must be an integer (-1 = unlimited)`);
+ }
+ return n;
+ };
+ const featureList = Array.isArray(features)
+ ? features.filter((f): f is string => typeof f === "string").slice(0, 20).map((f) => f.slice(0, 100))
+ : [];
+ const plan = await db.plan.create({
+ data: {
+ name: cleanStr(cleanName, 60),
+ slug,
+ tagline: typeof tagline === "string" ? cleanStr(tagline, 200) : null,
+ priceMonthly: Math.max(0, Math.round(Number(priceMonthly ?? 0) * 100) / 100),
+ priceYearly: Math.max(0, Math.round(Number(priceYearly ?? 0) * 100) / 100),
+ maxDepartments: intLimit(maxDepartments, "Max departments", 1),
+ maxStudents: intLimit(maxStudents, "Max students", 100),
+ maxTeachers: intLimit(maxTeachers, "Max teachers", 5),
+ features: JSON.stringify(featureList),
+ isActive: isActive === undefined ? true : Boolean(isActive),
+ sortOrder: Math.max(0, Math.round(Number(sortOrder ?? 0))),
+ },
+ });
+ return { plan };
+ }
+
+ if (action === "broadcast") {
+ // Platform-wide announcement — fans out Notification rows to every
+ // active user (optionally scoped to one university / role). Department
+ // notices cannot reach across tenants; this is the super admin's only
+ // way to talk to the whole platform (downtimes, policy updates).
+ const { title, message, link, universityId, audience } = body as Record<string, unknown>;
+ const cleanTitle = typeof title === "string" ? title.trim() : "";
+ const cleanMessage = typeof message === "string" ? message.trim() : "";
+ if (!cleanTitle || !cleanMessage) {
+ throw new ApiError(400, "Title and message are required");
+ }
+ const roles =
+ audience === "students"
+ ? ["student" as const]
+ : audience === "teachers"
+ ? ["teacher" as const]
+ : audience === "admins"
+ ? ["dept_admin" as const]
+ : ["student", "teacher", "dept_admin"] as const;
+ const recipients = await db.user.findMany({
+ where: {
+ isActive: true,
+ role: { in: [...roles] },
+ ...(typeof universityId === "string" && universityId ? { universityId } : {}),
+ },
+ select: { id: true },
+ take: 2000,
+ orderBy: { createdAt: "asc" },
+ });
+ if (recipients.length === 0) {
+ throw new ApiError(400, "No active users match this broadcast scope");
+ }
+ await db.notification.createMany({
+ data: recipients.map((r) => ({
+ userId: r.id,
+ type: "general",
+ title: cleanStr(cleanTitle, 150),
+ body: cleanStr(cleanMessage, 500),
+ link: typeof link === "string" && link.startsWith("/") ? link.slice(0, 200) : "/?view=dashboard",
+ })),
+ });
+ return { sent: recipients.length };
+ }
+
 
  throw new ApiError(404, "Unknown action");
  });
@@ -549,6 +744,13 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
  const data: Record<string, unknown> = {};
  if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
+ // Optional student identity fields (trimmed, length-capped like the
+ // manage route). Needed when converting a staff account to a student —
+ // the student login is ID + Roll, not email + password.
+ const sidInput = typeof body.studentIdNumber === "string" ? body.studentIdNumber.trim() : "";
+ const rollInput = typeof body.rollNumber === "string" ? body.rollNumber.trim() : "";
+ if (sidInput) data.studentIdNumber = sidInput.slice(0, 30);
+ if (rollInput) data.rollNumber = rollInput.slice(0, 30);
  if (body.role !== undefined) {
  const role = String(body.role);
  if (!["dept_admin", "teacher", "student"].includes(role)) {
@@ -567,8 +769,10 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  }
  if (role !== target.role && target.role !== "student" && role === "student") {
  // Demoting staff to student: the student login needs ID+Roll.
- // Without them the account can log in nowhere.
- if (!target.studentIdNumber || !target.rollNumber) {
+ // Accept them from the request body; fall back to stored values.
+ const effSid = sidInput || target.studentIdNumber || "";
+ const effRoll = rollInput || target.rollNumber || "";
+ if (!effSid || !effRoll) {
  throw new ApiError(
  400,
  "Set a student ID number and roll number before converting this account to a student"
@@ -585,21 +789,48 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (Object.keys(data).length === 0) {
  throw new ApiError(400, "Nothing to update");
  }
- const updated = await db.user.update({ where: { id }, data });
+ let updated;
+ try {
+ updated = await db.user.update({ where: { id }, data });
+ } catch (err) {
+ // The new per-university unique constraints (ID number / roll number /
+ // email) are the source of truth for duplicates — map the Prisma
+ // violation to a friendly 409 instead of an opaque 500.
+ if ((err as { code?: string })?.code === "P2002") {
+ throw new ApiError(
+ 409,
+ "Another user in this university already has that email, student ID number or roll number"
+ );
+ }
+ throw err;
+ }
  const { password: _pw, ...safeUser } = updated;
  return { user: safeUser };
  }
 
  if (action === "plans") {
  if (!id) throw new ApiError(400, "id is required");
- const num = (v: unknown, label: string, opts: { min?: number; max?: number } = {}): number => {
+ const num = (
+ v: unknown,
+ label: string,
+ opts: { min?: number; max?: number; int?: boolean } = {}
+ ): number => {
  const n = Number(v);
  if (!Number.isFinite(n)) throw new ApiError(400, `${label} must be a number`);
  if (opts.min !== undefined && n < opts.min)
  throw new ApiError(400, `${label} must be at least ${opts.min}`);
  if (opts.max !== undefined && n > opts.max)
  throw new ApiError(400, `${label} must be at most ${opts.max}`);
- return Math.round(n * 100) / 100;
+ const rounded = Math.round(n * 100) / 100;
+ // Plan limits are Int columns — a fractional or > int32 value used to
+ // surface as an opaque Prisma 500; reject with a friendly 400 instead.
+ if (opts.int) {
+ if (!Number.isInteger(rounded))
+ throw new ApiError(400, `${label} must be a whole number`);
+ if (rounded > 2147483647)
+ throw new ApiError(400, `${label} is too large`);
+ }
+ return rounded;
  };
  const data: Record<string, unknown> = {};
  if (body.name !== undefined) data.name = String(body.name);
@@ -610,11 +841,11 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (body.priceYearly !== undefined)
  data.priceYearly = num(body.priceYearly, "Yearly price", { min: 0 });
  if (body.maxDepartments !== undefined)
- data.maxDepartments = num(body.maxDepartments, "Max departments", { min: -1 });
+ data.maxDepartments = num(body.maxDepartments, "Max departments", { min: -1, int: true });
  if (body.maxStudents !== undefined)
- data.maxStudents = num(body.maxStudents, "Max students", { min: -1 });
+ data.maxStudents = num(body.maxStudents, "Max students", { min: -1, int: true });
  if (body.maxTeachers !== undefined)
- data.maxTeachers = num(body.maxTeachers, "Max teachers", { min: -1 });
+ data.maxTeachers = num(body.maxTeachers, "Max teachers", { min: -1, int: true });
  if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
  if (body.features !== undefined) {
  // Contract C5: features arrive as an array of strings OR as a JSON
@@ -666,6 +897,38 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  data: { isActive: false },
  });
  return { university };
+ }
+
+ if (action === "sessions") {
+ // Force-close a live QR window platform-wide. The teacher's own
+ // finalize still computes absentees; closing here only stops NEW
+ // check-ins (same flag the natural expiry sets).
+ const session = await db.attendanceSession.findUnique({
+ where: { id },
+ select: { closed: true },
+ });
+ if (!session) throw new ApiError(404, "Attendance session not found");
+ if (session.closed) return { closed: true, already: true };
+ const updated = await db.attendanceSession.update({
+ where: { id },
+ data: { closed: true },
+ select: { id: true, closed: true },
+ });
+ return { closed: true, session: updated };
+ }
+
+ if (action === "plans") {
+ // Hard delete a plan — refused while universities are subscribed so
+ // pricing history never silently vanishes; reassign them first.
+ const inUse = await db.university.count({ where: { planId: id } });
+ if (inUse > 0) {
+ throw new ApiError(
+ 409,
+ `${inUse} universit${inUse === 1 ? "y is" : "ies are"} still on this plan — move them to another plan first`
+ );
+ }
+ await db.plan.delete({ where: { id } });
+ return { deleted: true };
  }
 
  throw new ApiError(404, "Unknown action");

@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { handle, badRequest } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError, type SessionPayload } from "@/lib/session";
@@ -94,16 +95,29 @@ function validateSemester(v: unknown, label = "Semester"): number {
  return n;
 }
 
+/** "08:00"-style 24h clock — the timetable and overlap math rely on it. */
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+function validateTimeRange(startTime: unknown, endTime: unknown): void {
+ for (const [label, v] of [
+ ["Start time", startTime],
+ ["End time", endTime],
+ ] as const) {
+ if (v !== undefined && v !== null && !TIME_RE.test(String(v)))
+ throw new ApiError(400, `${label} must be a 24-hour HH:MM time (e.g. 08:00)`);
+ }
+}
+
 /**
  * Plan-cap guard (fix 8e): counts ACTIVE rows with the same isActive
  * semantics as the rows about to be created; -1 = unlimited.
  */
 async function assertPlanLimit(
+ client: Prisma.TransactionClient,
  universityId: string,
  cap: "maxDepartments" | "maxTeachers" | "maxStudents",
  thing: string
 ): Promise<void> {
- const uni = await db.university.findUnique({
+ const uni = await client.university.findUnique({
  where: { id: universityId },
  select: {
  plan: { select: { maxDepartments: true, maxTeachers: true, maxStudents: true } },
@@ -113,8 +127,8 @@ async function assertPlanLimit(
  if (limit < 0) return; // -1 = unlimited
  const activeCount =
  cap === "maxDepartments"
- ? await db.department.count({ where: { universityId, isActive: true } })
- : await db.user.count({
+ ? await client.department.count({ where: { universityId, isActive: true } })
+ : await client.user.count({
  where: {
  universityId,
  role: cap === "maxTeachers" ? "teacher" : "student",
@@ -132,15 +146,17 @@ async function assertPlanLimit(
 /**
  * programId must reference a program of THIS department — a mismatched
  * or foreign programId previously produced confusing cross-dept data.
+ * Returns the program so callers can apply its semesterCount bound.
  */
 async function assertProgramInDepartment(
  programId: string,
  departmentId: string
-): Promise<void> {
+) {
  const program = await db.program.findUnique({ where: { id: programId } });
  if (!program) throw new ApiError(404, "Program not found");
  if (program.departmentId !== departmentId)
  throw new ApiError(403, "Program belongs to another department");
+ return program;
 }
 
 /** 409 with a friendly "in use" message when reference rows exist. */
@@ -512,19 +528,23 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const emailNorm = email.trim().toLowerCase();
  if (!EMAIL_RE.test(emailNorm))
  throw new ApiError(400, "Please enter a valid email address");
- if (password.length < 6)
- throw new ApiError(400, "Password must be at least 6 characters");
+ if (password.length < 8)
+ throw new ApiError(400, "Password must be at least 8 characters");
  // universityId comes from the department row so a super_admin can
  // provision any department without creating an orphaned user.
  const universityId = await resolveUniversityId(departmentId);
- await assertPlanLimit(universityId, "maxTeachers", "teachers");
- const existing = await db.user.findFirst({
+ const hashed = await hashPassword(password);
+ // Plan-limit count + duplicate check + create run inside ONE transaction
+ // — SQLite serializes writers, so two concurrent creates can no longer
+ // both pass the count check (TOCTOU).
+ const created = await db.$transaction(async (tx) => {
+ await assertPlanLimit(tx, universityId, "maxTeachers", "teachers");
+ const existing = await tx.user.findFirst({
  where: { universityId, email: emailNorm },
  });
  if (existing)
  throw new ApiError(409, "A user with this email already exists");
- const hashed = await hashPassword(password);
- const created = await db.user.create({
+ return tx.user.create({
  data: {
  universityId,
  departmentId,
@@ -537,6 +557,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  officeRoom: officeRoom ? cleanStr(officeRoom, 30) : null,
  bio: bio ? cleanStr(bio, 500) : null,
  },
+ });
  });
  return stripPassword(created);
  }
@@ -554,16 +575,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!fullName || !studentIdNumber || !rollNumber)
  throw new ApiError(400, "Name, ID number and roll number are required");
  const universityId = await resolveUniversityId(departmentId);
- await assertPlanLimit(universityId, "maxStudents", "students");
  if (programId) {
  await assertProgramInDepartment(String(programId), departmentId);
  }
- const existing = await db.user.findFirst({
+ // Plan-limit count + duplicate check + create in one transaction (see
+ // the teachers branch — SQLite serializes writers, closing the TOCTOU).
+ const created = await db.$transaction(async (tx) => {
+ await assertPlanLimit(tx, universityId, "maxStudents", "students");
+ const existing = await tx.user.findFirst({
  where: { universityId, studentIdNumber: String(studentIdNumber) },
  });
  if (existing)
  throw new ApiError(409, "A student with this ID number already exists");
- const created = await db.user.create({
+ return tx.user.create({
  data: {
  universityId,
  departmentId,
@@ -577,6 +601,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  phone: phone ? cleanStr(phone, 30) : null,
  },
  });
+ });
  return stripPassword(created);
  }
 
@@ -586,16 +611,33 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!code || !name || !programId)
  throw new ApiError(400, "Code, name and program are required");
  // Tenant guard: the course's program must live in THIS department.
- await assertProgramInDepartment(String(programId), departmentId);
+ const program = await assertProgramInDepartment(String(programId), departmentId);
+ const courseType = type ? String(type) : "theory";
+ if (courseType !== "theory" && courseType !== "lab")
+ throw new ApiError(400, "Course type must be theory or lab");
+ const sem = Number(semester) || 1;
+ if (!Number.isInteger(sem) || sem < 1)
+ throw new ApiError(400, "Semester must be a positive whole number");
+ if (sem > program.semesterCount)
+ throw new ApiError(
+ 400,
+ `Semester must be between 1 and ${program.semesterCount} for this program`
+ );
+ const creditNum =
+ creditHours === undefined || creditHours === null || creditHours === ""
+ ? 3
+ : cleanNum(creditHours);
+ if (creditNum <= 0 || creditNum > 30)
+ throw new ApiError(400, "Credit hours must be greater than 0 and at most 30");
  return db.course.create({
  data: {
  departmentId,
  programId: String(programId),
- code: String(code),
- name: String(name),
- creditHours: Number(creditHours) || 3,
- type: String(type) || "theory",
- semester: Number(semester) || 1,
+ code: cleanStr(code, 30),
+ name: cleanStr(name, 120),
+ creditHours: creditNum,
+ type: courseType,
+ semester: sem,
  },
  });
  }
@@ -604,13 +646,21 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const { roomNumber, building, type, capacity } =
  body as Record<string, string | number>;
  if (!roomNumber) throw new ApiError(400, "Room number is required");
+ // Int column: a fractional or sub-1 capacity used to pass through and
+ // surface as an opaque Prisma 500 (or store a nonsensical room).
+ const capacityNum =
+ capacity === undefined || capacity === null || capacity === ""
+ ? 40
+ : cleanNum(capacity);
+ if (!Number.isInteger(capacityNum) || capacityNum < 1)
+ throw new ApiError(400, "Capacity must be a whole number of at least 1");
  return db.room.create({
  data: {
  departmentId,
  roomNumber: String(roomNumber),
  building: building ? String(building) : null,
  type: String(type) || "classroom",
- capacity: Number(capacity) || 40,
+ capacity: capacityNum,
  },
  });
  }
@@ -620,6 +670,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  body as Record<string, string | number | boolean>;
  if (!label || !startTime || !endTime)
  throw new ApiError(400, "Label, start and end time are required");
+ // The timetable and clash math parse these strings — enforce HH:MM.
+ validateTimeRange(startTime, endTime);
  return db.timeSlot.create({
  data: {
  departmentId,
@@ -637,12 +689,21 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  body as Record<string, string | number>;
  if (!name || !shortName)
  throw new ApiError(400, "Program name and short name are required");
+ const semCount =
+ semesterCount === undefined || semesterCount === null || semesterCount === ""
+ ? 8
+ : cleanNum(semesterCount);
+ if (!Number.isInteger(semCount) || semCount < 1 || semCount > 12)
+ throw new ApiError(
+ 400,
+ "Semester count must be a whole number between 1 and 12"
+ );
  return db.program.create({
  data: {
  departmentId,
  name: String(name),
  shortName: String(shortName),
- semesterCount: Number(semesterCount) || 8,
+ semesterCount: semCount,
  },
  });
  }
@@ -662,7 +723,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (programId) {
  await assertProgramInDepartment(String(programId), departmentId);
  }
- return db.notice.create({
+ const notice = await db.notice.create({
  data: {
  departmentId,
  title: cleanStr(title, 150),
@@ -676,6 +737,44 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  postedByName: session.name,
  },
  });
+
+ // Fan-out per-user notifications (mirrors the teacher notice route):
+ // students honor the program/semester scope, teachers always hear about
+ // department notices. Bounded at 1000 so createMany stays cheap.
+ const noticeTitle = `Notice: ${notice.title.slice(0, 60)}`;
+ const noticeBody = notice.content.slice(0, 140);
+ const fanout: {
+ userId: string; title: string; body: string; type: string; link: string;
+ }[] = [];
+ if (audienceVal !== "teachers") {
+ const students = await db.user.findMany({
+ where: {
+ departmentId,
+ role: "student",
+ isActive: true,
+ ...(notice.programId ? { programId: notice.programId } : {}),
+ ...(notice.semester ? { semester: notice.semester } : {}),
+ },
+ select: { id: true },
+ take: 1000,
+ });
+ for (const s of students) {
+ fanout.push({ userId: s.id, title: noticeTitle, body: noticeBody, type: "notice", link: "/?view=dashboard" });
+ }
+ }
+ if (audienceVal !== "students") {
+ const teachers = await db.user.findMany({
+ where: { departmentId, role: "teacher", isActive: true },
+ select: { id: true },
+ take: 1000,
+ });
+ for (const t of teachers) {
+ fanout.push({ userId: t.id, title: noticeTitle, body: noticeBody, type: "notice", link: "/?view=dashboard" });
+ }
+ }
+ if (fanout.length) await db.notification.createMany({ data: fanout });
+
+ return notice;
  }
 
  case "schedules": {
@@ -899,9 +998,28 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (body.programId !== undefined && PROGRAM_ID_ENTITIES.has(entity)) {
  data.programId = body.programId ? String(body.programId) : null;
  }
- // Student PUT applies the same semester validation POST uses.
+ // Student PUT applies the same semester validation POST uses, plus the
+ // program-length bound — a semester past the program's semesterCount
+ // used to write silently and break routine/course lookups.
  if (entity === "students" && data.semester !== undefined) {
  validateSemester(data.semester);
+ const effProgramId =
+ (data.programId as string | null | undefined) ??
+ (await db.user.findUnique({ where: { id }, select: { programId: true } }))
+ ?.programId ??
+ null;
+ if (effProgramId) {
+ const prog = await db.program.findUnique({
+ where: { id: effProgramId },
+ select: { semesterCount: true },
+ });
+ if (prog && (data.semester as number) > prog.semesterCount) {
+ throw new ApiError(
+ 400,
+ `Semester must be between 1 and ${prog.semesterCount} for this program`
+ );
+ }
+ }
  }
  // audience: enum whitelist on update too (POST already enforces this) —
  // previously it rode the generic string list and bypassed validation.
@@ -916,6 +1034,26 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  throw new ApiError(400, "Invalid notice category");
  }
 
+ // Numeric bounds on Int columns — fractions/oversized values previously
+ // surfaced as opaque Prisma 500s; reject them with friendly 400s here.
+ if (entity === "rooms" && data.capacity !== undefined) {
+ if (!Number.isInteger(data.capacity) || (data.capacity as number) < 1)
+ throw new ApiError(400, "Capacity must be a whole number of at least 1");
+ }
+ if (entity === "courses" && data.creditHours !== undefined) {
+ const ch = data.creditHours as number;
+ if (!Number.isFinite(ch) || ch <= 0 || ch > 30)
+ throw new ApiError(400, "Credit hours must be greater than 0 and at most 30");
+ }
+ if (entity === "programs" && data.semesterCount !== undefined) {
+ const sc = data.semesterCount as number;
+ if (!Number.isInteger(sc) || sc < 1 || sc > 12)
+ throw new ApiError(400, "Semester count must be a whole number between 1 and 12");
+ }
+ if (entity === "timeslots") {
+ validateTimeRange(data.startTime, data.endTime);
+ }
+
  switch (entity) {
  case "teachers":
  case "students": {
@@ -924,8 +1062,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (typeof body.password === "string") {
  if (body.password.length === 0) {
  // empty string → skip password change
- } else if (body.password.length < 6) {
- throw new ApiError(400, "Password must be at least 6 characters");
+ } else if (body.password.length < 8) {
+ throw new ApiError(400, "Password must be at least 8 characters");
  } else {
  data.password = await hashPassword(body.password);
  }
@@ -959,6 +1097,11 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  return stripPassword(updated);
  }
  case "courses": {
+ // programId is a required column — an empty value previously null'd it
+ // and surfaced as an opaque Prisma 500 (mirrors the schedules branch).
+ if (data.programId !== undefined && !data.programId) {
+ throw new ApiError(400, "Program is required");
+ }
  // A reassigned program must belong to this department — verified
  // BEFORE the write so a rejected request cannot half-apply.
  if (data.programId) {
@@ -1020,6 +1163,18 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  case "notices": {
  if (data.programId) {
  await assertProgramInDepartment(String(data.programId), departmentId);
+ }
+ // Semester must stay bounded (1..12) AND tied to a program scope — a
+ // bare semester without a program filtered nobody in fan-out lookups.
+ if (data.semester !== undefined) {
+ validateSemester(data.semester);
+ const effProgramId =
+ (data.programId as string | null | undefined) ??
+ (await db.notice.findUnique({ where: { id }, select: { programId: true } }))
+ ?.programId ??
+ null;
+ if (!effProgramId)
+ throw new ApiError(400, "A program must be selected when a semester is set");
  }
  return db.notice.update({ where: { id }, data });
  }
@@ -1135,11 +1290,17 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  });
  const roomId = (data.roomId as string) ?? existing.roomId;
  const teacherId = (data.teacherId as string) ?? existing.teacherId;
+ // Batch clash (mirrors POST): two classes for the same program+semester
+ // cannot share a window even when room and teacher are free.
+ const programId = (data.programId as string) ?? existing.programId;
+ const sem = (data.semester as number) ?? existing.semester;
  const effStart = (data.startTime as string) ?? existing.startTime;
  const effEnd = (data.endTime as string) ?? existing.endTime;
  const clash = sameDay.find(
  (s) =>
- (s.roomId === roomId || s.teacherId === teacherId) &&
+ (s.roomId === roomId ||
+ s.teacherId === teacherId ||
+ (s.programId === programId && s.semester === sem)) &&
  windowsOverlap(s.startTime, s.endTime, effStart, effEnd, s.timeSlotId === timeSlotId)
  );
  if (clash)

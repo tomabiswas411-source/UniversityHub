@@ -30,12 +30,28 @@ export function useNotificationSound() {
  return play;
 }
 
-/** Shows a browser notification if permission granted (PWA-friendly). */
-export function showBrowserNotification(title: string, body: string) {
+/** Shows a browser notification if permission granted (PWA-friendly).
+ *  `link` wires the click to the in-app deep link — without it, clicking
+ *  the OS notification did nothing at all (users tap it and nothing opens). */
+export function showBrowserNotification(
+ title: string,
+ body: string,
+ link?: string | null
+) {
  try {
  if (typeof window === "undefined" || !("Notification" in window)) return;
  if (Notification.permission === "granted") {
- new Notification(title, { body, icon: "/icons/icon-192x192.png" });
+ const n = new Notification(title, { body, icon: "/icons/icon-192x192.png" });
+ const target = link && link.startsWith("/") ? link : "/?view=dashboard";
+ n.onclick = () => {
+ try {
+ window.focus();
+ window.location.assign(target);
+ } catch {
+ /* noop */
+ }
+ n.close();
+ };
  }
  } catch {
  // no-op

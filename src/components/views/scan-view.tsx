@@ -89,6 +89,9 @@ export function ScanView({
       if (navigatingRef.current) return;
       navigatingRef.current = true;
       stopCamera();
+      // A successful decode must clear any stale scan error — otherwise
+      // the "not an attendance code" message lingers forever.
+      setLastError(null);
       try {
         navigator.vibrate?.(80);
       } catch {

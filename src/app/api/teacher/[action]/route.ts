@@ -116,6 +116,20 @@ async function assertTeacherOwnsCourse(
  if (!own) throw new ApiError(403, "You can only manage courses you teach");
 }
 
+/**
+ * Batch keys ("programId:semester") the teacher actually teaches.
+ * Batch-wide student management (move / activate / deactivate) must stay
+ * inside batches the teacher touches — dept-wide scope was an escalation:
+ * any teacher could promote or deactivate EVERY batch in the department.
+ */
+async function taughtBatchKeys(teacherId: string): Promise<Set<string>> {
+ const rows = await db.schedule.findMany({
+ where: { teacherId },
+ select: { programId: true, semester: true },
+ });
+ return new Set(rows.map((r) => `${r.programId}:${r.semester}`));
+}
+
 export async function GET(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
  return handle(async () => {
@@ -685,7 +699,16 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  });
 
  if (!scopeProgramId || !scopeSemester) {
- return { students: [], attendancePct: {}, programs, batch: null };
+ return { students: [], studentTotal: 0, attendancePct: {}, programs, batch: null };
+ }
+
+ // Teachers list/manage only batches they actually teach — the same scope
+ // the students-move / students-status writes enforce below.
+ if (session.role === "teacher") {
+ const taught = await taughtBatchKeys(session.userId);
+ if (!taught.has(`${scopeProgramId}:${scopeSemester}`)) {
+ throw new ApiError(403, "You can only manage students in batches you teach");
+ }
  }
 
  const where = {
@@ -720,6 +743,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  orderBy: { rollNumber: "asc" },
  take: 500,
  });
+ // Real batch size — the list caps at 500; the UI says "showing first
+ // 500 of N" instead of silently truncating large departments.
+ const studentTotal = await db.user.count({ where });
  // Two grouped aggregates instead of N rows — COST GUARD.
  // Wrapped defensively: if the attendance aggregates ever fail
  // (e.g. stale client on a cold deploy), the roster itself must
@@ -761,6 +787,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
  return {
  students,
+ studentTotal,
  attendancePct,
  programs,
  batch: { programId: scopeProgramId, semester: scopeSemester },
@@ -776,27 +803,49 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  if (!timeSlotId) throw new ApiError(400, "timeSlotId is required");
  assertDepartmentAccess(session, session.departmentId!);
 
- const [rooms, bookings] = await Promise.all([
+ const [slot, rooms, daySchedules] = await Promise.all([
+ db.timeSlot.findUnique({
+ where: { id: timeSlotId },
+ select: { startTime: true, endTime: true },
+ }),
  db.room.findMany({
  where: { departmentId: session.departmentId!, isActive: true },
  orderBy: { roomNumber: "asc" },
  }),
+ // ALL same-day bookings of the department: a room is NOT free when an
+ // overlapping window occupies it, even under a different timeSlotId
+ // (exact-slot match reported 10:00-11:00 rooms free for a 10:30 slot).
  db.schedule.findMany({
  where: {
  departmentId: session.departmentId!,
  isActive: true,
  dayOfWeek: day,
- timeSlotId,
  },
  select: {
  roomId: true,
  courseCode: true,
  teacherName: true,
  semester: true,
+ timeSlotId: true,
+ startTime: true,
+ endTime: true,
  },
  }),
  ]);
- const bookedMap = new Map(bookings.map((b) => [b.roomId, b]));
+ if (!slot) throw new ApiError(400, "Invalid time slot");
+ const bookedMap = new Map(
+ daySchedules
+ .filter((s) =>
+ windowsOverlap(
+ s.startTime,
+ s.endTime,
+ slot.startTime,
+ slot.endTime,
+ s.timeSlotId === timeSlotId
+ )
+ )
+ .map((s) => [s.roomId, s])
+ );
  return {
  day,
  timeSlotId,
@@ -917,6 +966,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.attendance.findMany({
  where: { scheduleId },
  select: { studentId: true, date: true, status: true },
+ // Deterministic export: identical rows on every run, and the take
+ // below must never drop arbitrary rows.
+ orderBy: [{ date: "asc" }, { studentId: "asc" }],
  // Hard cap: a decades-old schedule could otherwise pull unlimited rows
  // into one CSV build (Excel handles ~16k columns anyway).
  take: 2000,
@@ -1204,13 +1256,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  }
 
- // Batched upserts: chunked array-transactions instead of one await per
- // student (the libsql adapter handles modest batches well; chunks of 25
- // keep each transaction small).
- const CHUNK_SIZE = 25;
- for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
- await db.$transaction(ops.slice(i, i + CHUNK_SIZE));
- }
+ // ONE array-transaction: the chunked version issued serial round trips
+ // AND was non-atomic — a mid-save failure left half the roster marked.
+ // Entries are capped at 500, well inside the batch limit.
+ await db.$transaction(ops);
 
  // Notify absent students (skip when re-saving an already-marked day is fine —
  // upsert keeps one notification per save, which acts as a gentle reminder)
@@ -1374,6 +1423,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const course = await db.course.findUnique({ where: { id: String(courseId) } });
  if (!course) throw new ApiError(404, "Course not found");
  assertDepartmentAccess(session, course.departmentId);
+ // Ownership guard: a teacher scoping a notice to a course reaches only
+ // THEIR batch — an arbitrary courseId used to fan out into any batch.
+ await assertTeacherOwnsCourse(session, String(courseId));
  scopeProgramId = course.programId;
  scopeSemester = course.semester;
  scopeCode = course.code;
@@ -1440,7 +1492,17 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  // Type-guard the free-text reason — a numeric reason used to 500.
  const reason = asStr(body.reason, "Reason");
 
- if (!scheduleId || !changeType || !reason.trim()) {
+ // Type-guard BEFORE any Prisma query — a numeric scheduleId used to reach
+ // Prisma as `where: { id: 123 }` and surface as an opaque 500. (An omitted
+ // effectiveDate stays legal — it defaults to today below.)
+ if (
+ typeof scheduleId !== "string" || !scheduleId ||
+ typeof changeType !== "string" || !changeType ||
+ (effectiveDate !== undefined && effectiveDate !== null && typeof effectiveDate !== "string")
+ ) {
+ throw new ApiError(400, "Schedule, change type and reason are required");
+ }
+ if (!reason.trim()) {
  throw new ApiError(400, "Schedule, change type and reason are required");
  }
  // Whitelist the change type (the route only supports these five modes),
@@ -1481,13 +1543,24 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
  let newTime: { startTime: string; endTime: string } | null = null;
  let newRoomNumber: string | null = null;
+ // Invalid ids must 400 loudly — silently ignoring a bad room/slot used to
+ // record a "reschedule" that kept the old time/room while claiming
+ // success. Both must also belong to the caller's department.
  if (newTimeSlotId) {
  const ts = await db.timeSlot.findUnique({ where: { id: newTimeSlotId } });
- if (ts) newTime = { startTime: ts.startTime, endTime: ts.endTime };
+ if (!ts) throw new ApiError(400, "Selected time slot not found");
+ if (session.departmentId && ts.departmentId !== session.departmentId) {
+ throw new ApiError(400, "Selected time slot does not belong to your department");
+ }
+ newTime = { startTime: ts.startTime, endTime: ts.endTime };
  }
  if (newRoomId) {
  const rm = await db.room.findUnique({ where: { id: newRoomId } });
- if (rm) newRoomNumber = rm.roomNumber;
+ if (!rm) throw new ApiError(400, "Selected room not found");
+ if (session.departmentId && rm.departmentId !== session.departmentId) {
+ throw new ApiError(400, "Selected room does not belong to your department");
+ }
+ newRoomNumber = rm.roomNumber;
  }
 
  // Room + teacher clash guard — the effective (day, time-window, room)
@@ -1647,9 +1720,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  throw new ApiError(400, "Course, title and description are required");
  }
  // REALITY CHECK: a deadline in the past would mark every submission
- // overdue the moment it is published.
+ // overdue the moment it is published. The client sends "YYYY-MM-DD";
+ // parse it as Dhaka END-of-day — the old `new Date(dueDate)` pinned UTC
+ // midnight, so a deadline expired 6 hours before the BD day ended.
  if (dueDate) {
- const due = new Date(dueDate);
+ if (!DATE_RE.test(dueDate)) {
+ throw new ApiError(400, "Due date must be in YYYY-MM-DD format");
+ }
+ const due = new Date(`${dueDate}T23:59:59+06:00`);
  if (Number.isNaN(due.getTime())) {
  throw new ApiError(400, "Due date is not a valid date");
  }
@@ -1670,7 +1748,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  teacherId: session.userId,
  title: title.trim().slice(0, 150),
  description: description.trim().slice(0, 5000),
- dueDate: dueDate ? new Date(dueDate) : null,
+ dueDate: dueDate ? new Date(`${dueDate}T23:59:59+06:00`) : null,
  maxMarks: maxMarks ? parseMaxMarks(maxMarks) : null,
  },
  });
@@ -1740,6 +1818,18 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  });
  const rosterIds = new Set(roster.map((s) => s.id));
 
+ // Re-save spam guard: existing rows for this course+exam tell us which
+ // students actually receive NEW information on this save.
+ const existingResults = await db.result.findMany({
+ where: {
+ courseId,
+ examType,
+ studentId: { in: entries.map((e) => String(e.studentId)) },
+ },
+ select: { studentId: true, marks: true, grade: true },
+ });
+ const existingMap = new Map(existingResults.map((r) => [r.studentId, r]));
+
  let saved = 0;
  const ops: ReturnType<typeof db.result.upsert>[] = [];
  const notifications: {
@@ -1804,12 +1894,18 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  },
  })
  );
+ // Notify only when the student gets new information: a brand-new row,
+ // or marks/grade that actually differ from the stored row (re-saving
+ // identical marks used to re-ping the whole batch every time).
+ const prev = existingMap.get(e.studentId);
+ if (!prev || prev.marks !== marks || (prev.grade ?? null) !== (gradeVal ?? null)) {
  notifications.push({
  userId: e.studentId,
  title: `Result Published: ${course.code}`,
  body: `Your ${examType.toUpperCase()} result for ${course.code} is published: ${marks}/${maxMarks}${gradeVal ? ` (Grade ${gradeVal})` : ""}`,
  type: "result",
  });
+ }
  saved++;
  }
 
@@ -1848,10 +1944,18 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  select: {
  id: true,
  semester: true,
+ programId: true,
  program: { select: { shortName: true, semesterCount: true } },
  },
  });
  if (students.length === 0) throw new ApiError(404, "No students found in your department");
+ // Batch-scope guard: teachers move only students in batches they teach.
+ if (session.role === "teacher") {
+ const taught = await taughtBatchKeys(session.userId);
+ if (students.some((s) => !taught.has(`${s.programId}:${s.semester}`))) {
+ throw new ApiError(403, "You can only manage students in batches you teach");
+ }
+ }
  const over = students.filter((s) => s.program && target > s.program.semesterCount);
  if (over.length > 0) {
  throw new ApiError(
@@ -1888,6 +1992,22 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  if (typeof isActive !== "boolean") {
  throw new ApiError(400, "isActive must be true or false");
+ }
+ // Load the targets first so teachers can be batch-checked before any
+ // write happens (dept-wide activate/deactivate was an escalation).
+ if (session.role === "teacher") {
+ const targets = await db.user.findMany({
+ where: {
+ id: { in: studentIds.slice(0, 500) },
+ departmentId: session.departmentId!,
+ role: "student",
+ },
+ select: { id: true, programId: true, semester: true },
+ });
+ const taught = await taughtBatchKeys(session.userId);
+ if (targets.some((s) => !taught.has(`${s.programId}:${s.semester}`))) {
+ throw new ApiError(403, "You can only manage students in batches you teach");
+ }
  }
  const result = await db.user.updateMany({
  where: {
@@ -1933,16 +2053,26 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  data.description = body.description.trim().slice(0, 5000);
  if (body.dueDate !== undefined) {
  // Same validation POST applies: garbage dates 400 (a raw `new Date`
- // used to store Invalid Date → opaque Prisma 500) and the deadline
- // must still be in the future on edit.
+ // used to store Invalid Date → opaque Prisma 500). The deadline must
+ // still be in the future on edit — but ONLY when it actually moves:
+ // re-saving an unchanged (already past) deadline must not 400.
  if (body.dueDate === null || body.dueDate === "") {
  data.dueDate = null;
  } else {
- const due = new Date(String(body.dueDate));
+ const dueStr = String(body.dueDate);
+ if (!DATE_RE.test(dueStr)) {
+ throw new ApiError(400, "Due date must be in YYYY-MM-DD format");
+ }
+ const due = new Date(`${dueStr}T23:59:59+06:00`);
  if (Number.isNaN(due.getTime())) {
  throw new ApiError(400, "Due date is not a valid date");
  }
- if (due.getTime() < Date.now() - 60_000) {
+ // Calendar-day compare: the UTC day of the stored value matches the
+ // submitted string for both legacy rows (old UTC-midnight parse) and
+ // new rows (Dhaka end-of-day lands on the same UTC day), so a
+ // byte-equal re-save reads as unchanged.
+ const prevDay = a.dueDate ? a.dueDate.toISOString().slice(0, 10) : null;
+ if (prevDay !== dueStr && due.getTime() < Date.now() - 60_000) {
  throw new ApiError(400, "Due date must be in the future");
  }
  data.dueDate = due;
@@ -1956,6 +2086,15 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  }
  const updated = await db.assignment.update({ where: { id }, data });
 
+ // Re-save spam guard: fan out "Assignment Updated" only when something
+ // the batch can SEE changed (title / description / due day) — a no-op
+ // re-save used to ping every student in the batch.
+ const dayOf = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+ const visibleChange =
+ updated.title !== a.title ||
+ updated.description !== a.description ||
+ dayOf(updated.dueDate) !== dayOf(a.dueDate);
+ if (visibleChange) {
  // Notify the batch about the update
  const course = await db.course.findUnique({ where: { id: a.courseId } });
  if (course) {
@@ -1978,6 +2117,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  type: "assignment",
  })),
  });
+ }
  }
  }
  return { assignment: updated };

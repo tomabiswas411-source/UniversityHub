@@ -629,14 +629,23 @@ export function DeptAdminPanel({
  }
 
  /* Activate / deactivate a teacher or student — the same soft-delete
- contract the delete action uses (PUT /api/manage/users { id, isActive }),
- so admins can restore accounts instead of only removing them. */
+ contract the delete action uses (PUT /api/manage/{teachers|students}?id=),
+ so admins can restore accounts instead of only removing them.
+ /api/manage/users does not exist — route by the row's role. */
  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
 
- async function toggleUserActive(u: { id: string; fullName: string; isActive: boolean }) {
+ async function toggleUserActive(u: {
+ id: string;
+ role: string;
+ fullName: string;
+ isActive: boolean;
+ }) {
  setTogglingUserId(u.id);
  try {
- await apiPut("/api/manage/users", { id: u.id, isActive: !u.isActive });
+ await apiPut(
+ `/api/manage/${u.role === "teacher" ? "teachers" : "students"}?id=${encodeURIComponent(u.id)}`,
+ { isActive: !u.isActive }
+ );
  toast({
  title: u.isActive ? "Account deactivated" : "Account activated",
  description: `${u.fullName} is now ${u.isActive ? "inactive" : "active"}.`,

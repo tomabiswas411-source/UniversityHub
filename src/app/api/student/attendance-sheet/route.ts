@@ -44,7 +44,10 @@ export async function GET() {
  }
  rows.reverse(); // back to oldest → newest for display within the cap
 
- // All-time per-course totals from the groupBy (no row-slice limits)
+ // All-time per-course totals from the groupBy (no row-slice limits).
+ // Accumulate with += — a courseCode can change mid-history, so the SAME
+ // course can appear as multiple groupBy rows and `=` would overwrite
+ // the earlier counts (same pattern as student/dashboard's per-course rollup).
  const totals = new Map<
  string,
  { code: string; present: number; absent: number; late: number; excused: number }
@@ -53,10 +56,10 @@ export async function GET() {
  const cur =
  totals.get(g.courseId) ??
  { code: g.courseCode, present: 0, absent: 0, late: 0, excused: 0 };
- if (g.status === "present") cur.present = g._count;
- else if (g.status === "absent") cur.absent = g._count;
- else if (g.status === "late") cur.late = g._count;
- else if (g.status === "excused") cur.excused = g._count;
+ if (g.status === "present") cur.present += g._count;
+ else if (g.status === "absent") cur.absent += g._count;
+ else if (g.status === "late") cur.late += g._count;
+ else if (g.status === "excused") cur.excused += g._count;
  totals.set(g.courseId, cur);
  }
 

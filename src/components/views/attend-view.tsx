@@ -127,12 +127,14 @@ function isRetryableLoad(err: unknown): boolean {
   return status !== 400 && status !== 404;
 }
 
-/** One-shot browser position fix; resolves null when unavailable/denied. */
-function getPosition(): Promise<{ lat: number; lng: number } | null> {
+/** One-shot browser position fix; resolves null when unavailable/denied.
+    `accuracy` (m) rides along — the server grants bounded GPS slack so a
+    real in-class fix isn't rejected by a tight geofence radius. */
+function getPosition(): Promise<{ lat: number; lng: number; accuracy: number } | null> {
   return new Promise((resolve) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) return resolve(null);
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
       () => resolve(null),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 20000 }
     );
@@ -162,7 +164,7 @@ export function AttendView({ token }: { token: string | null }) {
   /* geo-fence state: coords are requested up-front when the teacher
      enabled the location check, so the permission prompt appears while
      the student is still reading the page. */
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoDenied, setGeoDenied] = useState(false);
   /* Auto-attempt geolocation ONCE per mount — when it fails, `coords`
@@ -174,6 +176,8 @@ export function AttendView({ token }: { token: string | null }) {
   /* countdown to the window close — server-clock aware */
   const [nowTick, setNowTick] = useState<number | null>(null);
   const [clockSkew, setClockSkew] = useState(0);
+  /* Monotonic request counter for load() — see the seq guard below. */
+  const loadSeqRef = useRef(0);
 
   /**
    * Loads the scan page info. `silent` = background refresh after a
@@ -183,6 +187,10 @@ export function AttendView({ token }: { token: string | null }) {
    */
   const load = useCallback(
     async (silent = false) => {
+      /* Request-sequence guard: a slow response landing after a newer
+         load() (token change, retry, silent refresh) must be dropped,
+         never overwrite the newer state. */
+      const seq = ++loadSeqRef.current;
       if (!token) {
         setLoadErr("This link has no QR token. Scan the QR shown in your classroom.");
         setLoadRetryable(false);
@@ -192,6 +200,7 @@ export function AttendView({ token }: { token: string | null }) {
       if (!silent) setLoading(true);
       try {
         const data = await loadScanInfo(token);
+        if (seq !== loadSeqRef.current) return; // stale — drop
         setInfo(data);
         setLoadErr(null);
         setLoadRetryable(false);
@@ -200,12 +209,13 @@ export function AttendView({ token }: { token: string | null }) {
         const serverMs = Date.parse(data.serverTime);
         if (Number.isFinite(serverMs)) setClockSkew(serverMs - Date.now());
       } catch (err) {
+        if (seq !== loadSeqRef.current) return; // stale — drop
         if (!silent) {
           setLoadErr(errMsg(err));
           setLoadRetryable(isRetryableLoad(err));
         }
       } finally {
-        if (!silent) setLoading(false);
+        if (seq === loadSeqRef.current && !silent) setLoading(false);
       }
     },
     [token]
@@ -280,7 +290,7 @@ export function AttendView({ token }: { token: string | null }) {
         "/api/attendance/scan",
         {
           token,
-          ...(pos ? { lat: pos.lat, lng: pos.lng } : {}),
+          ...(pos ? { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy } : {}),
           deviceId: getDeviceId(),
         },
         { skipAuthRedirect: true } // inline login below handles auth itself
@@ -392,6 +402,11 @@ export function AttendView({ token }: { token: string | null }) {
       ? Date.parse(info.expiresAt) - (nowTick + clockSkew)
       : null;
   const countdownVisible = remainingMs != null && Number.isFinite(remainingMs);
+  /* Client-side expiry: the moment the countdown hits 00:00 flip to the
+     expired card locally instead of leaving the check-in button armed
+     until the next server round-trip answers 410. */
+  const windowOver = countdownVisible && (remainingMs as number) <= 0;
+  const effectiveState: ScanInfo["state"] = windowOver ? "expired" : info.state;
 
   return (
     <div className="mx-auto max-w-lg space-y-5 py-2">
@@ -467,12 +482,12 @@ export function AttendView({ token }: { token: string | null }) {
         </motion.div>
       )}
 
-      {/* expired / closed states */}
-      {!result && info.state !== "active" && (
+      {/* expired / closed states (countdown hitting 00:00 flips here too) */}
+      {!result && effectiveState !== "active" && (
         <StatusCard
           tone="amber"
           icon={AlertTriangle}
-          title={info.state === "expired" ? "The check-in time is over" : "This check-in window is closed"}
+          title={effectiveState === "expired" ? "The check-in time is over" : "This check-in window is closed"}
           message={
             info.myStatus
               ? `Your recorded status for this class: ${info.myStatus.toUpperCase()}.`
@@ -481,8 +496,8 @@ export function AttendView({ token }: { token: string | null }) {
         />
       )}
 
-      {/* active → mark flow */}
-      {!result && info.state === "active" && (
+      {/* active → mark flow (the client-side expiry hides it instantly) */}
+      {!result && effectiveState === "active" && (
         <>
           {isStudent ? (
             info.myStatus === "present" ? (

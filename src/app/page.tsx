@@ -46,6 +46,7 @@ function AppShell() {
  const { refresh, initialized } = useAuthStore();
 
  const view = parseView(searchParams.get("view"));
+ const rawView = searchParams.get("view");
  const deptId = searchParams.get("dept");
  const tabParam = searchParams.get("tab") ?? undefined;
  /* The sidebar rail is APP chrome — it only lives on the dashboard.
@@ -82,6 +83,15 @@ function AppShell() {
  const t = window.setTimeout(() => runBoot(), 0);
  return () => window.clearTimeout(t);
  }, [runBoot]);
+
+ /* Unknown ?view= values fall back to Home — clean the URL too, so a
+    refresh/share/back-forward doesn't resurrect a bogus param that no
+    nav item ever highlights. */
+ useEffect(() => {
+ if (rawView != null && !(KNOWN_VIEWS as readonly string[]).includes(rawView)) {
+ router.replace("/", { scroll: false });
+ }
+ }, [rawView, router]);
 
  const navigate = (
  v: AppView,

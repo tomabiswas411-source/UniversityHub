@@ -11,6 +11,24 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
+/** localStorage can throw (private mode, disabled storage, quota) —
+    the PWA niceties behind it must never take the page down. */
+function safeGet(key: string): string | null {
+ try {
+ return window.localStorage.getItem(key);
+ } catch {
+ return null;
+ }
+}
+
+function safeSet(key: string, value: string): void {
+ try {
+ window.localStorage.setItem(key, value);
+ } catch {
+ /* storage blocked — the flag is merely a preference */
+ }
+}
+
 /**
  * Registers the service worker, shows a custom "Install App" prompt,
  * and politely asks for browser notification permission once the user
@@ -24,7 +42,11 @@ export function PwaProvider() {
  useEffect(() => {
  // ---- Service worker registration ----
  if ("serviceWorker" in navigator) {
- navigator.serviceWorker.register("/sw.js").catch(() => {});
+ navigator.serviceWorker
+ .register("/sw.js")
+ .catch((err) =>
+ console.warn("[pwa] service worker registration failed:", err)
+ );
  }
 
  // ---- Install prompt capture ----
@@ -32,7 +54,7 @@ export function PwaProvider() {
  e.preventDefault();
  setInstallEvent(e as BeforeInstallPromptEvent);
  // show banner only if not previously dismissed
- if (localStorage.getItem("uh-pwa-dismissed") !== "1") setShowInstall(true);
+ if (safeGet("uh-pwa-dismissed") !== "1") setShowInstall(true);
  };
  window.addEventListener("beforeinstallprompt", onBeforeInstall);
  const onInstalled = () => setShowInstall(false);
@@ -55,7 +77,7 @@ export function PwaProvider() {
  // who signs in later still gets asked on their next interaction.
  const ask = () => {
  if (!useAuthStore.getState().user) return; // wait for a signed-in user
- localStorage.setItem("uh-notif-asked", "1");
+ safeSet("uh-notif-asked", "1");
  Notification.requestPermission().catch(() => {});
  window.removeEventListener("pointerdown", ask);
  window.removeEventListener("keydown", ask);
@@ -64,7 +86,7 @@ export function PwaProvider() {
  typeof window !== "undefined" &&
  "Notification" in window &&
  Notification.permission === "default" &&
- localStorage.getItem("uh-notif-asked") !== "1"
+ safeGet("uh-notif-asked") !== "1"
  ) {
  window.addEventListener("pointerdown", ask);
  window.addEventListener("keydown", ask);
@@ -90,7 +112,7 @@ export function PwaProvider() {
  };
 
  const dismiss = () => {
- localStorage.setItem("uh-pwa-dismissed", "1");
+ safeSet("uh-pwa-dismissed", "1");
  setShowInstall(false);
  };
 

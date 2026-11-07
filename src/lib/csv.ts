@@ -11,11 +11,17 @@
  */
 
 /** Escape one CSV cell: wrap in quotes when it contains a comma, quote or
- *  line break; double any inner quotes. Numbers pass through untouched. */
+ *  line break; double any inner quotes. Numbers pass through untouched.
+ *  Formula-injection guard: a cell whose first non-blank char is = + - @
+ *  (or a tab/CR) executes as a formula / DDE prompt in Excel & LibreOffice —
+ *  a leading apostrophe forces text interpretation. The guard runs on the
+ *  raw cell BEFORE quoting so cells that also contain commas stay safe
+ *  once Excel strips the CSV quotes. */
 export function csvEscape(value: string | number): string {
   const s = String(value);
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
+  const safe = /^[=+\-@\t\r]/.test(s.trim()) ? `'${s}` : s;
+  if (/[",\n\r]/.test(safe)) return `"${safe.replace(/"/g, '""')}"`;
+  return safe;
 }
 
 /** Join a rows matrix into CSV text (LF line endings — Excel accepts them). */

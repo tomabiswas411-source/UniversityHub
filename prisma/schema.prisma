@@ -144,9 +144,11 @@ model User {
 
   @@unique([universityId, email])
   @@unique([universityId, studentIdNumber])
+  @@unique([universityId, rollNumber]) // duplicate rolls made sheets ambiguous; NULL rolls (staff) stay legal
   @@index([role])
   @@index([departmentId])
   @@index([universityId]) // university-scoped queries (directory, plan counts)
+  @@index([createdAt]) // analytics month buckets + directory sort
 }
 
 // ============ ACADEMICS ============
@@ -267,6 +269,10 @@ model Schedule {
 
   @@index([departmentId, dayOfWeek])
   @@index([teacherId])
+  @@index([courseId]) // rename sync + delete guards
+  @@index([roomId]) // rename sync + delete guards
+  @@index([timeSlotId]) // rename sync + delete guards
+  @@index([programId, semester]) // batch clash + roster lookups
 }
 
 // Temporary class changes (cancel / reschedule / room change / extra class)
@@ -309,6 +315,8 @@ model ScheduleChange {
   schedule   Schedule   @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
 
   @@index([departmentId, effectiveDate])
+  @@index([effectiveDate]) // cleanup sweep filters effectiveDate alone
+  @@index([isActive, effectiveDate]) // deactivate step
   @@index([teacherId]) // teacher change-history lookups
 }
 
@@ -477,7 +485,8 @@ model Result {
 // ============ SETTINGS & CALENDAR ============
 
 model SiteSettings {
-  id              String   @id @default("general")
+  // cuid default — a constant default collides on the 2nd university create
+  id              String   @id @default(cuid())
   universityId    String   @unique
   siteName        String?
   heroText        String?
@@ -513,4 +522,5 @@ model AcademicCalendar {
   university University @relation(fields: [universityId], references: [id], onDelete: Cascade)
 
   @@index([universityId, date])
+  @@index([endDate]) // retention sweep
 }

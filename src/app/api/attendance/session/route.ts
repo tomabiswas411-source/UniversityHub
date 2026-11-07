@@ -148,6 +148,18 @@ export async function POST(req: NextRequest) {
               courseCode: schedule.courseCode,
             })),
           });
+          // Same absentee notification the manual finalize sends — without
+          // it, students swept absent when a window was superseded were
+          // marked but never told (one createMany, batch by student).
+          await tx.notification.createMany({
+            data: missing.map((st) => ({
+              userId: st.id,
+              title: `Absent marked: ${schedule.courseCode}`,
+              body: `You did not scan the QR check-in for ${schedule.courseCode} on ${classDate}, so you were marked absent. Contact your teacher if this is a mistake.`,
+              type: "general",
+              link: "/?view=dashboard",
+            })),
+          });
         }
       }
       await tx.attendanceSession.updateMany({

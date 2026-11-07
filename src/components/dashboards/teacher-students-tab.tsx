@@ -89,6 +89,7 @@ interface StudentControlRow {
 }
 interface StudentsResponse {
  students: StudentControlRow[];
+ studentTotal?: number;
  attendancePct: Record<string, number>;
  programs: ProgramRow[];
  batch: { programId: string; semester: number } | null;
@@ -319,7 +320,8 @@ export function TeacherStudentsTab({
  `/api/teacher/export?type=students&${scopeQuery}`
  );
  downloadCsvText(res.filename, res.csv);
- const n = students.length;
+ // The CSV carries the WHOLE batch; students[] may be capped at 500.
+ const n = typeof data?.studentTotal === "number" ? data.studentTotal : students.length;
  toast({
  title: n > 0 ? `Exported ${n} student${n === 1 ? "" : "s"} (full batch)` : "Exported full batch",
  description: "Exports always include the whole batch — the search filter isn't applied.",
@@ -447,7 +449,9 @@ export function TeacherStudentsTab({
  {data?.batch && students.length > 0 && (
  <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/30 p-2.5">
  <Badge variant="secondary">
- {students.length} student{students.length === 1 ? "" : "s"} · Semester {data.batch.semester}
+ {typeof data.studentTotal === "number" && data.studentTotal > students.length
+ ? `Showing first ${students.length} of ${data.studentTotal} students · Semester ${data.batch.semester}`
+ : `${students.length} student${students.length === 1 ? "" : "s"} · Semester ${data.batch.semester}`}
  </Badge>
  <span className="text-[11px] text-muted-foreground">Quick actions on the whole batch:</span>
  {canPromote && (

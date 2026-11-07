@@ -99,6 +99,11 @@ export function NotificationBell({ className }: { className?: string }) {
     stale response must never overwrite a newer one. */
  const mountedRef = useRef(true);
  const fetchSeqRef = useRef(0);
+ /* Latched across effect re-creations: the polling effect re-runs when
+    the auth user object is replaced by refresh(), and a local variable
+    would reset to -1 each time — re-triggering the "new notification"
+    path for the same unread count. Keyed by user id (reset below). */
+ const lastSeenUnreadRef = useRef(-1);
 
  useEffect(() => {
  mountedRef.current = true;
@@ -123,7 +128,7 @@ export function NotificationBell({ className }: { className?: string }) {
  if (!firstLoadRef.current && newest && newest !== newestIdRef.current && !silent) {
  const n = data.notifications[0];
  play();
- showBrowserNotification(n.title, n.body);
+ showBrowserNotification(n.title, n.body, n.link);
  setJustArrived(true);
  window.setTimeout(() => setJustArrived(false), 5000);
  }
@@ -151,6 +156,7 @@ export function NotificationBell({ className }: { className?: string }) {
  prevUserIdRef.current = userId;
  firstLoadRef.current = true;
  newestIdRef.current = null;
+ lastSeenUnreadRef.current = -1;
  }
  }, [userId]);
 
@@ -160,7 +166,6 @@ export function NotificationBell({ className }: { className?: string }) {
     the full list every 30s. */
  useEffect(() => {
  let cancelled = false;
- let lastSeenUnread = -1;
 
  const initial = window.setTimeout(() => {
  if (!cancelled) void fetchNotifications();
@@ -173,15 +178,19 @@ export function NotificationBell({ className }: { className?: string }) {
  try {
  const d = await apiGet<PingResponse>("/api/notifications?ping=1");
  if (cancelled) return; // stale tick — component gone / effect re-ran
- if (d.unreadCount !== lastSeenUnread) {
- if (lastSeenUnread !== -1 && d.unreadCount > lastSeenUnread && d.latest) {
+ if (d.unreadCount !== lastSeenUnreadRef.current) {
+ if (
+ lastSeenUnreadRef.current !== -1 &&
+ d.unreadCount > lastSeenUnreadRef.current &&
+ d.latest
+ ) {
  // a genuinely new notification arrived
  play();
- showBrowserNotification(d.latest.title, d.latest.body);
+ showBrowserNotification(d.latest.title, d.latest.body, d.latest.link);
  setJustArrived(true);
  window.setTimeout(() => setJustArrived(false), 5000);
  }
- lastSeenUnread = d.unreadCount;
+ lastSeenUnreadRef.current = d.unreadCount;
  setUnreadCount(d.unreadCount);
  // refresh the visible list (cheap — happens rarely)
  void fetchNotifications(true);
@@ -197,7 +206,10 @@ export function NotificationBell({ className }: { className?: string }) {
  window.clearTimeout(initial);
  window.clearInterval(interval);
  };
- }, [fetchNotifications, play, user]);
+ // Dep on the user ID (not the user object): refresh() churns object
+ // identity on every poll and re-creating this interval each time would
+ // drop/restart the 45s cadence for no reason.
+ }, [fetchNotifications, play, userId]);
 
  const markAllRead = async () => {
  // optimistic flip — rolled back if the PATCH fails
@@ -220,12 +232,22 @@ export function NotificationBell({ className }: { className?: string }) {
 
  const handleItem = async (n: NotificationDTO) => {
  if (!n.isRead) {
+ // Optimistic flip — snapshot for the revert if the PATCH fails,
+ // mirroring markAllRead / the student panel's markNotifRead.
+ const prevItems = items;
+ const prevUnread = unreadCount;
  setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)));
  setUnreadCount((c) => Math.max(0, c - 1));
  try {
  await apiPatch("/api/notifications", { ids: [n.id] });
  } catch {
- // optimistic — silent
+ setItems(prevItems);
+ setUnreadCount(prevUnread);
+ toast({
+ title: "Couldn't mark as read",
+ description: "The notification stays unread — try again.",
+ variant: "destructive",
+ });
  }
  }
  // deep-link to the related page (dashboard, etc.) — close the menu first

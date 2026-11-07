@@ -2,7 +2,7 @@ import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
 import { computeCoursePerformance, computeGPA, resultPct, percentToGrade } from "@/lib/grades";
-import { bdWeekday } from "@/lib/date-bd";
+import { bdDayStartUTC, bdWeekday } from "@/lib/date-bd";
 import type {
  AssignmentDTO,
  NoticeDTO,
@@ -44,7 +44,7 @@ export async function GET() {
  },
  });
 
- const [schedules, changes, notices, assignments, results, unreadCount, timeSlots, calendar, attByStatus, attByCourseGroups] =
+ const [schedules, changes, notices, assignments, results, resultRows, unreadCount, timeSlots, calendar, attByStatus, attByCourseGroups] =
  await Promise.all([
  programId
  ? db.schedule.findMany({
@@ -71,6 +71,10 @@ export async function GET() {
  where: {
  departmentId,
  audience: { in: ["all", "students"] },
+ // Expired notices never reach students — mirrors the public
+ // department route: null expiry = open-ended, otherwise the
+ // expiry moment must still be in the future.
+ OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }],
  AND: [
  // program-targeted notices: null = all programs. No more
  // "none"-sentinel matching (which could never hit a real id).
@@ -87,7 +91,14 @@ export async function GET() {
  departmentId,
  isActive: true,
  course: {
- ...(programId ? { programId } : {}),
+ // programId can be null for legacy students — falling through with no
+ // filter leaked OTHER programs' assignments into their feed. A null
+ // program matches an impossible sentinel: Course.programId is required,
+ // so the null-program cohort gets an empty (honest) feed instead of
+ // every department assignment.
+ ...(programId
+ ? { programId }
+ : { programId: user.programId ?? "__no_program__" }),
  ...(semester ? { semester } : {}),
  },
  },
@@ -104,6 +115,24 @@ export async function GET() {
  orderBy: { createdAt: "desc" },
  take: 300,
  }),
+ // Scalar-only aggregate fetch for the analytics math. The display DTO
+ // above is capped at 300 rows, but GPA / overall average / exam trend
+ // must not silently drift once history outgrows that cap. Fetching
+ // only scalar columns keeps this cheap; take 2000 is generous —
+ // results are unique per (courseId, studentId, examType), so even a
+ // full programme is a few dozen rows.
+ db.result.findMany({
+ where: { departmentId, studentId: user.id },
+ select: {
+ courseId: true,
+ marks: true,
+ maxMarks: true,
+ examType: true,
+ course: { select: { code: true, name: true } },
+ },
+ orderBy: { createdAt: "desc" },
+ take: 2000,
+ }),
  db.notification.count({
  where: { userId: user.id, isRead: false },
  }),
@@ -114,7 +143,12 @@ export async function GET() {
  db.academicCalendar.findMany({
  where: {
  universityId: user.universityId,
- date: { gte: new Date() },
+ // department-scoped events belong to THIS student's department only
+ // (departmentId null = university-wide) — other departments' events
+ // used to leak into every student's calendar.
+ OR: [{ departmentId: null }, { departmentId: user.departmentId }],
+ // BD-day anchored: a UTC "now" cut events off 6 hours early.
+ date: { gte: bdDayStartUTC() },
  },
  orderBy: { date: "asc" },
  take: 6,
@@ -238,9 +272,12 @@ export async function GET() {
  (s) => s.dayOfWeek === today
  ).length;
 
- /* ---------- Day 44: student performance analytics ---------- */
+ /* ---------- Day 44: student performance analytics ----------
+    Aggregate math uses the unbounded scalar fetch (resultRows) so the
+    percentages and GPA stay exact at any history size; the 300-row
+    display slice (results) is only used for the results DTO list. */
  const byCourse = new Map<string, { code: string; name: string; credit: number; results: { marks: number; maxMarks: number; examType: string }[] }>();
- for (const r of results) {
+ for (const r of resultRows) {
  const cur = byCourse.get(r.courseId) ?? {
  code: r.course?.code ?? "—",
  name: r.course?.name ?? "",
@@ -256,21 +293,21 @@ export async function GET() {
  }));
  coursePerformance.sort((a, b) => b.avgPct - a.avgPct);
  const estimatedGPA = computeGPA(coursePerformance);
- const overallAvgPct = results.length
- ? Math.round((results.reduce((a, r) => a + resultPct(r), 0) / results.length) * 10) / 10
+ const overallAvgPct = resultRows.length
+ ? Math.round((resultRows.reduce((a, r) => a + resultPct(r), 0) / resultRows.length) * 10) / 10
  : 0;
- const overallGrade = results.length ? percentToGrade(overallAvgPct).letter : "—";
+ const overallGrade = resultRows.length ? percentToGrade(overallAvgPct).letter : "—";
 
  const examTrend = ["ct1", "ct2", "midterm", "final", "assignment"]
  .map((t) => {
- const rs = results.filter((r) => r.examType === t);
+ const rs = resultRows.filter((r) => r.examType === t);
  return {
  type: t,
  label: t === "ct1" ? "CT-1" : t === "ct2" ? "CT-2" : t.charAt(0).toUpperCase() + t.slice(1),
  pct: rs.length ? Math.round((rs.reduce((a, r) => a + resultPct(r), 0) / rs.length) * 10) / 10 : 0,
  };
  })
- .filter((e) => results.some((r) => r.examType === e.type))
+ .filter((e) => resultRows.some((r) => r.examType === e.type))
  .map(({ label, pct }) => ({ label, pct }));
 
  const upcomingDeadlines = assignmentDTOs

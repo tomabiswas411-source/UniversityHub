@@ -902,6 +902,11 @@ export function TeacherPanel({
  const [examType, setExamType] = useState("ct1");
  const [marks, setMarks] = useState<Record<string, string>>({});
  const [savingResults, setSavingResults] = useState(false);
+ /* Marks scale of the entry sheet — derived from the loaded result rows
+ (first row of the selected exam type, else the first loaded row, else
+ the historical default 20). Hardcoding /20 rejected valid marks and
+ computed wrong grades on any course kept on a different scale. */
+ const [maxMarks, setMaxMarks] = useState(20);
  /* Stale-response guard for rapid course switching in the Results tab */
  const resultsReqSeq = useRef(0);
 
@@ -941,6 +946,10 @@ export function TeacherPanel({
  if (r.examType === examType && !(r.studentId in pre)) pre[r.studentId] = String(r.marks);
  }
  setMarks(pre);
+ /* Scale follows the loaded result set (updates on every load): a row of
+ the exam type being edited is the best signal, else any loaded row. */
+ const typedRow = results.find((r) => r.examType === examType);
+ setMaxMarks(typedRow?.maxMarks ?? results[0]?.maxMarks ?? 20);
  }, [results, examType]);
 
  const filledCount = Object.values(marks).filter((v) => v.trim() !== "").length;
@@ -952,15 +961,15 @@ export function TeacherPanel({
  const raw = (marks[st.id] ?? "").trim();
  if (raw === "") continue;
  const n = Number(raw);
- if (Number.isNaN(n) || n < 0 || n > 20) {
+ if (Number.isNaN(n) || n < 0 || n > maxMarks) {
  toast({
  title: "Invalid marks",
- description: `${st.fullName}: enter a number between 0 and 20.`,
+ description: `${st.fullName}: enter a number between 0 and ${maxMarks}.`,
  variant: "destructive",
  });
  return;
  }
- entries.push({ studentId: st.id, marks: n, grade: percentToGrade((n / 20) * 100).letter });
+ entries.push({ studentId: st.id, marks: n, grade: percentToGrade((n / maxMarks) * 100).letter });
  }
  if (entries.length === 0) {
  toast({ title: "Nothing to save", description: "Fill in at least one student's marks first.", variant: "destructive" });
@@ -972,6 +981,9 @@ export function TeacherPanel({
  courseId: rCourseId,
  examType,
  entries,
+ // Keep the server's bounds check and stored scale in sync with the
+ // scale this sheet was derived from.
+ maxMarks,
  });
  toast({
  title: "Results saved",
@@ -2061,9 +2073,9 @@ export function TeacherPanel({
  {students.map((st) => {
  const val = marks[st.id] ?? "";
  const num = parseMarks(val);
- // Grades come from the shared UGC scale (lib/grades) — marks are out
- // of 20 on this entry sheet, so percent = marks × 5.
- const liveGrade = num === null ? null : percentToGrade((num / 20) * 100).letter;
+ // Grades come from the shared UGC scale (lib/grades) — percent uses the
+ // row-derived marks scale, not a hardcoded /20.
+ const liveGrade = num === null ? null : percentToGrade((num / maxMarks) * 100).letter;
  return (
  <TableRow key={st.id}>
  <TableCell>

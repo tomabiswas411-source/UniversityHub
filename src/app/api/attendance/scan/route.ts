@@ -309,14 +309,26 @@ export async function POST(req: NextRequest) {
         }),
       ]);
     } catch (err) {
-      // P2002 = a concurrent scan (same student OR same device) won the
-      // unique-index race → answer with the friendly duplicate message
-      // instead of a 500.
+      // P2002 — TWO unique indexes can fire on this create:
+      //  (scheduleId, studentId, date): the student's OWN concurrent scan
+      //    won the race → a normal "already marked" outcome, not an error;
+      //  (scheduleId, date, deviceId): this phone already checked in a
+      //    DIFFERENT student → device conflict.
+      // Re-read the row keyed to THIS student to tell them apart —
+      // answering with the device message when the student's own scan
+      // landed mislabels legitimately checked-in students.
       if (
         typeof err === "object" &&
         err !== null &&
         (err as { code?: string }).code === "P2002"
       ) {
+        const winner = await db.attendance.findUnique({
+          where: key,
+          select: { studentId: true, status: true },
+        });
+        if (winner && winner.studentId === session.userId) {
+          return { ok: true, already: true, status: winner.status };
+        }
         throw new ApiError(403, "This phone has already checked in");
       }
       throw err;

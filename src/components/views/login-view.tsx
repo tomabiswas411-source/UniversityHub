@@ -90,6 +90,13 @@ export function LoginView({ navigate, initialTab }: LoginViewProps) {
  loadUniversities();
  }, [loadUniversities]);
 
+ /* The pricing CTA deep-links to ?view=login&tab=staff while the login
+    view may already be mounted — react to initialTab changes, not just
+    the first mount (a dean landing on the student tab never switched). */
+ useEffect(() => {
+ if (initialTab) setTab(initialTab);
+ }, [initialTab]);
+
  async function staffLogin(e: React.FormEvent) {
  e.preventDefault();
  setError(null);

@@ -32,7 +32,8 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { apiGet, apiPost } from "@/lib/api-client";
+import { apiDelete, apiGet, apiPost } from "@/lib/api-client";
+import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +44,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, SectionCard } from "@/components/dashboards/dashboard-shared";
 
 interface SystemResponse {
@@ -80,6 +91,33 @@ interface CleanupResult {
   durationMs: number;
 }
 
+/* GET /api/admin/sessions — live QR windows + the last day's closed ones. */
+interface AdminSessionRow {
+  id: string;
+  date: string;
+  durationSec?: number;
+  startsAt?: string;
+  expiresAt?: string;
+  closed?: boolean;
+  presentCount: number;
+  geoRadiusM?: number | null;
+  schedule: {
+    courseCode: string;
+    courseName?: string;
+    semester?: number;
+    department: {
+      name?: string;
+      shortName: string;
+      university?: { shortName: string; name: string } | null;
+    };
+  };
+  teacher?: { fullName: string };
+}
+interface SessionsResponse {
+  active: AdminSessionRow[];
+  closedToday: AdminSessionRow[];
+}
+
 /* Human-readable labels for the sweep counters we know about. */
 const SWEEP_COUNT_LABELS: Record<string, string> = {
   attendanceSessions: "QR sessions",
@@ -98,6 +136,18 @@ export function SuperAdminSystemCard() {
   const [sweeping, setSweeping] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);
   const [lastSweep, setLastSweep] = useState<CleanupResult | null>(null);
+  /* QR kill-switch state */
+  const [sessions, setSessions] = useState<SessionsResponse | null>(null);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [killTarget, setKillTarget] = useState<AdminSessionRow | null>(null);
+  const [killing, setKilling] = useState(false);
+  /* Broadcast state */
+  const [bcTitle, setBcTitle] = useState("");
+  const [bcMessage, setBcMessage] = useState("");
+  const [bcAudience, setBcAudience] = useState("all");
+  const [bcUni, setBcUni] = useState("all");
+  const [bcSending, setBcSending] = useState(false);
+  const [universities, setUniversities] = useState<{ id: string; shortName: string; name: string }[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,6 +199,87 @@ export function SuperAdminSystemCard() {
     await runSweep();
     setSweepOpen(false);
   }, [runSweep]);
+
+  const loadSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      setSessions(await apiGet<SessionsResponse>("/api/admin/sessions"));
+    } catch (err) {
+      toast({
+        title: "Could not load QR sessions",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+      setSessions(null);
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  const loadUniversities = useCallback(async () => {
+    try {
+      const d = await apiGet<{ universities: { id: string; shortName: string; name: string }[] }>(
+        "/api/admin/overview"
+      );
+      setUniversities(d.universities ?? []);
+    } catch {
+      /* broadcast still works platform-wide without the list */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSessions();
+    void loadUniversities();
+  }, [loadSessions, loadUniversities]);
+
+  const confirmKill = useCallback(async () => {
+    if (!killTarget) return;
+    setKilling(true);
+    try {
+      await apiDelete(`/api/admin/sessions?id=${encodeURIComponent(killTarget.id)}`);
+      toast({ title: "QR window closed", description: `${killTarget.schedule.courseCode} — students can no longer check in.` });
+      setKillTarget(null);
+      void loadSessions();
+    } catch (err) {
+      toast({
+        title: "Could not close the window",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setKilling(false);
+    }
+  }, [killTarget, loadSessions]);
+
+  const sendBroadcast = useCallback(async () => {
+    if (!bcTitle.trim() || !bcMessage.trim()) {
+      toast({ title: "Title and message are required", variant: "destructive" });
+      return;
+    }
+    setBcSending(true);
+    try {
+      const d = await apiPost<{ sent: number }>("/api/admin/broadcast", {
+        title: bcTitle.trim(),
+        message: bcMessage.trim(),
+        audience: bcAudience,
+        universityId: bcUni === "all" ? undefined : bcUni,
+      });
+      toast({
+        title: `Broadcast delivered to ${d.sent} user${d.sent === 1 ? "" : "s"}`,
+        description: "Everyone sees it in their notification bell and Alerts tab.",
+      });
+      setBcTitle("");
+      setBcMessage("");
+    } catch (err) {
+      toast({
+        title: "Broadcast failed",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setBcSending(false);
+    }
+  }, [bcTitle, bcMessage, bcAudience, bcUni]);
 
   return (
     <div className="space-y-4">
@@ -268,6 +399,146 @@ export function SuperAdminSystemCard() {
         )}
       </SectionCard>
 
+      <SectionCard
+        title="Live QR attendance windows"
+        icon={QrCode}
+        action={
+          <button
+            type="button"
+            aria-label="Refresh QR sessions"
+            onClick={() => void loadSessions()}
+            disabled={sessionsLoading}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          >
+            <Loader2 className={`h-4 w-4 ${sessionsLoading ? "animate-spin" : ""}`} />
+          </button>
+        }
+      >
+        {sessionsLoading && !sessions ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading windows…
+          </div>
+        ) : !sessions ? (
+          <EmptyState icon={QrCode} title="Sessions unavailable" hint="Use the refresh button above to try again." />
+        ) : sessions.active.length === 0 ? (
+          <EmptyState
+            icon={QrCode}
+            title="No live QR windows right now"
+            hint={
+              sessions.closedToday.length > 0
+                ? `${sessions.closedToday.length} window${sessions.closedToday.length === 1 ? "" : "s"} closed in the last 24h across the platform.`
+                : "When any teacher opens a QR window, it appears here with a platform-wide kill switch."
+            }
+          />
+        ) : (
+          <div className="space-y-2">
+            {sessions.active.map((s) => (
+              <div
+                key={s.id}
+                className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/30 p-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-bold">
+                    {s.schedule.courseCode}
+                    {s.schedule.semester ? ` · Sem ${s.schedule.semester}` : ""}{" "}
+                    <span className="font-normal text-muted-foreground">
+                      — {s.schedule.department?.shortName}
+                      {s.schedule.department?.university?.shortName
+                        ? ` (${s.schedule.department.university.shortName})`
+                        : ""}
+                    </span>
+                  </p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {s.teacher?.fullName ?? "Unknown teacher"} · {s.date} · {s.presentCount} checked in
+                    {s.expiresAt ? ` · ends ${new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dhaka", timeStyle: "short" }).format(new Date(s.expiresAt))}` : ""}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                  onClick={() => setKillTarget(s)}
+                >
+                  Close window
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
+      <SectionCard title="Platform broadcast" icon={Megaphone}>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Announce downtime, policy changes or deadlines to every active user&apos;s notification bell —
+            department notices cannot cross tenant boundaries, this is the platform-wide channel.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="bc-audience">Audience</Label>
+              <Select value={bcAudience} onValueChange={setBcAudience}>
+                <SelectTrigger id="bc-audience">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Everyone (students + staff)</SelectItem>
+                  <SelectItem value="students">Students only</SelectItem>
+                  <SelectItem value="teachers">Teachers only</SelectItem>
+                  <SelectItem value="admins">Department heads only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="bc-uni">University</Label>
+              <Select value={bcUni} onValueChange={setBcUni}>
+                <SelectTrigger id="bc-uni">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All universities</SelectItem>
+                  {universities.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.shortName} — {u.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="bc-title">Title</Label>
+            <Input
+              id="bc-title"
+              value={bcTitle}
+              onChange={(e) => setBcTitle(e.target.value)}
+              placeholder="e.g. Scheduled maintenance tonight 11 PM — 1 AM"
+              maxLength={150}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="bc-message">Message</Label>
+            <Textarea
+              id="bc-message"
+              value={bcMessage}
+              onChange={(e) => setBcMessage(e.target.value)}
+              placeholder="Keep it short — this lands as a notification on every recipient's phone."
+              rows={3}
+              maxLength={500}
+            />
+            <p className="text-[10px] text-muted-foreground">{bcMessage.length}/500</p>
+          </div>
+          <Button
+            type="button"
+            disabled={bcSending || !bcTitle.trim() || !bcMessage.trim()}
+            onClick={() => void sendBroadcast()}
+            className={bcSending ? "" : "bg-[#2D4F35] text-white hover:bg-[#3A6B47]"}
+          >
+            {bcSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Send broadcast
+          </Button>
+        </div>
+      </SectionCard>
+
       <SectionCard title="Platform guarantees" icon={ShieldCheck}>
         <ul className="space-y-1.5 text-xs text-muted-foreground">
           <li>• <b className="text-foreground">Multi-tenant isolation</b> — every query is scoped by university/department; tenants can never read each other&apos;s data.</li>
@@ -276,6 +547,34 @@ export function SuperAdminSystemCard() {
           <li>• <b className="text-foreground">Cost guardrails</b> — every list endpoint is bounded; heavy grids load once per open; the retention sweep keeps Turso rows minimal.</li>
         </ul>
       </SectionCard>
+
+      {/* kill-switch confirmation for live QR windows */}
+      <AlertDialog open={killTarget !== null} onOpenChange={(o) => { if (!o) setKillTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close this QR window?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {killTarget?.schedule.courseCode} ({killTarget?.date}) — {killTarget?.presentCount ?? 0} student
+              {killTarget?.presentCount === 1 ? "" : "s"} already checked in. Closing stops all further check-ins
+              immediately; the teacher can still finalize the register manually.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={killing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              disabled={killing}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmKill();
+              }}
+            >
+              {killing && <Loader2 className="h-4 w-4 animate-spin" />}
+              Close window
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* retention cleanup confirmation — bulk purge is destructive-ish */}
       <AlertDialog open={sweepOpen} onOpenChange={setSweepOpen}>

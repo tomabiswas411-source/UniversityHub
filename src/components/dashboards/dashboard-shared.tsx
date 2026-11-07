@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowLeftRight,
@@ -290,7 +291,18 @@ export function TimetableGrid({
   // "Today" in Asia/Dhaka (lowercase weekday, matches dayOfWeek values).
   // The plain browser clock highlighted the wrong column for users in
   // other timezones (e.g. Bangladeshi students abroad).
-  const today = bdWeekday() as (typeof DAYS_OF_WEEK)[number];
+  // Live re-sync: a tab left open across Dhaka midnight used to keep the
+  // stale highlight until an unrelated re-render (same fix as department-view).
+  const [today, setToday] = useState<string>(() => bdWeekday());
+  useEffect(() => {
+    const sync = () => setToday(bdWeekday());
+    const interval = window.setInterval(sync, 60_000);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
   const isToday = (d: string) => highlightToday && d === today;
 
   if (timeSlots.length === 0 || schedules.length === 0) return null;

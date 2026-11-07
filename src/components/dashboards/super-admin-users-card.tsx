@@ -109,6 +109,11 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
   const [universityId, setUniversityId] = useState("all");
   const [active, setActive] = useState("all");
   const [q, setQ] = useState("");
+  // Pagination — the API serves one page (default 100 rows) plus a real
+  // total, so a directory larger than one page stays reachable.
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(1);
   const reqSeq = useRef(0);
 
   const load = useCallback(async () => {
@@ -120,9 +125,17 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
       if (universityId !== "all") qs.set("universityId", universityId);
       if (active !== "all") qs.set("active", active);
       if (q.trim()) qs.set("q", q.trim());
-      const d = await apiGet<{ users: DirectoryUser[] }>(`/api/admin/users?${qs.toString()}`);
+      qs.set("page", String(page));
+      const d = await apiGet<{
+        users: DirectoryUser[];
+        total?: number;
+        page?: number;
+        pages?: number;
+      }>(`/api/admin/users?${qs.toString()}`);
       if (seq !== reqSeq.current) return;
       setUsers(d.users);
+      setTotal(d.total ?? d.users.length);
+      setPages(d.pages ?? 1);
       setLoadError(null);
     } catch (err) {
       if (seq !== reqSeq.current) return;
@@ -133,7 +146,7 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [role, universityId, active, q]);
+  }, [role, universityId, active, q, page]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), q ? 350 : 0); // debounce search
@@ -145,24 +158,32 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
   const [deactivateTarget, setDeactivateTarget] = useState<DirectoryUser | null>(null);
   const [pwTarget, setPwTarget] = useState<DirectoryUser | null>(null);
   const [pwValue, setPwValue] = useState("");
+  const [pwShow, setPwShow] = useState(false);
   const [pwSaving, setPwSaving] = useState(false);
   const [roleTarget, setRoleTarget] = useState<DirectoryUser | null>(null);
   const [roleValue, setRoleValue] = useState("");
   const [roleSaving, setRoleSaving] = useState(false);
+  // Optional student identity — converting staff → student needs ID + Roll
+  // for the student login to work (the server rejects the change without
+  // them unless the account already carries both).
+  const [roleSid, setRoleSid] = useState("");
+  const [roleRoll, setRoleRoll] = useState("");
 
   const patchUser = useCallback(
-    async (u: DirectoryUser, patch: Record<string, unknown>, okMsg: string) => {
+    async (u: DirectoryUser, patch: Record<string, unknown>, okMsg: string): Promise<boolean> => {
       setBusyId(u.id);
       try {
         await apiPut(`/api/admin/users?id=${encodeURIComponent(u.id)}`, patch);
         toast({ title: okMsg, description: u.fullName });
         void load();
+        return true;
       } catch (err) {
         toast({
           title: "Action failed",
           description: err instanceof Error ? err.message : "Please try again.",
           variant: "destructive",
         });
+        return false;
       } finally {
         setBusyId(null);
       }
@@ -171,19 +192,21 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
   );
 
   /* Deactivation is destructive (instant lockout) — routed through an
-     AlertDialog instead of firing straight from the dropdown. */
+     AlertDialog instead of firing straight from the dropdown. The dialog
+     only closes on SUCCESS: a failed PATCH used to close it and leave the
+     row unchanged with no retry affordance. */
   const confirmDeactivate = useCallback(async () => {
     if (!deactivateTarget) return;
     const target = deactivateTarget;
-    await patchUser(target, { isActive: false }, "Account deactivated");
-    setDeactivateTarget(null);
+    const ok = await patchUser(target, { isActive: false }, "Account deactivated");
+    if (ok) setDeactivateTarget(null);
   }, [deactivateTarget, patchUser]);
   const deactivating = deactivateTarget !== null && busyId === deactivateTarget.id;
 
   const submitPassword = useCallback(async () => {
     if (!pwTarget) return;
-    if (pwValue.length < 6) {
-      toast({ title: "Password must be at least 6 characters", variant: "destructive" });
+    if (pwValue.length < 8) {
+      toast({ title: "Password must be at least 8 characters", variant: "destructive" });
       return;
     }
     setPwSaving(true);
@@ -207,7 +230,12 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
     if (!roleTarget) return;
     setRoleSaving(true);
     try {
-      await apiPut(`/api/admin/users?id=${encodeURIComponent(roleTarget.id)}`, { role: roleValue });
+      const payload: Record<string, unknown> = { role: roleValue };
+      if (roleValue === "student") {
+        payload.studentIdNumber = roleSid.trim();
+        payload.rollNumber = roleRoll.trim();
+      }
+      await apiPut(`/api/admin/users?id=${encodeURIComponent(roleTarget.id)}`, payload);
       toast({ title: "Role updated", description: `${roleTarget.fullName} → ${ROLE_LABEL[roleValue] ?? roleValue}` });
       setRoleTarget(null);
       void load();
@@ -220,7 +248,7 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
     } finally {
       setRoleSaving(false);
     }
-  }, [roleTarget, roleValue, load]);
+  }, [roleTarget, roleValue, roleSid, roleRoll, load]);
 
   const stats = useMemo(() => {
     if (!users) return null;
@@ -238,8 +266,8 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
       action={
         stats ? (
           <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-muted-foreground sm:flex">
-            <Badge variant="outline">{stats.total} shown</Badge>
-            <Badge variant="outline" className="text-green">{stats.active} active</Badge>
+            <Badge variant="outline">{total} users total</Badge>
+            <Badge variant="outline" className="text-green">{stats.active} active here</Badge>
           </span>
         ) : undefined
       }
@@ -250,13 +278,22 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setPage(1);
+            }}
             placeholder="Search name, email, roll, ID…"
             aria-label="Search users"
             className="pl-8"
           />
         </div>
-        <Select value={role} onValueChange={setRole}>
+        <Select
+          value={role}
+          onValueChange={(v) => {
+            setRole(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger aria-label="Filter by role" className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -267,7 +304,13 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
             <SelectItem value="student">Students</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={universityId} onValueChange={setUniversityId}>
+        <Select
+          value={universityId}
+          onValueChange={(v) => {
+            setUniversityId(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger aria-label="Filter by university" className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -281,7 +324,13 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
           </SelectContent>
         </Select>
         {/* GET /api/admin/users supports ?active=true|false (absent = all). */}
-        <Select value={active} onValueChange={setActive}>
+        <Select
+          value={active}
+          onValueChange={(v) => {
+            setActive(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger aria-label="Filter by account status" className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -419,6 +468,8 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
                             onClick={() => {
                               setRoleTarget(u);
                               setRoleValue(u.role);
+                              setRoleSid("");
+                              setRoleRoll("");
                             }}
                           >
                             <UserCog className="h-4 w-4" />
@@ -446,6 +497,33 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* pagination — the directory is served in pages; sweep with Prev/Next */}
+      {users !== null && pages > 1 && (
+        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+          <span>
+            Page {page} of {pages} · {total} users total
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= pages || loading}
+              onClick={() => setPage((p) => Math.min(pages, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
 
@@ -487,14 +565,27 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
           </DialogHeader>
           <div className="space-y-1.5">
             <Label htmlFor="sa-new-pw">New password</Label>
-            <Input
-              id="sa-new-pw"
-              type="text"
-              value={pwValue}
-              onChange={(e) => setPwValue(e.target.value)}
-              placeholder="At least 6 characters"
-              autoFocus
-            />
+            {/* masked by default — the old plaintext input leaked on
+                shoulder-surf / screen-share; toggle only reveals on demand */}
+            <div className="relative">
+              <Input
+                id="sa-new-pw"
+                type={pwShow ? "text" : "password"}
+                value={pwValue}
+                onChange={(e) => setPwValue(e.target.value)}
+                placeholder="At least 8 characters"
+                className="pr-10"
+                autoFocus
+              />
+              <button
+                type="button"
+                aria-label={pwShow ? "Hide password" : "Show password"}
+                onClick={() => setPwShow((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground hover:text-foreground"
+              >
+                {pwShow ? "Hide" : "Show"}
+              </button>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPwTarget(null)}>
@@ -530,6 +621,28 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
                 <SelectItem value="dept_admin">Department Head</SelectItem>
               </SelectContent>
             </Select>
+            {roleValue === "student" && (
+              <div className="space-y-1.5 pt-2">
+                <Label htmlFor="sa-role-sid">Student ID Number (optional)</Label>
+                <Input
+                  id="sa-role-sid"
+                  value={roleSid}
+                  onChange={(e) => setRoleSid(e.target.value)}
+                  placeholder={roleTarget?.studentIdNumber || "e.g. 2023-ICE-045"}
+                />
+                <Label htmlFor="sa-role-roll">Roll Number (optional)</Label>
+                <Input
+                  id="sa-role-roll"
+                  value={roleRoll}
+                  onChange={(e) => setRoleRoll(e.target.value)}
+                  placeholder={roleTarget?.rollNumber || "e.g. 2301045"}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Students sign in with ID + Roll — fill these in when converting
+                  a staff account, or leave blank to keep existing values.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRoleTarget(null)}>

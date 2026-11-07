@@ -21,6 +21,16 @@ const stmts = [
   `CREATE INDEX IF NOT EXISTS attendance_studentId_date_idx ON "Attendance"("studentId","date")`,
   `CREATE INDEX IF NOT EXISTS attendancesession_expiresAt_idx ON "AttendanceSession"("expiresAt")`,
   `CREATE INDEX IF NOT EXISTS result_enteredBy_idx ON "Result"("enteredBy")`,
+  // 3rd audit pass — schema.prisma alignment
+  `CREATE UNIQUE INDEX IF NOT EXISTS "User_universityId_rollNumber_key" ON "User"("universityId","rollNumber")`,
+  `CREATE INDEX IF NOT EXISTS "User_createdAt_idx" ON "User"("createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "Schedule_courseId_idx" ON "Schedule"("courseId")`,
+  `CREATE INDEX IF NOT EXISTS "Schedule_roomId_idx" ON "Schedule"("roomId")`,
+  `CREATE INDEX IF NOT EXISTS "Schedule_timeSlotId_idx" ON "Schedule"("timeSlotId")`,
+  `CREATE INDEX IF NOT EXISTS "Schedule_programId_semester_idx" ON "Schedule"("programId","semester")`,
+  `CREATE INDEX IF NOT EXISTS "ScheduleChange_effectiveDate_idx" ON "ScheduleChange"("effectiveDate")`,
+  `CREATE INDEX IF NOT EXISTS "ScheduleChange_isActive_effectiveDate_idx" ON "ScheduleChange"("isActive","effectiveDate")`,
+  `CREATE INDEX IF NOT EXISTS "AcademicCalendar_endDate_idx" ON "AcademicCalendar"("endDate")`,
 ];
 
 for (const sql of stmts) {

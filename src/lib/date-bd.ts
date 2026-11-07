@@ -16,6 +16,17 @@ export function bdTodayISO(): string {
   }).format(new Date());
 }
 
+/**
+ * The current BD calendar day's midnight as an absolute UTC Date — i.e.
+ * "00:00 Asia/Dhaka today" expressed as an instant. Comparing DateTime
+ * columns against `new Date()` alone cut the day off 6 hours early
+ * (UTC midnight = 06:00 Dhaka); anchor cutoffs at the Dhaka day start.
+ */
+export function bdDayStartUTC(): Date {
+  const ymd = bdTodayISO(); // YYYY-MM-DD in Dhaka
+  return new Date(`${ymd}T00:00:00+06:00`);
+}
+
 const BD_WEEKDAYS: Record<string, string> = {
   Saturday: "saturday",
   Sunday: "sunday",

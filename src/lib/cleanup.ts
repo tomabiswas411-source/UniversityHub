@@ -105,9 +105,15 @@ export async function runCleanup(): Promise<CleanupResult> {
         expiryDate: { not: null, lt: daysAgoDate(30) },
       },
     }),
-    // Calendar events that ended over 6 months ago
+    // Calendar events that ended over 6 months ago. Single-day events carry
+    // no endDate — sweep those by their `date` too, or they live forever.
     db.academicCalendar.deleteMany({
-      where: { endDate: { not: null, lt: daysAgoDate(180) } },
+      where: {
+        OR: [
+          { endDate: { lt: daysAgoDate(180) } },
+          { AND: [{ endDate: null }, { date: { lt: daysAgoDate(180) } }] },
+        ],
+      },
     }),
     ])
   ).map((r) => r.count);

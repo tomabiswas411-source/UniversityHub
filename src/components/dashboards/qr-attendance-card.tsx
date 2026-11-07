@@ -36,7 +36,8 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { apiGet, apiPost } from "@/lib/api-client";
-import { fmtDateOnly } from "@/lib/date-bd";
+import { downloadCsvText } from "@/lib/csv";
+import { bdTodayISO, fmtDateOnly } from "@/lib/date-bd";
 import { cn } from "@/lib/utils";
 import {
   AlertDialog,
@@ -428,13 +429,9 @@ export function QRAttendanceCard({
       const data = await apiGet<{ filename: string; csv: string; total: number; marked: number }>(
         `/api/teacher/attendance-export?scheduleId=${encodeURIComponent(scheduleId)}&date=${encodeURIComponent(date)}`
       );
-      // UTF-8 BOM → Excel renders Bangla student names correctly
-      const blob = new Blob([`\uFEFF${data.csv}`], { type: "text/csv;charset=utf-8" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = data.filename;
-      a.click();
-      URL.revokeObjectURL(a.href);
+      // Shared downloader: UTF-8 BOM (Bangla names in Excel), an anchor
+      // attached before click (Firefox refuses detached ones) + URL revoke.
+      downloadCsvText(data.filename, data.csv);
       toast({ title: "Excel sheet downloaded", description: `${data.marked}/${data.total} marked rows.` });
     } catch (err) {
       toast({
@@ -529,7 +526,10 @@ export function QRAttendanceCard({
               <Button
                 className={cn(GRADIENT_BTN, "h-9 flex-1 sm:flex-none")}
                 onClick={() => void startSession()}
-                disabled={starting || totalStudents === 0}
+                /* QR windows are only valid for TODAY's class — retro dates
+                   (allowed up to 7 days for manual attendance) can't host a
+                   live window; the server would 400 anyway, so disable up front. */
+                disabled={starting || totalStudents === 0 || date !== bdTodayISO()}
               >
                 {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}
                 Start QR
@@ -692,7 +692,7 @@ export function QRAttendanceCard({
               Session closed — {summary.present} present · {summary.absent} absent · {summary.total} total
             </p>
           </div>
-          <Button variant="outline" size="sm" className="h-9" onClick={() => void startSession()} disabled={starting}>
+          <Button variant="outline" size="sm" className="h-9" onClick={() => void startSession()} disabled={starting || date !== bdTodayISO()}>
             {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}
             Open another QR window
           </Button>
