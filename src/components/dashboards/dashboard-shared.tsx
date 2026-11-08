@@ -22,6 +22,7 @@ import {
   Megaphone,
   ShieldCheck,
   TrendingUp,
+  User,
   Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -88,6 +89,8 @@ export const DASHBOARD_SECTIONS = {
     { value: "results", label: "Results", icon: Award },
     { value: "performance", label: "Performance", icon: TrendingUp },
     { value: "alerts", label: "Alerts", icon: Bell },
+    { value: "documents", label: "Documents", icon: FolderDown },
+    { value: "profile", label: "Profile", icon: User },
   ],
 } as const satisfies Record<string, readonly DashboardSection[]>;
 

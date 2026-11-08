@@ -168,6 +168,78 @@ export async function GET() {
  }),
  ]);
 
+ /* ---------- Student facilities: My Teachers & My Courses ----------
+ Derived from the SAME schedules already fetched — two tiny bounded
+ lookups (a handful of teacher/course ids), no new heavy queries.
+ These power the Profile tab ("My Courses", "My Teachers") so the
+ student always knows who teaches what and how to reach them. */
+ const teacherIds = [...new Set(schedules.map((s) => s.teacherId).filter((id): id is string => !!id))];
+ const courseIds = [...new Set(schedules.map((s) => s.courseId).filter((id): id is string => !!id))];
+ const [teacherRows, courseRows, programRow] = await Promise.all([
+ teacherIds.length
+ ? db.user.findMany({
+ where: { id: { in: teacherIds } },
+ select: {
+ id: true,
+ fullName: true,
+ designation: true,
+ email: true,
+ phone: true,
+ officeRoom: true,
+ },
+ })
+ : Promise.resolve([]),
+ courseIds.length
+ ? db.course.findMany({
+ where: { id: { in: courseIds } },
+ select: {
+ id: true,
+ code: true,
+ name: true,
+ creditHours: true,
+ type: true,
+ semester: true,
+ },
+ })
+ : Promise.resolve([]),
+ user.programId
+ ? db.program.findUnique({
+ where: { id: user.programId },
+ select: { name: true, shortName: true },
+ })
+ : Promise.resolve(null),
+ ]);
+
+ // Courses taught per teacher (unique by code, roll-up order of schedule)
+ const coursesByTeacher = new Map<string, string[]>();
+ for (const s of schedules) {
+ if (!s.teacherId) continue;
+ const list = coursesByTeacher.get(s.teacherId) ?? [];
+ if (!list.includes(s.courseCode)) list.push(s.courseCode);
+ coursesByTeacher.set(s.teacherId, list);
+ }
+ const teachers = teacherRows
+ .map((t) => ({
+ id: t.id,
+ fullName: t.fullName,
+ designation: t.designation,
+ email: t.email,
+ phone: t.phone,
+ officeRoom: t.officeRoom,
+ courses: coursesByTeacher.get(t.id) ?? [],
+ }))
+ // Teachers currently teaching this student's classes first
+ .sort((a, b) => b.courses.length - a.courses.length);
+
+ const courses = courseRows.map((c) => ({
+ id: c.id,
+ code: c.code,
+ name: c.name,
+ creditHours: c.creditHours,
+ type: c.type,
+ semester: c.semester,
+ }));
+
  const scheduleDTOs: ScheduleDTO[] = schedules.map((s) => ({
  id: s.id,
  departmentId: s.departmentId,
@@ -380,8 +452,17 @@ export async function GET() {
  departmentShortName: department?.shortName ?? null,
  departmentId: department?.id ?? null,
  universityName: department?.university?.name ?? null,
+ universityShortName: department?.university?.shortName ?? null,
  programId: user.programId,
+ programName: programRow?.name ?? null,
+ programShortName: programRow?.shortName ?? null,
+ phone: user.phone,
+ guardianPhone: user.guardianPhone,
+ memberSince: user.createdAt.toISOString(),
+ accountActive: user.isActive,
  },
+ teachers,
+ courses,
  schedules: scheduleDTOs,
  changes: changeDTOs,
  notices: noticeDTOs,

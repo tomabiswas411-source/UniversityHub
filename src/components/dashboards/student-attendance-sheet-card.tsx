@@ -12,8 +12,9 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Grid3x3, Loader2, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Grid3x3, Loader2, RefreshCw } from "lucide-react";
 import { apiGet } from "@/lib/api-client";
+import { downloadCsv } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState, SectionCard } from "@/components/dashboards/dashboard-shared";
@@ -47,6 +48,24 @@ const STATUS_LETTER: Record<string, string> = {
 function fmtDay(iso: string): string {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** One subject's CSV — built locally from the data already on screen
+ *  (same zero-extra-round-trip discipline as the teacher's Excel sheet). */
+function downloadCourseSheet(c: CourseSheet): void {
+ const rows: (string | number)[][] = [
+ [`Attendance — ${c.courseCode} (${c.courseName}) — your marks, every class day`],
+ [],
+ ["Date", "Day", "Status"],
+ ...c.dates.map((d) => [d.date, fmtDay(d.date), d.status]),
+ [],
+ ["Present", c.present],
+ ["Late", c.late],
+ ["Absent", c.absent],
+ ["Excused", c.excused],
+ ["Attendance %", `${c.pct}%`],
+ ];
+ downloadCsv(`my-attendance-${c.courseCode}.csv`, rows);
 }
 
 export function StudentAttendanceSheetCard() {
@@ -173,6 +192,16 @@ export function StudentAttendanceSheetCard() {
                         </span>
                       ))}
                     </div>
+                    {c.dates.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => downloadCourseSheet(c)}
+                        className="mt-3 inline-flex min-h-9 items-center gap-1.5 rounded-lg border bg-card px-3 text-xs font-semibold text-green transition-colors hover:bg-green/10"
+                      >
+                        <Download className="h-3.5 w-3.5" aria-hidden />
+                        Download this sheet (CSV)
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

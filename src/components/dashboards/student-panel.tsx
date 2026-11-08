@@ -56,6 +56,12 @@ import {
  PerfLineChart,
 } from "@/components/dashboards/analytics-charts";
 import { StudentAttendanceSheetCard } from "@/components/dashboards/student-attendance-sheet-card";
+import { StudentDocumentsTab } from "@/components/dashboards/student-documents-tab";
+import {
+  StudentProfileTab,
+  type StudentCourse,
+  type StudentTeacher,
+} from "@/components/dashboards/student-profile-tab";
 import { initials, letterTone } from "@/lib/format";
 import { daysUntilDate, parseDateOnly } from "@/lib/date-bd";
 import {
@@ -91,11 +97,20 @@ interface StudentProfile {
  departmentName: string | null;
  departmentShortName: string | null;
  universityName: string | null;
+ universityShortName?: string | null;
  programId: string | null;
+ programName?: string | null;
+ programShortName?: string | null;
+ phone?: string | null;
+ guardianPhone?: string | null;
+ memberSince?: string;
+ accountActive?: boolean;
 }
 
 interface StudentDashboardData {
  profile: StudentProfile;
+ teachers?: StudentTeacher[];
+ courses?: StudentCourse[];
  schedules: ScheduleDTO[];
  changes: ScheduleChangeDTO[];
  notices: NoticeDTO[];
@@ -1384,6 +1399,37 @@ export function StudentPanel({
  )}
  </SectionCard>
  </div>
+ </motion.div>
+ </TabsContent>
+
+ {/* ===== Documents ===== */}
+ <TabsContent value="documents" className="mt-4">
+ <motion.div {...tabMotion}>
+ <StudentDocumentsTab />
+ </motion.div>
+ </TabsContent>
+
+ {/* ===== Profile ===== */}
+ <TabsContent value="profile" className="mt-4">
+ <motion.div {...tabMotion}>
+ <StudentProfileTab
+ profile={{
+ fullName,
+ rollNumber,
+ studentIdNumber,
+ semester,
+ section,
+ departmentName: profile?.departmentName ?? null,
+ universityName: profile?.universityName ?? null,
+ programName: profile?.programName ?? null,
+ phone: profile?.phone ?? null,
+ guardianPhone: profile?.guardianPhone ?? null,
+ memberSince: profile?.memberSince ?? new Date().toISOString(),
+ accountActive: profile?.accountActive ?? true,
+ }}
+ teachers={data.teachers ?? []}
+ courses={data.courses ?? []}
+ />
  </motion.div>
  </TabsContent>
  </Tabs>
