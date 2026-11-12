@@ -40,6 +40,11 @@ export interface SessionUser {
  email: string | null;
  designation: string | null;
  photoURL: string | null;
+ /** Self-service contact fields (staff profile dialog) — /api/auth/me
+     returns them; typed here so the dialog reads them type-safely. */
+ phone: string | null;
+ officeRoom: string | null;
+ bio: string | null;
  studentIdNumber: string | null;
  rollNumber: string | null;
  semester: number | null;

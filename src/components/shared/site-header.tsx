@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { GraduationCap, Moon, Sun, Menu, LayoutDashboard } from "lucide-react";
+import { GraduationCap, Moon, Sun, Menu, LayoutDashboard, UserRound } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useAuthStore } from "@/store/auth-store";
@@ -19,6 +19,7 @@ import { ROLE_LABELS } from "@/lib/role-labels";
 import { canSeePricing, type RoleUser } from "@/lib/role-access";
 import { initials } from "@/lib/format";
 import { NotificationBell } from "@/components/shared/notification-bell";
+import { StaffProfileDialog } from "@/components/shared/staff-profile-dialog";
 import { GRADIENT_BTN } from "@/components/dashboards/dashboard-shared";
 import { cn } from "@/lib/utils";
 import type { AppView } from "@/app/page";
@@ -45,6 +46,10 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  const { theme, setTheme } = useTheme();
  const mounted = useMounted();
  const [scrolled, setScrolled] = useState(false);
+ /* Self-service profile (staff roles) — opened from the Account menu.
+    Students deliberately don't get it: their academic records are
+    office-controlled and their profile tab already exists. */
+ const [profileOpen, setProfileOpen] = useState(false);
 
  /* The sidebar rail (lg+) carries the brand ONLY on the dashboard.
     Everywhere else the header is the sole navigation — so its brand
@@ -201,6 +206,11 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  <DropdownMenuItem onClick={() => navigate("dashboard")}>
  <LayoutDashboard className="w-4 h-4 mr-2" /> My Dashboard
  </DropdownMenuItem>
+ {(user.role === "teacher" || user.role === "dept_admin") && (
+ <DropdownMenuItem onClick={() => setProfileOpen(true)}>
+ <UserRound className="w-4 h-4 mr-2" /> My Profile
+ </DropdownMenuItem>
+ )}
  <DropdownMenuSeparator />
  <DropdownMenuItem
  onClick={async () => {
@@ -220,6 +230,9 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  >
  Login
  </Button>
+ )}
+ {profileOpen && (
+ <StaffProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
  )}
  </div>
  </div>

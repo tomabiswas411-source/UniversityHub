@@ -2,7 +2,12 @@ import { NextRequest } from "next/server";
 import { handle, badRequest } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError, type SessionPayload } from "@/lib/session";
-import { assertDepartmentAccess } from "@/lib/auth";
+import {
+ assertDepartmentAccess,
+ hashPassword,
+ verifyPassword,
+ toSafeUser,
+} from "@/lib/auth";
 import { percentToGrade, resultPct, UGC_SCALE } from "@/lib/grades";
 import { bdTodayISO, bdWeekday, bdDaysAgoISO, weekdayOfDate } from "@/lib/date-bd";
 import { windowsOverlap } from "@/lib/time-utils";
@@ -28,6 +33,8 @@ import { windowsOverlap } from "@/lib/time-utils";
  * POST /api/teacher/students-move → move selected students to a semester (batch promote/hold)
  * POST /api/teacher/students-status → activate / deactivate selected students
  * GET /api/teacher/export?type=... → server-built CSV documents (COST GUARD: one small JSON)
+ * PUT /api/teacher/profile → self-service contact fields (phone / office / bio) — academic identity stays office-controlled
+ * POST /api/teacher/change-password → verify current password, then rotate (self-service; admin reset stays available)
  */
 
 const ATT_STATUSES = ["present", "absent", "late", "excused"] as const;
@@ -992,7 +999,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  markedCount > 0 ? `${Math.round((presentCount / markedCount) * 100)}%` : "-",
  ]);
  }
- filename = `attendance-master-${schedule.courseCode}-${todayStr()}.csv`;
+ // The matrix is ALL-TIME (every class day in one register) — stamping
+ // today's date on the file was misleading (it looked like a day sheet).
+ filename = `attendance-master-${schedule.courseCode}-all-days.csv`;
  csv = toCsv(rows);
  } else if (type === "attendance-day") {
  // One class · one date — classic day sheet
@@ -1115,6 +1124,39 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  throw new ApiError(403, "Teacher access required");
  }
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+
+ // ---------- Change password (self-service) ----------
+ // Staff could previously only get a password from an admin reset —
+ // a locked-out teacher had to chase the department office. Verifying
+ // the CURRENT password keeps this safe: a stolen session alone cannot
+ // rotate the credential.
+ if (action === "change-password") {
+ const current = String(body.currentPassword ?? "");
+ const next = String(body.newPassword ?? "");
+ if (!current || !next) {
+ throw new ApiError(400, "Current and new password are required");
+ }
+ if (next.length < 8) {
+ throw new ApiError(400, "New password must be at least 8 characters");
+ }
+ if (next.length > 72) {
+ throw new ApiError(400, "New password must be at most 72 characters (bcrypt limit)");
+ }
+ const me = await db.user.findUnique({ where: { id: session.userId } });
+ if (!me) throw new ApiError(404, "Account not found");
+ if (!me.password) {
+ throw new ApiError(400, "No password is set on this account — ask the office to provision one");
+ }
+ const ok = await verifyPassword(current, me.password);
+ if (!ok) {
+ throw new ApiError(400, "Current password is incorrect");
+ }
+ await db.user.update({
+ where: { id: session.userId },
+ data: { password: await hashPassword(next) },
+ });
+ return { changed: true };
+ }
 
  // ---------- Attendance (bulk save) ----------
  if (action === "attendance") {
@@ -1716,8 +1758,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const courseId = body.courseId as string | undefined;
  const dueDate = body.dueDate as string | undefined;
  const maxMarks = body.maxMarks as string | number | undefined;
- if (!courseId || !title.trim() || !description.trim()) {
- throw new ApiError(400, "Course, title and description are required");
+ // Description is OPTIONAL (many real assignments need no write-up) —
+ // the form marks it optional; the old required check 400'd a valid
+ // publish with no clear fix for the teacher.
+ if (!courseId || !title.trim()) {
+ throw new ApiError(400, "Course and title are required");
  }
  // REALITY CHECK: a deadline in the past would mark every submission
  // overdue the moment it is published. The client sends "YYYY-MM-DD";
@@ -2034,6 +2079,36 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+
+ // ---------- Self-service profile ----------
+ // Whitelist of CONTACT fields only. Academic identity (name, designation,
+ // email, department, program) stays office-controlled: self-editing those
+ // would break rosters, login emails and every faculty card that renders
+ // them. An empty string clears the field (null), mirroring the admin
+ // edit form.
+ if (action === "profile") {
+ const data: Record<string, unknown> = {};
+ if (body.phone !== undefined) {
+ const p = String(body.phone).trim().slice(0, 30);
+ data.phone = p || null;
+ }
+ if (body.officeRoom !== undefined) {
+ const o = String(body.officeRoom).trim().slice(0, 40);
+ data.officeRoom = o || null;
+ }
+ if (body.bio !== undefined) {
+ const b = String(body.bio).trim().slice(0, 500);
+ data.bio = b || null;
+ }
+ if (Object.keys(data).length === 0) {
+ throw new ApiError(400, "Nothing to update");
+ }
+ const updated = await db.user.update({
+ where: { id: session.userId },
+ data,
+ });
+ return { user: toSafeUser(updated) };
+ }
 
  // ---------- Update assignment ----------
  if (action === "assignments") {
