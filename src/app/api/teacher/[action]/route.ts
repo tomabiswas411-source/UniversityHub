@@ -8,7 +8,7 @@ import {
  verifyPassword,
  toSafeUser,
 } from "@/lib/auth";
-import { percentToGrade, resultPct, UGC_SCALE } from "@/lib/grades";
+import { percentToGrade, resultPct } from "@/lib/grades";
 import { bdTodayISO, bdWeekday, bdDaysAgoISO, weekdayOfDate } from "@/lib/date-bd";
 import { windowsOverlap } from "@/lib/time-utils";
 
@@ -84,9 +84,6 @@ function parseMaxMarks(v: unknown): number {
  throw new ApiError(400, "Max marks must be between 1 and 200");
  return Math.round(n);
 }
-
-/** Letter grades this platform recognizes (UGC scale in lib/grades). */
-const VALID_GRADES = new Set(UGC_SCALE.map((b) => b.letter));
 
 /**
  * Runtime type guard for user-supplied string fields: `title: 123` used
@@ -1897,16 +1894,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  // Grade must be a real UGC letter — free-text grades corrupted the
  // analytics group-bys; unknown letters are rejected up-front.
- const gradeVal =
- e.grade === undefined || e.grade === null || e.grade === ""
- ? null
- : String(e.grade);
- if (gradeVal !== null && !VALID_GRADES.has(gradeVal)) {
- throw new ApiError(
- 400,
- `Invalid grade "${gradeVal}" — valid grades are: ${[...VALID_GRADES].join(", ")}`
- );
- }
+ // REALITY FIX (single source of truth): the grade is now COMPUTED
+ // server-side from marks/maxMarks on the UGC scale. The old code
+ // trusted the client's letter, so rows saved by an older build sit in
+ // the DB with a one-band-strict letter (87.5% stored as "A") while the
+ // teacher grid, the student header GPA and every analytics card
+ // recompute A+ from the same marks — one number, three letters on
+ // screen. Marks are the fact; the letter is always their shadow.
+ const gradeVal = percentToGrade(resultPct({ marks, maxMarks })).letter;
  // Remarks are an annotation, not an essay — cap at 500 chars.
  const remarksVal =
  e.remarks === undefined || e.remarks === null
