@@ -64,6 +64,7 @@ export const DASHBOARD_SECTIONS = {
     { value: "overview", label: "Overview", icon: LayoutDashboard },
     { value: "analytics", label: "Analytics", icon: BarChart3 },
     { value: "schedule", label: "Schedule", icon: CalendarDays },
+    { value: "changes", label: "Class Changes", icon: ArrowLeftRight },
     { value: "teachers", label: "Teachers", icon: GraduationCap },
     { value: "students", label: "Students", icon: Users },
     { value: "courses", label: "Courses", icon: BookOpen },

@@ -182,8 +182,20 @@ const ENTITIES = [
  "stats",
  "overview",
  "analytics",
+ "changes",
+ "attendance-report",
+ "sessions",
 ] as const;
 type Entity = (typeof ENTITIES)[number];
+
+/** Valid ScheduleChange types — mirrors the teacher class-change writer. */
+const CHANGE_TYPE_SET = new Set([
+ "cancelled",
+ "rescheduled",
+ "room_changed",
+ "time_changed",
+ "extra_class",
+]);
 
 export async function GET(req: NextRequest, ctx: Ctx) {
  const { entity: raw } = await ctx.params;
@@ -502,6 +514,167 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
  take: 1000,
  });
+
+ case "changes": {
+ // Department-wide class-change audit — the dept head's oversight view
+ // of every cancellation / reschedule / room-time move their teachers
+ // filed. Rows are fully denormalized (courseCode, teacherName, reason),
+ // so this is one indexed query, no joins.
+ const url = new URL(req.url);
+ const typeFilter = url.searchParams.get("type");
+ const where: Prisma.ScheduleChangeWhereInput = { departmentId };
+ if (typeFilter && CHANGE_TYPE_SET.has(typeFilter)) where.changeType = typeFilter;
+ const [changes, grouped] = await Promise.all([
+ db.scheduleChange.findMany({
+ where,
+ orderBy: { createdAt: "desc" },
+ take: 200,
+ }),
+ db.scheduleChange.groupBy({
+ by: ["changeType"],
+ where: { departmentId, createdAt: { gte: new Date(Date.now() - 30 * 24 * 3600 * 1000) } },
+ _count: true,
+ }),
+ ]);
+ const counts: Record<string, number> = {};
+ for (const g of grouped) counts[g.changeType] = g._count;
+ return { changes, counts, windowDays: 30 };
+ }
+
+ case "attendance-report": {
+ // Per-student attendance register across the whole department — the
+ // shortage list a dept head actually chases (proctors, guardian calls,
+ // exam permission). Late counts as attended, mirroring teacher/analytics
+ // math so every rate on the platform tells the same story.
+ const url = new URL(req.url);
+ const semesterParam = url.searchParams.get("semester");
+ const programFilter = url.searchParams.get("programId");
+ const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+
+ const students = await db.user.findMany({
+ where: {
+ departmentId,
+ role: "student",
+ ...(semesterParam ? { semester: Number(semesterParam) } : {}),
+ ...(programFilter ? { programId: programFilter } : {}),
+ },
+ select: {
+ id: true, fullName: true, rollNumber: true, studentIdNumber: true,
+ semester: true, isActive: true,
+ program: { select: { shortName: true } },
+ },
+ orderBy: { rollNumber: "asc" },
+ take: 500,
+ });
+
+ const qFiltered = q
+ ? students.filter(
+ (s) =>
+ s.fullName.toLowerCase().includes(q) ||
+ (s.rollNumber ?? "").toLowerCase().includes(q) ||
+ (s.studentIdNumber ?? "").toLowerCase().includes(q)
+ )
+ : students;
+
+ const grouped = qFiltered.length
+ ? await db.attendance.groupBy({
+ by: ["studentId", "status"],
+ where: { departmentId, studentId: { in: qFiltered.map((s) => s.id) } },
+ _count: true,
+ })
+ : [];
+
+ const perStudent = new Map<
+ string,
+ { present: number; late: number; absent: number; excused: number }
+ >();
+ let totalMarked = 0;
+ let totalPresentish = 0;
+ for (const g of grouped) {
+ const cur =
+ perStudent.get(g.studentId) ??
+ { present: 0, late: 0, absent: 0, excused: 0 };
+ cur[g.status as "present" | "late" | "absent" | "excused"] = g._count;
+ perStudent.set(g.studentId, cur);
+ totalMarked += g._count;
+ if (g.status === "present" || g.status === "late") totalPresentish += g._count;
+ }
+
+ const rows = qFiltered.map((s) => {
+ const c = perStudent.get(s.id) ?? { present: 0, late: 0, absent: 0, excused: 0 };
+ const counted = c.present + c.late + c.absent;
+ return {
+ studentId: s.id,
+ fullName: s.fullName,
+ rollNumber: s.rollNumber,
+ studentIdNumber: s.studentIdNumber,
+ programShort: s.program?.shortName ?? null,
+ semester: s.semester,
+ isActive: s.isActive,
+ present: c.present,
+ late: c.late,
+ absent: c.absent,
+ excused: c.excused,
+ marked: counted,
+ rate: counted === 0 ? null : Math.round(((c.present + c.late) / counted) * 100),
+ };
+ });
+ // Worst attendance first — the list a dept head works down. Unmarked
+ // students (rate null) sink to the bottom.
+ rows.sort((a, b) => {
+ if (a.rate === null && b.rate === null) return 0;
+ if (a.rate === null) return 1;
+ if (b.rate === null) return -1;
+ return a.rate - b.rate;
+ });
+
+ const shortStudents = rows.filter((r) => r.rate !== null && r.rate < 75).length;
+ return {
+ students: rows,
+ summary: {
+ totalStudents: rows.length,
+ totalMarked,
+ deptRate: totalMarked === 0 ? null : Math.round((totalPresentish / totalMarked) * 100),
+ shortStudents,
+ shortageLine: 75,
+ },
+ };
+ }
+
+ case "sessions": {
+ // Department-scoped live QR windows — the dept head's supervision view
+ // (same kill-switch semantics the super admin has platform-wide, but
+ // scoped so a head only touches their own teachers' windows).
+ const now = new Date();
+ const [active, closedToday] = await Promise.all([
+ db.attendanceSession.findMany({
+ where: { departmentId, closed: false, expiresAt: { gt: now } },
+ select: {
+ id: true, date: true, durationSec: true, startsAt: true,
+ expiresAt: true, presentCount: true, geoRadiusM: true,
+ schedule: { select: { courseCode: true, courseName: true, semester: true } },
+ teacher: { select: { fullName: true } },
+ },
+ orderBy: { startsAt: "desc" },
+ take: 100,
+ }),
+ db.attendanceSession.findMany({
+ where: {
+ departmentId,
+ closed: true,
+ expiresAt: { gte: new Date(now.getTime() - 24 * 3600 * 1000) },
+ },
+ select: {
+ id: true, date: true, presentCount: true, expiresAt: true,
+ schedule: { select: { courseCode: true } },
+ teacher: { select: { fullName: true } },
+ },
+ orderBy: { expiresAt: "desc" },
+ take: 50,
+ }),
+ ]);
+ return { active, closedToday };
+ }
  }
  });
 }
@@ -1424,6 +1597,23 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  await db.scheduleChange.deleteMany({ where: { scheduleId: id } });
  await db.schedule.delete({ where: { id } });
  return { deleted: true };
+ }
+ case "sessions": {
+ // Force-close a live QR window in the department — the dept head's
+ // kill-switch for a rogue/forgotten window (same flag the natural
+ // expiry sets; the teacher's own finalize still computes absentees).
+ const s = await db.attendanceSession.findUnique({
+ where: { id },
+ select: { departmentId: true, closed: true },
+ });
+ if (!s) throw new ApiError(404, "Attendance session not found");
+ await assertDeptAccess(session, s.departmentId);
+ if (s.closed) return { closed: true, already: true };
+ await db.attendanceSession.update({
+ where: { id },
+ data: { closed: true },
+ });
+ return { closed: true };
  }
  default:
  throw new ApiError(400, "Cannot delete this entity");

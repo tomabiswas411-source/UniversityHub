@@ -16,11 +16,15 @@ import {
 } from "react";
 import { motion } from "framer-motion";
 import {
+ ArrowLeftRight,
  BarChart3,
+ Ban,
  BookOpen,
  CalendarDays,
+ CalendarX2,
  Clock,
  DoorOpen,
+ Download,
  GraduationCap,
  LayoutGrid,
  Loader2,
@@ -29,6 +33,8 @@ import {
  Pin,
  Plus,
  Power,
+ RefreshCw,
+ ScanLine,
  Search,
  Trash2,
  Users,
@@ -90,6 +96,7 @@ import {
 } from "@/components/dashboards/analytics-charts";
 import { timeAgo } from "@/components/shared/notification-bell";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
+import { downloadCsvText } from "@/lib/csv";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
@@ -167,6 +174,101 @@ type ManageEntity =
  | "programs"
  | "notices"
  | "schedules";
+
+/* ---------------- oversight payload types (Class Changes / attendance
+ register / QR sessions — GET /api/manage/{changes|attendance-report|sessions}) */
+
+interface ChangeRow {
+ id: string;
+ changeType: string;
+ effectiveDate: string;
+ reason: string;
+ courseCode: string;
+ courseName: string;
+ teacherName: string;
+ originalStartTime: string | null;
+ originalEndTime: string | null;
+ originalRoomNumber: string | null;
+ originalDay: string | null;
+ newStartTime: string | null;
+ newEndTime: string | null;
+ newRoomNumber: string | null;
+ newDay: string | null;
+ createdAt: string;
+}
+
+interface ChangesResponse {
+ changes: ChangeRow[];
+ counts: Record<string, number>;
+ windowDays: number;
+}
+
+interface AttReportRow {
+ studentId: string;
+ fullName: string;
+ rollNumber: string | null;
+ studentIdNumber: string | null;
+ programShort: string | null;
+ semester: number | null;
+ isActive: boolean;
+ present: number;
+ late: number;
+ absent: number;
+ excused: number;
+ marked: number;
+ rate: number | null;
+}
+
+interface AttReportResponse {
+ students: AttReportRow[];
+ summary: {
+ totalStudents: number;
+ totalMarked: number;
+ deptRate: number | null;
+ shortStudents: number;
+ shortageLine: number;
+ };
+}
+
+interface DeptSessionRow {
+ id: string;
+ date: string;
+ durationSec: number;
+ startsAt: string;
+ expiresAt: string;
+ presentCount: number;
+ geoRadiusM: number | null;
+ schedule: { courseCode: string; courseName?: string | null; semester?: number | null };
+ teacher: { fullName: string };
+}
+
+interface ClosedSessionRow {
+ id: string;
+ date: string;
+ presentCount: number;
+ expiresAt: string;
+ schedule: { courseCode: string };
+ teacher: { fullName: string };
+}
+
+interface SessionsResponse {
+ active: DeptSessionRow[];
+ closedToday: ClosedSessionRow[];
+}
+
+const CHANGE_TYPE_META: Record<string, { label: string; cls: string }> = {
+ cancelled: { label: "Cancelled", cls: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" },
+ rescheduled: { label: "Rescheduled", cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300" },
+ room_changed: { label: "Room moved", cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" },
+ time_changed: { label: "Time moved", cls: "bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300" },
+ extra_class: { label: "Extra class", cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300" },
+};
+
+const fmtDayLabel = (d: string | null): string => {
+ if (!d) return "—";
+ const idx = DAYS_OF_WEEK.indexOf(d as (typeof DAYS_OF_WEEK)[number]);
+ return idx >= 0 ? DAY_LABELS[idx] : d;
+};
 
 interface TeacherPayload {
  fullName: string;
@@ -587,6 +689,139 @@ export function DeptAdminPanel({
  }
  }, [activeTab, analytics, analyticsLoading, analyticsError, loadAnalytics]);
 
+ /* -------- oversight data: Class Changes tab (lazy) -------- */
+ const [changes, setChanges] = useState<ChangesResponse | null>(null);
+ const [changesLoading, setChangesLoading] = useState(false);
+ const [changesError, setChangesError] = useState<string | null>(null);
+ const [changeTypeFilter, setChangeTypeFilter] = useState("all");
+
+ const loadChanges = useCallback(async () => {
+ if (!departmentId || changesLoading) return;
+ setChangesLoading(true);
+ try {
+ const v = await apiGet<ChangesResponse>(
+ `/api/manage/changes?departmentId=${departmentId}`
+ );
+ setChanges(v);
+ setChangesError(null);
+ } catch (err) {
+ setChanges(null);
+ setChangesError(errMsg(err));
+ } finally {
+ setChangesLoading(false);
+ }
+ }, [departmentId, changesLoading]);
+
+ useEffect(() => {
+ if (activeTab === "changes" && !changes && !changesLoading && !changesError) {
+ void loadChanges();
+ }
+ }, [activeTab, changes, changesLoading, changesError, loadChanges]);
+
+ /* -------- oversight data: per-student attendance register (lazy,
+      fetched the first time the Analytics tab opens — the shortage
+      watchlist card lives there, next to the attendance charts) -------- */
+ const [attReport, setAttReport] = useState<AttReportResponse | null>(null);
+ const [attReportLoading, setAttReportLoading] = useState(false);
+ const [attReportError, setAttReportError] = useState<string | null>(null);
+ const [attQuery, setAttQuery] = useState("");
+ const [attProgramFilter, setAttProgramFilter] = useState("all");
+ const [attSemesterFilter, setAttSemesterFilter] = useState("all");
+
+ const loadAttReport = useCallback(async () => {
+ if (!departmentId || attReportLoading) return;
+ setAttReportLoading(true);
+ try {
+ const v = await apiGet<AttReportResponse>(
+ `/api/manage/attendance-report?departmentId=${departmentId}`
+ );
+ setAttReport(v);
+ setAttReportError(null);
+ } catch (err) {
+ setAttReport(null);
+ setAttReportError(errMsg(err));
+ } finally {
+ setAttReportLoading(false);
+ }
+ }, [departmentId, attReportLoading]);
+
+ useEffect(() => {
+ if (activeTab === "analytics" && !attReport && !attReportLoading && !attReportError) {
+ void loadAttReport();
+ }
+ }, [activeTab, attReport, attReportLoading, attReportError, loadAttReport]);
+
+ /* -------- oversight data: live QR windows (Overview card) -------- */
+ const [deptSessions, setDeptSessions] = useState<SessionsResponse | null>(null);
+ const [deptSessionsLoading, setDeptSessionsLoading] = useState(false);
+ const [killingSessionId, setKillingSessionId] = useState<string | null>(null);
+
+ const loadDeptSessions = useCallback(async () => {
+ if (!departmentId || deptSessionsLoading) return;
+ setDeptSessionsLoading(true);
+ try {
+ const v = await apiGet<SessionsResponse>(
+ `/api/manage/sessions?departmentId=${departmentId}`
+ );
+ setDeptSessions(v);
+ } catch {
+ // Silent — the Overview card simply stays empty; not a blocker.
+ setDeptSessions({ active: [], closedToday: [] });
+ } finally {
+ setDeptSessionsLoading(false);
+ }
+ }, [departmentId, deptSessionsLoading]);
+
+ useEffect(() => {
+ // Same stability pattern as the analytics loader: the loading flag is
+ // part of the guard, so the changing callback identity converges instead
+ // of looping.
+ if (!deptSessions && !deptSessionsLoading) void loadDeptSessions();
+ }, [deptSessions, deptSessionsLoading, loadDeptSessions]);
+
+ async function killDeptSession(id: string, label: string) {
+ if (!departmentId) return;
+ setKillingSessionId(id);
+ try {
+ await apiDelete(`/api/manage/sessions?departmentId=${departmentId}&id=${id}`);
+ toast({
+ title: "QR window closed",
+ description: `${label} is no longer accepting check-ins.`,
+ });
+ await loadDeptSessions();
+ } catch (err) {
+ toast({ title: "Could not close the window", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setKillingSessionId(null);
+ }
+ }
+
+ /* CSV export of the attendance register — worst-first, same order the
+    watchlist shows. Excel opens it directly (BOM handled by the helper). */
+ function exportAttReportCsv() {
+ if (!attReport) return;
+ const line = attReport.summary.shortageLine;
+ const esc = (v: unknown) => {
+ const s = String(v ?? "");
+ return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+ };
+ const csv = [
+ ["Student Attendance Register — department-wide"],
+ [],
+ ["Name", "Roll", "ID No", "Program", "Semester", "Marked", "Present", "Late", "Absent", "Excused", "Rate %", "Status"],
+ ...attReport.students.map((r) => [
+ r.fullName, r.rollNumber ?? "", r.studentIdNumber ?? "",
+ r.programShort ?? "", r.semester ?? "", r.marked, r.present,
+ r.late, r.absent, r.excused, r.rate ?? "",
+ r.rate === null ? "not marked yet" : r.rate < line ? `below ${line}%` : "ok",
+ ]),
+ [],
+ ["Department rate", attReport.summary.deptRate ?? ""],
+ [`Students below ${line}%`, attReport.summary.shortStudents],
+ ].map((r) => (r as (string | number)[]).map(esc).join(",")).join("\n");
+ downloadCsvText(`attendance-register-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+ }
+
  /* ---------------- generic save / delete ---------------- */
 
  async function saveEntity<T>(
@@ -965,6 +1200,109 @@ export function DeptAdminPanel({
  </div>
  )}
  </SectionCard>
+ <SectionCard
+ title="Live QR Attendance Windows"
+ icon={ScanLine}
+ action={
+ <div className="flex items-center gap-2">
+ {deptSessionsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label="Refresh live windows"
+ className="h-8 w-8 text-muted-foreground"
+ disabled={deptSessionsLoading}
+ onClick={() => void loadDeptSessions()}
+ >
+ <RefreshCw className="h-3.5 w-3.5" />
+ </Button>
+ <Badge variant="outline">{deptSessions?.active.length ?? 0} live</Badge>
+ </div>
+ }
+ >
+ {!deptSessions ? (
+ <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+ <Loader2 className="h-4 w-4 animate-spin" /> Checking for live windows…
+ </p>
+ ) : deptSessions.active.length === 0 ? (
+ <div>
+ <EmptyState
+ icon={ScanLine}
+ title="No live QR windows"
+ hint="When a teacher opens a QR attendance window it appears here with a force-close control."
+ />
+ {deptSessions.closedToday.length > 0 && (
+ <div className="mt-1 border-t pt-3">
+ <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+ Closed in the last 24h
+ </p>
+ <div className="space-y-1.5">
+ {deptSessions.closedToday.slice(0, 4).map((s) => (
+ <div key={s.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+ <CalendarX2 className="h-3.5 w-3.5 shrink-0" />
+ <span className="font-medium text-foreground">{s.schedule.courseCode}</span>
+ <span>· {s.teacher.fullName}</span>
+ <span className="ml-auto shrink-0">{s.presentCount} present</span>
+ </div>
+ ))}
+ </div>
+ </div>
+ )}
+ </div>
+ ) : (
+ <div className="space-y-2">
+ {deptSessions.active.map((s) => {
+ const expired = new Date(s.expiresAt).getTime() < Date.now();
+ return (
+ <div key={s.id} className="flex flex-wrap items-center gap-2 rounded-xl border p-3">
+ <div className="min-w-0 flex-1">
+ <p className="truncate text-sm font-semibold">
+ {s.schedule.courseCode}
+ {s.schedule.semester ? (
+ <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+ · Semester {s.schedule.semester}
+ </span>
+ ) : null}
+ </p>
+ <p className="truncate text-xs text-muted-foreground">
+ {s.teacher.fullName} · {s.date} · window {new Date(s.startsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}–{new Date(s.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+ {s.geoRadiusM != null ? ` · geo ±${s.geoRadiusM}m` : ""}
+ </p>
+ </div>
+ <Badge variant="outline" className="shrink-0">{s.presentCount} checked in</Badge>
+ <Button
+ size="sm"
+ variant="destructive"
+ className="h-9 shrink-0"
+ disabled={killingSessionId === s.id}
+ aria-label={`Force close ${s.schedule.courseCode} window`}
+ onClick={() =>
+ void killDeptSession(s.id, `${s.schedule.courseCode} (${s.teacher.fullName})`)
+ }
+ >
+ {killingSessionId === s.id ? (
+ <Loader2 className="h-4 w-4 animate-spin" />
+ ) : (
+ <Ban className="h-4 w-4" />
+ )}
+ Force close
+ </Button>
+ {expired && (
+ <p className="w-full text-[11px] text-muted-foreground">
+ Expired — waiting for the teacher to finalize the register.
+ </p>
+ )}
+ </div>
+ );
+ })}
+ {deptSessions.closedToday.length > 0 && (
+ <p className="pt-1 text-[11px] text-muted-foreground">
+ {deptSessions.closedToday.length} window{deptSessions.closedToday.length === 1 ? "" : "s"} closed in the last 24h.
+ </p>
+ )}
+ </div>
+ )}
+ </SectionCard>
  </div>
  </div>
  </TabsContent>
@@ -1036,6 +1374,182 @@ export function DeptAdminPanel({
  </div>
  </ChartCard>
  </div>
+ )}
+
+ {/* ===== Attendance shortage watchlist (dept register) ===== */}
+ {!attReport && attReportError ? (
+ <SectionCard title="Attendance Register unavailable" icon={Users}>
+ <div className="flex flex-col items-center gap-3 py-4 text-center">
+ <p className="text-sm text-muted-foreground">{attReportError}</p>
+ <Button className={cn("h-10", GRADIENT_BTN)} onClick={() => void loadAttReport()} disabled={attReportLoading}>
+ {attReportLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+ Retry
+ </Button>
+ </div>
+ </SectionCard>
+ ) : !attReport ? (
+ <SectionCard title="Attendance Register" icon={Users}>
+ <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+ <Loader2 className="h-4 w-4 animate-spin" /> Building the per-student register…
+ </p>
+ </SectionCard>
+ ) : (
+ <SectionCard
+ title="Attendance Register — who needs attention"
+ icon={Users}
+ action={
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-9 gap-1.5"
+ aria-label="Export attendance register as CSV"
+ disabled={attReport.students.length === 0}
+ onClick={exportAttReportCsv}
+ >
+ <Download className="h-4 w-4" />
+ CSV
+ </Button>
+ }
+ >
+ <div className="space-y-3">
+ {/* summary row */}
+ <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+ <StatPill
+ label="Dept Rate"
+ value={attReport.summary.deptRate === null ? "—" : `${attReport.summary.deptRate}%`}
+ tone={attReport.summary.deptRate === null ? "navy" : attReport.summary.deptRate >= 75 ? "green" : attReport.summary.deptRate >= 60 ? "gold" : "rust"}
+ />
+ <StatPill
+ label={`Below ${attReport.summary.shortageLine}%`}
+ value={attReport.summary.shortStudents}
+ tone={attReport.summary.shortStudents > 0 ? "rust" : "green"}
+ />
+ <StatPill label="Marks Filed" value={attReport.summary.totalMarked} tone="navy" />
+ <StatPill label="Students" value={attReport.summary.totalStudents} tone="navy" />
+ </div>
+
+ {/* filters */}
+ <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+ <div className="relative">
+ <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+ <Input
+ value={attQuery}
+ onChange={(e) => setAttQuery(e.target.value)}
+ placeholder="Search name / roll / ID…"
+ className="pl-9"
+ aria-label="Search attendance register"
+ />
+ </div>
+ <Select value={attProgramFilter} onValueChange={setAttProgramFilter}>
+ <SelectTrigger aria-label="Filter by program"><SelectValue placeholder="All programs" /></SelectTrigger>
+ <SelectContent>
+ <SelectItem value="all">All programs</SelectItem>
+ {programs.map((p) => (
+ <SelectItem key={p.id} value={p.id}>{p.shortName || p.name}</SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ <Select value={attSemesterFilter} onValueChange={setAttSemesterFilter}>
+ <SelectTrigger aria-label="Filter by semester"><SelectValue placeholder="All semesters" /></SelectTrigger>
+ <SelectContent>
+ <SelectItem value="all">All semesters</SelectItem>
+ {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+ <SelectItem key={n} value={String(n)}>Semester {n}</SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ </div>
+
+ {/* register table */}
+ {(() => {
+ const q = attQuery.trim().toLowerCase();
+ const filtered = attReport.students.filter((r) => {
+ if (attProgramFilter !== "all") {
+ const pid = programs.find((p) => p.id === attProgramFilter);
+ if (pid && r.programShort !== (pid.shortName || pid.name)) return false;
+ }
+ if (attSemesterFilter !== "all" && String(r.semester ?? "") !== attSemesterFilter) return false;
+ if (q) {
+ const hay = `${r.fullName} ${r.rollNumber ?? ""} ${r.studentIdNumber ?? ""}`.toLowerCase();
+ if (!hay.includes(q)) return false;
+ }
+ return true;
+ });
+ if (filtered.length === 0) {
+ return (
+ <EmptyState
+ icon={Users}
+ title={attReport.students.length === 0 ? "No attendance marked yet" : "No students match the filters"}
+ hint={attReport.students.length === 0 ? "The register fills up as teachers mark attendance." : undefined}
+ />
+ );
+ }
+ return (
+ <div className="max-h-96 overflow-y-auto rounded-xl border">
+ <table className="w-full text-sm">
+ <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+ <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+ <th className="px-3 py-2 font-medium">Student</th>
+ <th className="px-2 py-2 text-center font-medium">Marked</th>
+ <th className="px-2 py-2 text-center font-medium">P</th>
+ <th className="px-2 py-2 text-center font-medium">L</th>
+ <th className="px-2 py-2 text-center font-medium">A</th>
+ <th className="px-3 py-2 text-right font-medium">Rate</th>
+ </tr>
+ </thead>
+ <tbody>
+ {filtered.map((r) => (
+ <tr key={r.studentId} className="border-t">
+ <td className="px-3 py-2">
+ <div className="flex items-center gap-2">
+ <span
+ aria-label={r.isActive ? "Active" : "Inactive"}
+ className={cn("h-2 w-2 shrink-0 rounded-full", r.isActive ? "bg-emerald-500" : "bg-rose-400")}
+ />
+ <div className="min-w-0">
+ <p className="truncate font-medium">{r.fullName}</p>
+ <p className="truncate text-[11px] text-muted-foreground">
+ {[r.rollNumber, r.studentIdNumber, r.programShort, r.semester ? `S${r.semester}` : ""]
+ .filter(Boolean)
+ .join(" · ") || "—"}
+ </p>
+ </div>
+ </div>
+ </td>
+ <td className="px-2 py-2 text-center tabular-nums">{r.marked}</td>
+ <td className="px-2 py-2 text-center tabular-nums text-emerald-600">{r.present}</td>
+ <td className="px-2 py-2 text-center tabular-nums text-amber-600">{r.late}</td>
+ <td className="px-2 py-2 text-center tabular-nums text-rose-600">{r.absent}</td>
+ <td className="px-3 py-2 text-right">
+ {r.rate === null ? (
+ <span className="text-xs text-muted-foreground">not marked</span>
+ ) : (
+ <Badge
+ className={cn(
+ "tabular-nums",
+ r.rate < attReport.summary.shortageLine
+ ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+ : r.rate < 85
+ ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+ : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+ )}
+ >
+ {r.rate}%
+ </Badge>
+ )}
+ </td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ );
+ })()}
+ <p className="text-[11px] text-muted-foreground">
+ Sorted worst attendance first. Present + late both count as attended; excused marks are excluded, matching every other rate on the platform.
+ </p>
+ </div>
+ </SectionCard>
  )}
 
  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1190,6 +1704,143 @@ export function DeptAdminPanel({
  )}
  </div>
  </SectionCard>
+ </TabsContent>
+
+ {/* ===== Class Changes (dept-wide audit) ===== */}
+ <TabsContent value="changes" className="space-y-4">
+ {!changes && changesError ? (
+ <SectionCard title="Class Changes unavailable" icon={ArrowLeftRight}>
+ <div className="flex flex-col items-center gap-3 py-4 text-center">
+ <p className="text-sm text-muted-foreground">{changesError}</p>
+ <Button className={cn("h-10", GRADIENT_BTN)} onClick={() => void loadChanges()} disabled={changesLoading}>
+ {changesLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+ Retry
+ </Button>
+ </div>
+ </SectionCard>
+ ) : !changes ? (
+ <PanelLoader label="Loading class changes…" />
+ ) : (
+ <SectionCard
+ title="Class Change Log"
+ icon={ArrowLeftRight}
+ action={
+ <Badge variant="outline">
+ {changes.changes.length} total
+ </Badge>
+ }
+ >
+ <div className="space-y-3">
+ <p className="text-xs text-muted-foreground">
+ Every cancellation, reschedule and room/time move your teachers filed — the audit trail behind the notices students receive.
+ </p>
+
+ {/* type filter chips */}
+ <div className="flex flex-wrap items-center gap-1.5">
+ {(["all", ...Object.keys(CHANGE_TYPE_META)] as string[]).map((t) => {
+ const active = changeTypeFilter === t;
+ const count =
+ t === "all"
+ ? changes.changes.length
+ : (changes.counts[t] ?? 0);
+ return (
+ <button
+ key={t}
+ type="button"
+ aria-pressed={active}
+ onClick={() => setChangeTypeFilter(t)}
+ className={cn(
+ "min-h-8 rounded-full border px-3 text-xs font-medium transition-colors",
+ active
+ ? "border-transparent bg-primary text-primary-foreground"
+ : "bg-muted/60 text-muted-foreground hover:bg-muted"
+ )}
+ >
+ {t === "all" ? "All" : CHANGE_TYPE_META[t]?.label ?? t}
+ {count > 0 && <span className="ml-1 opacity-70">{count}</span>}
+ </button>
+ );
+ })}
+ </div>
+
+ {/* change cards */}
+ <div className="max-h-[32rem] space-y-2 overflow-y-auto pr-1">
+ {(() => {
+ const list =
+ changeTypeFilter === "all"
+ ? changes.changes
+ : changes.changes.filter((c) => c.changeType === changeTypeFilter);
+ if (list.length === 0) {
+ return (
+ <EmptyState
+ icon={ArrowLeftRight}
+ title={
+ changeTypeFilter === "all"
+ ? "No class changes yet"
+ : "No changes of this type in the last 30 days"
+ }
+ hint={
+ changeTypeFilter === "all"
+ ? "When a teacher cancels or moves a class, it is logged here and students are notified automatically."
+ : undefined
+ }
+ />
+ );
+ }
+ return list.map((c, i) => {
+ const meta = CHANGE_TYPE_META[c.changeType] ?? {
+ label: c.changeType,
+ cls: "bg-muted text-muted-foreground",
+ };
+ return (
+ <motion.div
+ key={c.id}
+ initial={{ opacity: 0, y: 8 }}
+ animate={{ opacity: 1, y: 0 }}
+ transition={{ delay: Math.min(i * 0.02, 0.15), duration: 0.25 }}
+ className="rounded-xl border p-3"
+ >
+ <div className="flex flex-wrap items-center gap-2">
+ <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", meta.cls)}>
+ {meta.label}
+ </span>
+ <p className="truncate text-sm font-semibold">
+ {c.courseCode} — {c.courseName}
+ </p>
+ <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+ {timeAgo(c.createdAt)}
+ </span>
+ </div>
+ <p className="mt-1.5 text-xs text-muted-foreground">
+ <span className="font-medium text-foreground">{c.teacherName}</span>
+ · effective {c.effectiveDate}
+ {c.originalStartTime ? (
+ <>
+ · was {fmtDayLabel(c.originalDay)} {c.originalStartTime.slice(0, 5)}
+ {c.originalRoomNumber ? ` @ ${c.originalRoomNumber}` : ""}
+ </>
+ ) : null}
+ {c.newStartTime ? (
+ <>
+ → now {fmtDayLabel(c.newDay)} {c.newStartTime.slice(0, 5)}
+ {c.newEndTime ? `–${c.newEndTime.slice(0, 5)}` : ""}
+ {c.newRoomNumber ? ` @ ${c.newRoomNumber}` : ""}
+ </>
+ ) : null}
+ </p>
+ {c.reason && (
+ <p className="mt-1 line-clamp-2 text-xs text-muted-foreground/90">
+ Reason: {c.reason}
+ </p>
+ )}
+ </motion.div>
+ );
+ });
+ })()}
+ </div>
+ </div>
+ </SectionCard>
+ )}
  </TabsContent>
 
  {/* ===== Teachers ===== */}

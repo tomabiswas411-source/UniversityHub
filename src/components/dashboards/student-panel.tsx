@@ -1427,8 +1427,8 @@ export function StudentPanel({
  memberSince: profile?.memberSince ?? new Date().toISOString(),
  accountActive: profile?.accountActive ?? true,
  }}
- teachers={data.teachers ?? []}
- courses={data.courses ?? []}
+ teachers={data?.teachers ?? []}
+ courses={data?.courses ?? []}
  />
  </motion.div>
  </TabsContent>

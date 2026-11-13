@@ -206,7 +206,9 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  <DropdownMenuItem onClick={() => navigate("dashboard")}>
  <LayoutDashboard className="w-4 h-4 mr-2" /> My Dashboard
  </DropdownMenuItem>
- {(user.role === "teacher" || user.role === "dept_admin") && (
+ {(user.role === "teacher" ||
+ user.role === "dept_admin" ||
+ user.role === "super_admin") && (
  <DropdownMenuItem onClick={() => setProfileOpen(true)}>
  <UserRound className="w-4 h-4 mr-2" /> My Profile
  </DropdownMenuItem>

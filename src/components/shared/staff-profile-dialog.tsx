@@ -2,7 +2,7 @@
 
 /**
  * StaffProfileDialog — self-service account facility for STAFF roles
- * (teacher / dept_admin) reached from the header Account menu.
+ * (teacher / dept_admin / super_admin) reached from the header Account menu.
  *
  * Until now a teacher could not even edit their own phone number —
  * only an admin reset existed. This dialog closes that gap with two
@@ -107,7 +107,10 @@ export function StaffProfileDialog({
     }
   }, [open, user]);
 
-  const isStaff = user?.role === "teacher" || user?.role === "dept_admin";
+  const isStaff =
+    user?.role === "teacher" ||
+    user?.role === "dept_admin" ||
+    user?.role === "super_admin";
 
   async function saveProfile(e: React.FormEvent) {
     e.preventDefault();
@@ -123,7 +126,10 @@ export function StaffProfileDialog({
       setProfileDirty(false);
       toast({
         title: "Profile updated",
-        description: "Your contact details are now visible to your students.",
+        description:
+          user.role === "teacher"
+            ? "Your contact details are now visible to your students."
+            : "Your contact details have been saved.",
       });
     } catch (err) {
       toast({
@@ -225,7 +231,9 @@ export function StaffProfileDialog({
               />
             </div>
             <p className="text-[10px] leading-snug text-muted-foreground">
-              Name, designation and email are managed by your department office.
+              {user.role === "super_admin"
+                ? "Platform-operator identity is fixed; contact fields below are yours to maintain."
+                : "Name, designation and email are managed by your department office."}
             </p>
 
             <Separator />

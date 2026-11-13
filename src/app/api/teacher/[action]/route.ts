@@ -1117,17 +1117,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
  return handle(async () => {
  const session = await requireSession();
- if (!["teacher", "dept_admin"].includes(session.role)) {
- throw new ApiError(403, "Teacher access required");
- }
- const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
- // ---------- Change password (self-service) ----------
+ // ---------- Change password (self-service, any staff role) ----------
  // Staff could previously only get a password from an admin reset —
  // a locked-out teacher had to chase the department office. Verifying
  // the CURRENT password keeps this safe: a stolen session alone cannot
- // rotate the credential.
+ // rotate the credential. Super admin is included: it is the only
+ // platform-operator account, so with no peer admin to reset it, a
+ // self-service rotation is the only recovery path.
  if (action === "change-password") {
+ if (!["teacher", "dept_admin", "super_admin"].includes(session.role)) {
+ throw new ApiError(403, "Staff access required");
+ }
+ const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
  const current = String(body.currentPassword ?? "");
  const next = String(body.newPassword ?? "");
  if (!current || !next) {
@@ -1154,6 +1156,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  });
  return { changed: true };
  }
+
+ // Everything below writes teacher/department academic data — the
+ // platform operator must never reach it through this route.
+ if (!["teacher", "dept_admin"].includes(session.role)) {
+ throw new ApiError(403, "Teacher access required");
+ }
+ const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
  // ---------- Attendance (bulk save) ----------
  if (action === "attendance") {
@@ -2068,20 +2077,18 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
  return handle(async () => {
  const session = await requireSession();
- if (!["teacher", "dept_admin"].includes(session.role)) {
- throw new ApiError(403, "Teacher access required");
- }
- const { searchParams } = new URL(req.url);
- const id = searchParams.get("id");
- const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
- // ---------- Self-service profile ----------
+ // ---------- Self-service profile (any staff role incl. super admin) ----------
  // Whitelist of CONTACT fields only. Academic identity (name, designation,
  // email, department, program) stays office-controlled: self-editing those
  // would break rosters, login emails and every faculty card that renders
  // them. An empty string clears the field (null), mirroring the admin
  // edit form.
  if (action === "profile") {
+ if (!["teacher", "dept_admin", "super_admin"].includes(session.role)) {
+ throw new ApiError(403, "Staff access required");
+ }
+ const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
  const data: Record<string, unknown> = {};
  if (body.phone !== undefined) {
  const p = String(body.phone).trim().slice(0, 30);
@@ -2104,6 +2111,15 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  });
  return { user: toSafeUser(updated) };
  }
+
+ // Everything below writes teacher/department academic data — the
+ // platform operator must never reach it through this route.
+ if (!["teacher", "dept_admin"].includes(session.role)) {
+ throw new ApiError(403, "Teacher access required");
+ }
+ const { searchParams } = new URL(req.url);
+ const id = searchParams.get("id");
+ const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
  // ---------- Update assignment ----------
  if (action === "assignments") {
