@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
-import { ApiError, requireSession } from "@/lib/session";
+import { ApiError, requireRole } from "@/lib/session";
+import { logAdminAction, auditActor } from "@/lib/audit";
 import { bdTodayISO } from "@/lib/date-bd";
 import type {
  CourseDTO,
@@ -276,11 +277,7 @@ function optStr(v: unknown): string | null {
 
 /** Guard: only super_admin may create/update/delete departments. */
 async function requireSuperAdmin() {
- const session = await requireSession();
- if (session.role !== "super_admin") {
- throw new ApiError(403, "Super admin access required");
- }
- return session;
+ return requireRole("super_admin");
 }
 
 /** Names and codes are unique per university (case-insensitive). */
@@ -313,7 +310,8 @@ async function assertNoDeptConflict(
 
 export async function POST(req: NextRequest) {
  return handle(async () => {
- await requireSuperAdmin();
+ const session = await requireSuperAdmin();
+ const actor = auditActor(session);
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
  const universityId =
  typeof body.universityId === "string" ? body.universityId.trim() : "";
@@ -373,13 +371,24 @@ export async function POST(req: NextRequest) {
  },
  });
  });
+ await logAdminAction({
+ ...actor,
+ universityId,
+ departmentId: department.id,
+ action: "create",
+ entity: "department",
+ entityId: department.id,
+ entityLabel: department.name,
+ detail: `code=${department.code}`,
+ });
  return { department };
  });
 }
 
 export async function PUT(req: NextRequest) {
  return handle(async () => {
- await requireSuperAdmin();
+ const session = await requireSuperAdmin();
+ const actor = auditActor(session);
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
  if (!id) throw new ApiError(400, "id query param is required");
@@ -415,13 +424,24 @@ export async function PUT(req: NextRequest) {
  }
 
  const department = await db.department.update({ where: { id }, data });
+ await logAdminAction({
+ ...actor,
+ universityId: department.universityId,
+ departmentId: department.id,
+ action: data.isActive === false ? "deactivate" : "update",
+ entity: "department",
+ entityId: department.id,
+ entityLabel: department.name,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
  return { department };
  });
 }
 
 export async function DELETE(req: NextRequest) {
  return handle(async () => {
- await requireSuperAdmin();
+ const session = await requireSuperAdmin();
+ const actor = auditActor(session);
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
  if (!id) throw new ApiError(400, "id query param is required");
@@ -483,6 +503,16 @@ export async function DELETE(req: NextRequest) {
  }
 
  await db.department.delete({ where: { id } });
+ await logAdminAction({
+ ...actor,
+ universityId: existing.universityId,
+ departmentId: existing.id,
+ action: "delete",
+ entity: "department",
+ entityId: existing.id,
+ entityLabel: existing.name,
+ detail: "hard delete (department had no content)",
+ });
  return { deleted: true };
  });
 }

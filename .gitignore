@@ -65,3 +65,7 @@ server.log
 /db/*.db
 /research/
 Caddyfile
+
+# QA env master copy + watchdog log hold secrets / local state
+qa/env.master
+qa/watchdog.log

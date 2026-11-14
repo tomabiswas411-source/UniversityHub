@@ -17,6 +17,7 @@ import {
   FileText,
   FolderDown,
   GraduationCap,
+  History,
   LayoutDashboard,
   LayoutGrid,
   Megaphone,
@@ -58,6 +59,7 @@ export const DASHBOARD_SECTIONS = {
     { value: "users", label: "Platform Users", icon: Users },
     { value: "plans", label: "Plans & Billing", icon: CreditCard },
     { value: "analytics", label: "Analytics", icon: ChartNoAxesColumn },
+    { value: "activity", label: "Activity", icon: History },
     { value: "system", label: "System Control", icon: ShieldCheck },
   ],
   dept_admin: [
@@ -71,6 +73,8 @@ export const DASHBOARD_SECTIONS = {
     { value: "programs", label: "Programs", icon: LayoutGrid },
     { value: "rooms", label: "Rooms & Slots", icon: DoorOpen },
     { value: "notices", label: "Notices", icon: Megaphone },
+    { value: "assignments", label: "Assignments", icon: FileText },
+    { value: "results", label: "Results", icon: Award },
   ],
   teacher: [
     { value: "schedule", label: "My Schedule", icon: CalendarDays },

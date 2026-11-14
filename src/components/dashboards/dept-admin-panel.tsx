@@ -17,6 +17,8 @@ import {
 import { motion } from "framer-motion";
 import {
  ArrowLeftRight,
+ ArrowRight,
+ Award,
  BarChart3,
  Ban,
  BookOpen,
@@ -25,10 +27,12 @@ import {
  Clock,
  DoorOpen,
  Download,
+ FileText,
  GraduationCap,
  LayoutGrid,
  Loader2,
  Megaphone,
+ Paperclip,
  Pencil,
  Pin,
  Plus,
@@ -37,6 +41,7 @@ import {
  ScanLine,
  Search,
  Trash2,
+ Upload,
  Users,
 } from "lucide-react";
 
@@ -77,6 +82,7 @@ import {
  DASHBOARD_SECTIONS,
  EmptyState,
  GRADIENT_BTN,
+ ExamTypeBadge,
  GRADIENT_ICON,
  MOBILE_TABS_LIST,
  MOBILE_TABS_FADE,
@@ -328,6 +334,50 @@ interface NoticePayload {
  programId: string | null;
  semester: number | null;
  isPinned: boolean;
+ attachmentURL: string | null;
+ expiryDate: string | null;
+}
+
+/* D13: dept-wide assignment / result oversight rows (manage API) */
+interface DeptAssignmentRow {
+ id: string;
+ title: string;
+ description: string;
+ dueDate: string | null;
+ maxMarks: number | null;
+ courseId: string;
+ course?: { code: string; name: string } | null;
+ teacher?: { fullName: string } | null;
+ createdAt: string;
+}
+
+interface DeptResultRow {
+ id: string;
+ courseId: string;
+ examType: string;
+ marks: number;
+ maxMarks: number;
+ grade: string | null;
+ course?: { code: string; name: string } | null;
+ student?: {
+ fullName: string;
+ rollNumber: string | null;
+ studentIdNumber: string | null;
+ } | null;
+ updatedAt: string;
+}
+
+/* D10-11: CSV import preview contract */
+interface ImportRowError {
+ row: number; // 1-based file row (header = 1); -1 = already in database
+ message: string;
+}
+
+interface ImportPreview {
+ totalRows: number;
+ valid: number;
+ errors: ImportRowError[];
+ committed: boolean;
 }
 
 interface SchedulePayload {
@@ -611,6 +661,25 @@ export function DeptAdminPanel({
  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
  const [deleting, setDeleting] = useState(false);
 
+ /* -------- D10-11: CSV import -------- */
+ const [importEntity, setImportEntity] = useState<"teachers" | "students" | null>(null);
+
+ /* -------- D12: batch semester promotion -------- */
+ const [promoteOpen, setPromoteOpen] = useState(false);
+
+ /* -------- D13: assignments + results oversight (lazy tabs) -------- */
+ const [assignments, setAssignments] = useState<DeptAssignmentRow[] | null>(null);
+ const [assignmentsLoading, setAssignmentsLoading] = useState(false);
+ const [assignmentsError, setAssignmentsError] = useState<string | null>(null);
+ const [editingAssignment, setEditingAssignment] = useState<DeptAssignmentRow | null>(null);
+ const [deleteAssignmentTarget, setDeleteAssignmentTarget] = useState<DeptAssignmentRow | null>(null);
+ const [assignmentBusy, setAssignmentBusy] = useState(false);
+ const [results, setResults] = useState<DeptResultRow[] | null>(null);
+ const [resultsLoading, setResultsLoading] = useState(false);
+ const [resultsError, setResultsError] = useState<string | null>(null);
+ const [resultCourseFilter, setResultCourseFilter] = useState("all");
+ const [resultExamFilter, setResultExamFilter] = useState("all");
+
  /* -------- search -------- */
  const [teacherQuery, setTeacherQuery] = useState("");
  const [studentQuery, setStudentQuery] = useState("");
@@ -750,6 +819,103 @@ export function DeptAdminPanel({
  void loadAttReport();
  }
  }, [activeTab, attReport, attReportLoading, attReportError, loadAttReport]);
+
+ /* -------- D13: assignments loader (lazy, Assignments tab) -------- */
+ const loadAssignments = useCallback(async () => {
+ if (!departmentId || assignmentsLoading) return;
+ setAssignmentsLoading(true);
+ try {
+ const v = await apiGet<{ assignments: DeptAssignmentRow[] }>(
+ `/api/manage/assignments?departmentId=${departmentId}`
+ );
+ setAssignments(v.assignments ?? []);
+ setAssignmentsError(null);
+ } catch (err) {
+ setAssignments(null);
+ setAssignmentsError(errMsg(err));
+ } finally {
+ setAssignmentsLoading(false);
+ }
+ }, [departmentId, assignmentsLoading]);
+
+ useEffect(() => {
+ if (
+ activeTab === "assignments" &&
+ !assignments &&
+ !assignmentsLoading &&
+ !assignmentsError
+ ) {
+ void loadAssignments();
+ }
+ }, [activeTab, assignments, assignmentsLoading, assignmentsError, loadAssignments]);
+
+ async function deleteAssignment() {
+ if (!deleteAssignmentTarget) return;
+ setAssignmentBusy(true);
+ try {
+ await apiDelete(
+ `/api/teacher/assignments?id=${encodeURIComponent(deleteAssignmentTarget.id)}`
+ );
+ toast({
+ title: "Assignment deleted",
+ description: deleteAssignmentTarget.title,
+ });
+ setDeleteAssignmentTarget(null);
+ await loadAssignments();
+ } catch (err) {
+ toast({ title: "Delete failed", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setAssignmentBusy(false);
+ }
+ }
+
+ async function submitAssignmentEdit(
+ id: string,
+ payload: Record<string, unknown>
+ ): Promise<boolean> {
+ try {
+ await apiPut(`/api/teacher/assignments?id=${encodeURIComponent(id)}`, payload);
+ toast({ title: "Assignment updated" });
+ await loadAssignments();
+ return true;
+ } catch (err) {
+ toast({ title: "Update failed", description: errMsg(err), variant: "destructive" });
+ return false;
+ }
+ }
+
+ /* -------- D13: results loader (lazy, Results tab) -------- */
+ const loadResults = useCallback(async () => {
+ if (!departmentId || resultsLoading) return;
+ setResultsLoading(true);
+ try {
+ const v = await apiGet<{ results: DeptResultRow[] }>(
+ `/api/manage/results?departmentId=${departmentId}`
+ );
+ setResults(v.results ?? []);
+ setResultsError(null);
+ } catch (err) {
+ setResults(null);
+ setResultsError(errMsg(err));
+ } finally {
+ setResultsLoading(false);
+ }
+ }, [departmentId, resultsLoading]);
+
+ useEffect(() => {
+ if (activeTab === "results" && !results && !resultsLoading && !resultsError) {
+ void loadResults();
+ }
+ }, [activeTab, results, resultsLoading, resultsError, loadResults]);
+
+ const filteredResults = useMemo(() => {
+ if (!results) return [];
+ return results.filter(
+ (r) =>
+ (resultCourseFilter === "all" || r.courseId === resultCourseFilter) &&
+ (resultExamFilter === "all" || r.examType === resultExamFilter)
+ );
+ }, [results, resultCourseFilter, resultExamFilter]);
 
  /* -------- oversight data: live QR windows (Overview card) -------- */
  const [deptSessions, setDeptSessions] = useState<SessionsResponse | null>(null);
@@ -1849,6 +2015,16 @@ export function DeptAdminPanel({
  title={`Teachers (${teachers.length})`}
  icon={GraduationCap}
  action={
+ <div className="flex items-center gap-2">
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-10 sm:h-9"
+ onClick={() => setImportEntity("teachers")}
+ >
+ <Upload className="h-4 w-4" />
+ Import CSV
+ </Button>
  <Button
  size="sm"
  className={cn("h-10 sm:h-9", GRADIENT_BTN)}
@@ -1857,6 +2033,7 @@ export function DeptAdminPanel({
  <Plus className="h-4 w-4" />
  Add Teacher
  </Button>
+ </div>
  }
  >
  <div className="space-y-3">
@@ -1964,6 +2141,25 @@ export function DeptAdminPanel({
  title={`Students (${students.length})`}
  icon={Users}
  action={
+ <div className="flex flex-wrap items-center gap-2">
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-10 sm:h-9"
+ onClick={() => setImportEntity("students")}
+ >
+ <Upload className="h-4 w-4" />
+ Import CSV
+ </Button>
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-10 sm:h-9"
+ onClick={() => setPromoteOpen(true)}
+ >
+ <ArrowRight className="h-4 w-4" />
+ Promote Semester
+ </Button>
  <Button
  size="sm"
  className={cn("h-10 sm:h-9", GRADIENT_BTN)}
@@ -1972,6 +2168,7 @@ export function DeptAdminPanel({
  <Plus className="h-4 w-4" />
  Add Student
  </Button>
+ </div>
  }
  >
  <div className="space-y-3">
@@ -2478,6 +2675,29 @@ export function DeptAdminPanel({
  {typeof n.semester === "number" && (
  <Badge variant="outline">Sem {n.semester}</Badge>
  )}
+ {n.expiryDate && (
+ <Badge
+ className={
+ new Date(n.expiryDate).getTime() < Date.now()
+ ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+ : "bg-muted text-muted-foreground"
+ }
+ >
+ {new Date(n.expiryDate).getTime() < Date.now() ? "Expired" : "Until"}{" "}
+ {new Date(n.expiryDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+ </Badge>
+ )}
+ {n.attachmentURL && (
+ <a
+ href={n.attachmentURL}
+ target="_blank"
+ rel="noopener noreferrer"
+ className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2D4F35] underline-offset-2 hover:underline dark:text-[#7FB08F]"
+ >
+ <Paperclip className="h-3 w-3" />
+ Attachment
+ </a>
+ )}
  <span className="ml-auto text-[11px] text-muted-foreground">
  {timeAgo(n.createdAt)}
  </span>
@@ -2494,7 +2714,286 @@ export function DeptAdminPanel({
  </div>
  </SectionCard>
  </TabsContent>
+
+ {/* ===== Assignments oversight (D13) ===== */}
+ <TabsContent value="assignments" className="space-y-4">
+ <SectionCard
+ title={`Assignments (${assignments?.length ?? 0})`}
+ icon={FileText}
+ action={
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-8"
+ onClick={() => void loadAssignments()}
+ >
+ <RefreshCw className="mr-1 h-3.5 w-3.5" />
+ Refresh
+ </Button>
+ }
+ >
+ {assignmentsLoading && !assignments ? (
+ <PanelLoader label="Loading assignments…" />
+ ) : assignmentsError && !assignments ? (
+ <EmptyState icon={FileText} title="Couldn't load assignments" hint={assignmentsError} />
+ ) : !assignments || assignments.length === 0 ? (
+ <EmptyState
+ icon={FileText}
+ title="No assignments in this department yet"
+ hint="Teachers publish assignments from their dashboard — everything appears here for oversight."
+ />
+ ) : (
+ <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
+ {assignments.map((a) => {
+ const overdue = a.dueDate
+ ? new Date(`${a.dueDate}T23:59:59+06:00`).getTime() < Date.now()
+ : false;
+ return (
+ <div
+ key={a.id}
+ className="flex items-start justify-between gap-2 rounded-xl border p-3"
+ >
+ <div className="min-w-0">
+ <p className="truncate text-sm font-semibold">{a.title}</p>
+ <p className="line-clamp-1 text-xs text-muted-foreground">
+ {a.description || "No description"}
+ </p>
+ <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+ {a.course?.code && (
+ <Badge variant="outline">{a.course.code}</Badge>
+ )}
+ {a.teacher?.fullName && (
+ <Badge variant="outline">{a.teacher.fullName}</Badge>
+ )}
+ {a.maxMarks != null && (
+ <Badge variant="outline">Max {a.maxMarks}</Badge>
+ )}
+ {a.dueDate && (
+ <Badge
+ className={
+ overdue
+ ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+ : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+ }
+ >
+ {overdue ? "Overdue" : "Due"} {a.dueDate.slice(0, 10)}
+ </Badge>
+ )}
+ </div>
+ </div>
+ <div className="flex shrink-0 gap-1">
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label={`Edit ${a.title}`}
+ className="h-10 w-10 sm:h-8 sm:w-8"
+ onClick={() => setEditingAssignment(a)}
+ >
+ <Pencil className="h-4 w-4" />
+ </Button>
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label={`Delete ${a.title}`}
+ className="h-10 w-10 text-rose-600 hover:text-rose-700 sm:h-8 sm:w-8"
+ onClick={() => setDeleteAssignmentTarget(a)}
+ >
+ <Trash2 className="h-4 w-4" />
+ </Button>
+ </div>
+ </div>
+ );
+ })}
+ </div>
+ )}
+ </SectionCard>
+ </TabsContent>
+
+ {/* ===== Results oversight (D13) ===== */}
+ <TabsContent value="results" className="space-y-4">
+ <SectionCard
+ title={`Results (${filteredResults.length}${results ? ` of ${results.length}` : ""})`}
+ icon={Award}
+ action={
+ <div className="flex flex-wrap items-center gap-2">
+ <Select
+ value={resultCourseFilter}
+ onValueChange={setResultCourseFilter}
+ >
+ <SelectTrigger className="h-9 w-40">
+ <SelectValue />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="all">All courses</SelectItem>
+ {courses.map((c) => (
+ <SelectItem key={c.id} value={c.id}>
+ {c.code}
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ <Select
+ value={resultExamFilter}
+ onValueChange={setResultExamFilter}
+ >
+ <SelectTrigger className="h-9 w-32">
+ <SelectValue />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="all">All exams</SelectItem>
+ <SelectItem value="ct1">CT-1</SelectItem>
+ <SelectItem value="ct2">CT-2</SelectItem>
+ <SelectItem value="midterm">Midterm</SelectItem>
+ <SelectItem value="final">Final</SelectItem>
+ <SelectItem value="assignment">Assignment</SelectItem>
+ </SelectContent>
+ </Select>
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-9"
+ onClick={() => {
+ if (filteredResults.length === 0) return;
+ downloadCsvText(
+ `results-overview-${new Date().toISOString().slice(0, 10)}.csv`,
+ [
+ ["course", "student", "roll", "exam", "marks", "max", "grade"],
+ ...filteredResults.map((r) => [
+ r.course?.code ?? "",
+ r.student?.fullName ?? "",
+ r.student?.rollNumber ?? "",
+ r.examType,
+ String(r.marks),
+ String(r.maxMarks),
+ r.grade ?? "",
+ ]),
+ ]
+ );
+ }}
+ >
+ <Download className="mr-1 h-3.5 w-3.5" />
+ CSV
+ </Button>
+ </div>
+ }
+ >
+ {resultsLoading && !results ? (
+ <PanelLoader label="Loading results…" />
+ ) : resultsError && !results ? (
+ <EmptyState icon={Award} title="Couldn't load results" hint={resultsError} />
+ ) : !results || results.length === 0 ? (
+ <EmptyState
+ icon={Award}
+ title="No results entered yet"
+ hint="Results teachers publish appear here for department-wide oversight."
+ />
+ ) : filteredResults.length === 0 ? (
+ <EmptyState icon={Award} title="No results match these filters" />
+ ) : (
+ <div className="max-h-[480px] overflow-auto rounded-xl border">
+ <table className="w-full min-w-[560px] border-collapse text-sm">
+ <thead className="sticky top-0 z-10">
+ <tr className="bg-muted/95 text-left text-[10px] font-bold uppercase tracking-wide text-muted-foreground backdrop-blur">
+ <th className="px-3 py-2.5">Course</th>
+ <th className="px-3 py-2.5">Student</th>
+ <th className="px-3 py-2.5">Roll</th>
+ <th className="px-3 py-2.5">Exam</th>
+ <th className="px-3 py-2.5">Marks</th>
+ <th className="px-3 py-2.5">Grade</th>
+ </tr>
+ </thead>
+ <tbody>
+ {filteredResults.map((r) => (
+ <tr key={r.id} className="border-t">
+ <td className="px-3 py-2 font-semibold">
+ {r.course?.code ?? "—"}
+ </td>
+ <td className="px-3 py-2">{r.student?.fullName ?? "—"}</td>
+ <td className="px-3 py-2 text-muted-foreground">
+ {r.student?.rollNumber ?? "—"}
+ </td>
+ <td className="px-3 py-2">
+ <ExamTypeBadge examType={r.examType} />
+ </td>
+ <td className="px-3 py-2">
+ {r.marks}/{r.maxMarks}
+ </td>
+ <td className="px-3 py-2 font-bold">{r.grade ?? "—"}</td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ )}
+ </SectionCard>
+ </TabsContent>
  </Tabs>
+
+ {/* ---------- D10-11: CSV import dialog ---------- */}
+ {importEntity && departmentId && (
+ <ImportCsvDialog
+ key={importEntity}
+ entity={importEntity}
+ departmentId={departmentId}
+ onClose={() => {
+ setImportEntity(null);
+ void load(true);
+ }}
+ />
+ )}
+
+ {/* ---------- D12: batch semester promotion ---------- */}
+ <PromoteSemesterDialog
+ open={promoteOpen}
+ onOpenChange={setPromoteOpen}
+ students={students}
+ programs={programs}
+ onDone={() => void load(true)}
+ />
+
+ {/* ---------- D13: assignment edit ---------- */}
+ <AssignmentEditDialog
+ open={!!editingAssignment}
+ onOpenChange={(o) => {
+ if (!o) setEditingAssignment(null);
+ }}
+ assignment={editingAssignment}
+ onSubmit={submitAssignmentEdit}
+ />
+
+ {/* ---------- D13: delete assignment confirm ---------- */}
+ <AlertDialog
+ open={!!deleteAssignmentTarget}
+ onOpenChange={(o) => {
+ if (!o) setDeleteAssignmentTarget(null);
+ }}
+ >
+ <AlertDialogContent>
+ <AlertDialogHeader>
+ <AlertDialogTitle>
+ Delete “{deleteAssignmentTarget?.title}”?
+ </AlertDialogTitle>
+ <AlertDialogDescription>
+ The assignment is removed for every student it was visible to.
+ This action cannot be undone.
+ </AlertDialogDescription>
+ </AlertDialogHeader>
+ <AlertDialogFooter>
+ <AlertDialogCancel disabled={assignmentBusy}>Cancel</AlertDialogCancel>
+ <AlertDialogAction
+ className="bg-rose-600 text-white hover:bg-rose-700"
+ disabled={assignmentBusy}
+ onClick={(e) => {
+ e.preventDefault();
+ void deleteAssignment();
+ }}
+ >
+ {assignmentBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+ Delete assignment
+ </AlertDialogAction>
+ </AlertDialogFooter>
+ </AlertDialogContent>
+ </AlertDialog>
 
  {/* ---------- shared delete confirm ---------- */}
  {/* Teachers/students are soft-deleted (deactivated) by the API — the
@@ -3547,6 +4046,8 @@ interface NoticeFormState {
  programId: string; // "" = all programs
  semester: string;
  isPinned: boolean;
+ attachmentURL: string;
+ expiryDate: string; // yyyy-mm-dd (date input), "" = never expires
 }
 
 const EMPTY_NOTICE_FORM: NoticeFormState = {
@@ -3557,6 +4058,8 @@ const EMPTY_NOTICE_FORM: NoticeFormState = {
  programId: "",
  semester: "",
  isPinned: false,
+ attachmentURL: "",
+ expiryDate: "",
 };
 
 function NoticeDialog({
@@ -3586,6 +4089,8 @@ function NoticeDialog({
  programId: notice.programId ?? "",
  semester: notice.semester != null ? String(notice.semester) : "",
  isPinned: notice.isPinned,
+ attachmentURL: notice.attachmentURL ?? "",
+ expiryDate: notice.expiryDate ? notice.expiryDate.slice(0, 10) : "",
  });
  } else {
  setForm(EMPTY_NOTICE_FORM);
@@ -3609,6 +4114,8 @@ function NoticeDialog({
  programId: form.programId || null,
  semester: form.semester ? Number(form.semester) : null,
  isPinned: form.isPinned,
+ attachmentURL: form.attachmentURL.trim() || null,
+ expiryDate: form.expiryDate || null,
  };
  setSaving(true);
  const ok = await onSubmit(payload);
@@ -3711,6 +4218,23 @@ function NoticeDialog({
  value={form.semester}
  onChange={(e) => setForm((f) => ({ ...f, semester: e.target.value }))}
  placeholder="All semesters"
+ />
+ </Field>
+ </div>
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+ <Field label="Attachment link (optional)">
+ <Input
+ type="url"
+ value={form.attachmentURL}
+ onChange={(e) => setForm((f) => ({ ...f, attachmentURL: e.target.value }))}
+ placeholder="https://drive.google.com/…"
+ />
+ </Field>
+ <Field label="Expires on (optional)">
+ <Input
+ type="date"
+ value={form.expiryDate}
+ onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))}
  />
  </Field>
  </div>
@@ -4128,6 +4652,478 @@ function EditScheduleDialog({
  className={cn("h-10", GRADIENT_BTN)}
  onClick={() => void handleSave()}
  disabled={saving || !day || !slotId}
+ >
+ {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+ Save changes
+ </Button>
+ </DialogFooter>
+ </DialogContent>
+ </Dialog>
+ );
+}
+
+/* ---------------- CSV import (D10-11) ---------------- */
+
+const IMPORT_TEMPLATES: Record<"teachers" | "students", string> = {
+ teachers:
+ "fullname,email,password,designation,phone,officeroom\nDr. Ayesha Rahman,ayesha@university.edu,Secret@123,Lecturer,+8801700000000,Room 301",
+ students:
+ "fullname,studentidnumber,rollnumber,program,semester,section,phone\nRakib Hasan,2103007,2103007,BSc,1,A,+8801800000000",
+};
+
+function ImportCsvDialog({
+ entity,
+ departmentId,
+ onClose,
+}: {
+ entity: "teachers" | "students";
+ departmentId: string;
+ onClose: () => void;
+}) {
+ const [csvText, setCsvText] = useState("");
+ const [fileName, setFileName] = useState("");
+ const [preview, setPreview] = useState<ImportPreview | null>(null);
+ const [busy, setBusy] = useState(false);
+ const [committing, setCommitting] = useState(false);
+
+ function onFile(e: ChangeEvent<HTMLInputElement>) {
+ const file = e.target.files?.[0];
+ if (!file) return;
+ setFileName(file.name);
+ const reader = new FileReader();
+ reader.onload = () => {
+ setCsvText(String(reader.result ?? ""));
+ setPreview(null);
+ };
+ reader.readAsText(file);
+ }
+
+ async function runDry() {
+ setBusy(true);
+ try {
+ const res = await apiPost<ImportPreview>("/api/manage/import", {
+ departmentId,
+ entity,
+ csv: csvText,
+ dryRun: true,
+ });
+ setPreview(res);
+ } catch (err) {
+ toast({
+ title: "Preview failed",
+ description: errMsg(err),
+ variant: "destructive",
+ });
+ } finally {
+ setBusy(false);
+ }
+ }
+
+ async function commit() {
+ setCommitting(true);
+ try {
+ const res = await apiPost<ImportPreview>("/api/manage/import", {
+ departmentId,
+ entity,
+ csv: csvText,
+ dryRun: false,
+ });
+ toast({
+ title: `Imported ${res.valid} ${entity === "teachers" ? "teacher(s)" : "student(s)"}`,
+ description:
+ res.errors.length > 0
+ ? `${res.errors.length} row(s) were skipped — see the report.`
+ : "Every row was created successfully.",
+ });
+ onClose();
+ } catch (err) {
+ toast({
+ title: "Import failed",
+ description: errMsg(err),
+ variant: "destructive",
+ });
+ } finally {
+ setCommitting(false);
+ }
+ }
+
+ return (
+ <Dialog open onOpenChange={(o) => !o && onClose()}>
+ <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+ <DialogHeader>
+ <DialogTitle>
+ Import {entity === "teachers" ? "Teachers" : "Students"} via CSV
+ </DialogTitle>
+ <DialogDescription>
+ Rows are validated first — nothing is written until you commit. Plan
+ limits are enforced at commit time.
+ </DialogDescription>
+ </DialogHeader>
+ <div className="grid grid-cols-1 gap-3">
+ <div className="flex flex-wrap items-center gap-2">
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-9"
+ onClick={() =>
+ downloadCsvText(`template-${entity}.csv`, IMPORT_TEMPLATES[entity])
+ }
+ >
+ <Download className="mr-1 h-3.5 w-3.5" />
+ Template
+ </Button>
+ <Label
+ htmlFor="import-csv-file"
+ className="flex h-9 flex-1 cursor-pointer items-center gap-2 rounded-md border border-input bg-transparent px-3 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent/50"
+ >
+ <Upload className="h-3.5 w-3.5" />
+ <span className="truncate">
+ {fileName || "Choose a .csv file…"}
+ </span>
+ </Label>
+ <Input
+ id="import-csv-file"
+ type="file"
+ accept=".csv,text/csv"
+ className="sr-only"
+ onChange={onFile}
+ />
+ </div>
+ <Textarea
+ rows={5}
+ value={csvText}
+ onChange={(e) => {
+ setCsvText(e.target.value);
+ setPreview(null);
+ }}
+ placeholder="…or paste CSV rows here (first row = header)"
+ className="font-mono text-xs"
+ />
+ {preview && (
+ <div className="rounded-xl border p-3">
+ <p className="text-sm font-semibold">
+ {preview.valid} of {preview.totalRows} row(s) ready to import
+ </p>
+ {preview.errors.length > 0 && (
+ <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+ {preview.errors.map((e, i) => (
+ <p
+ key={`${e.row}-${i}`}
+ className="rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+ >
+ {e.row > 0 ? `Row ${e.row}` : "Existing record"}: {e.message}
+ </p>
+ ))}
+ </div>
+ )}
+ </div>
+ )}
+ </div>
+ <DialogFooter className="gap-2">
+ <Button variant="outline" onClick={onClose} disabled={busy || committing}>
+ Cancel
+ </Button>
+ <Button
+ variant="outline"
+ className="h-10"
+ onClick={() => void runDry()}
+ disabled={busy || committing || !csvText.trim()}
+ >
+ {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+ Preview
+ </Button>
+ <Button
+ className={cn("h-10", GRADIENT_BTN)}
+ onClick={() => void commit()}
+ disabled={busy || committing || !preview || preview.valid === 0}
+ >
+ {committing && <Loader2 className="h-4 w-4 animate-spin" />}
+ Import {preview ? `${preview.valid} row(s)` : ""}
+ </Button>
+ </DialogFooter>
+ </DialogContent>
+ </Dialog>
+ );
+}
+
+/* ---------------- Batch semester promotion (D12) ---------------- */
+
+function PromoteSemesterDialog({
+ open,
+ onOpenChange,
+ students,
+ programs,
+ onDone,
+}: {
+ open: boolean;
+ onOpenChange: (v: boolean) => void;
+ students: StudentRow[];
+ programs: ProgramDTO[];
+ onDone: () => void;
+}) {
+ const [programId, setProgramId] = useState("all");
+ const [fromSem, setFromSem] = useState("");
+ const [toSem, setToSem] = useState("");
+ const [busy, setBusy] = useState(false);
+
+ useEffect(() => {
+ if (open) {
+ setProgramId("all");
+ setFromSem("");
+ setToSem("");
+ }
+ }, [open]);
+
+ const targets = useMemo(() => {
+ const from = Number(fromSem);
+ if (!Number.isInteger(from) || from < 1) return [];
+ return students.filter(
+ (s) =>
+ s.isActive &&
+ s.semester === from &&
+ (programId === "all" || s.programId === programId)
+ );
+ }, [students, fromSem, programId]);
+
+ async function submit() {
+ const to = Number(toSem);
+ if (!Number.isInteger(to) || to < 1 || to > 12) {
+ toast({
+ title: "Target semester must be between 1 and 12",
+ variant: "destructive",
+ });
+ return;
+ }
+ if (targets.length === 0) {
+ toast({
+ title: "No students match this scope",
+ description: "Check the program and current semester selection.",
+ variant: "destructive",
+ });
+ return;
+ }
+ setBusy(true);
+ try {
+ const res = await apiPost<{ moved?: number }>(
+ "/api/teacher/students-move",
+ { studentIds: targets.map((s) => s.id), toSemester: to }
+ );
+ toast({
+ title: `${res.moved ?? targets.length} student(s) promoted`,
+ description: `Semester ${fromSem} → ${toSem}.`,
+ });
+ onOpenChange(false);
+ onDone();
+ } catch (err) {
+ toast({
+ title: "Promotion failed",
+ description: errMsg(err),
+ variant: "destructive",
+ });
+ } finally {
+ setBusy(false);
+ }
+ }
+
+ return (
+ <Dialog open={open} onOpenChange={onOpenChange}>
+ <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+ <DialogHeader>
+ <DialogTitle>Promote Semester</DialogTitle>
+ <DialogDescription>
+ Move every active student in a batch to the next semester at once.
+ Program-length limits are enforced server-side.
+ </DialogDescription>
+ </DialogHeader>
+ <div className="grid grid-cols-1 gap-3">
+ <Field label="Program">
+ <Select
+ value={programId}
+ onValueChange={setProgramId}
+ >
+ <SelectTrigger className="w-full">
+ <SelectValue />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="all">All programs</SelectItem>
+ {programs.map((p) => (
+ <SelectItem key={p.id} value={p.id}>
+ {p.shortName} — {p.name}
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ </Field>
+ <div className="grid grid-cols-2 gap-3">
+ <Field label="Current semester" required>
+ <Input
+ type="number"
+ min={1}
+ max={12}
+ value={fromSem}
+ onChange={(e) => setFromSem(e.target.value)}
+ placeholder="e.g. 1"
+ />
+ </Field>
+ <Field label="Promote to semester" required>
+ <Input
+ type="number"
+ min={1}
+ max={12}
+ value={toSem}
+ onChange={(e) => setToSem(e.target.value)}
+ placeholder="e.g. 2"
+ />
+ </Field>
+ </div>
+ <div className="rounded-xl border bg-muted/40 p-3 text-sm">
+ {fromSem && Number(fromSem) >= 1 ? (
+ <>
+ <span className="font-bold">{targets.length}</span> active
+ student(s) in semester {fromSem}
+ {programId !== "all" && (
+ <span className="text-muted-foreground">
+ {" "}
+ in{" "}
+ {programs.find((p) => p.id === programId)?.shortName ?? "the selected program"}
+ </span>
+ )}{" "}
+ will be moved to semester {toSem || "—"}.
+ </>
+ ) : (
+ <span className="text-muted-foreground">
+ Enter the current semester to preview the affected batch.
+ </span>
+ )}
+ </div>
+ </div>
+ <DialogFooter className="gap-2">
+ <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+ Cancel
+ </Button>
+ <Button
+ className={cn("h-10", GRADIENT_BTN)}
+ onClick={() => void submit()}
+ disabled={busy || targets.length === 0 || !toSem}
+ >
+ {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+ Promote {targets.length > 0 ? `${targets.length} student(s)` : ""}
+ </Button>
+ </DialogFooter>
+ </DialogContent>
+ </Dialog>
+ );
+}
+
+/* ---------------- Assignment edit (D13) ---------------- */
+
+function AssignmentEditDialog({
+ open,
+ onOpenChange,
+ assignment,
+ onSubmit,
+}: {
+ open: boolean;
+ onOpenChange: (v: boolean) => void;
+ assignment: DeptAssignmentRow | null;
+ onSubmit: (
+ id: string,
+ payload: Record<string, unknown>
+ ) => Promise<boolean>;
+}) {
+ const [form, setForm] = useState({
+ title: "",
+ description: "",
+ dueDate: "",
+ maxMarks: "",
+ });
+ const [saving, setSaving] = useState(false);
+
+ useEffect(() => {
+ if (!open || !assignment) return;
+ setForm({
+ title: assignment.title,
+ description: assignment.description ?? "",
+ dueDate: assignment.dueDate ? assignment.dueDate.slice(0, 10) : "",
+ maxMarks: assignment.maxMarks != null ? String(assignment.maxMarks) : "",
+ });
+ }, [open, assignment]);
+
+ async function handleSave() {
+ if (!assignment) return;
+ if (!form.title.trim()) {
+ toast({
+ title: "Title is required",
+ variant: "destructive",
+ });
+ return;
+ }
+ setSaving(true);
+ const ok = await onSubmit(assignment.id, {
+ title: form.title.trim(),
+ description: form.description.trim(),
+ dueDate: form.dueDate || null,
+ maxMarks: form.maxMarks === "" ? null : Number(form.maxMarks),
+ });
+ setSaving(false);
+ if (ok) onOpenChange(false);
+ }
+
+ return (
+ <Dialog open={open} onOpenChange={onOpenChange}>
+ <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+ <DialogHeader>
+ <DialogTitle>Edit Assignment</DialogTitle>
+ <DialogDescription>
+ {assignment?.course?.code
+ ? `${assignment.course.code} — ${assignment.teacher?.fullName ?? "Faculty"}`
+ : "Department oversight edit"}{" "}
+ · students are notified when details change.
+ </DialogDescription>
+ </DialogHeader>
+ <div className="grid grid-cols-1 gap-3">
+ <Field label="Title" required>
+ <Input
+ value={form.title}
+ onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+ />
+ </Field>
+ <Field label="Description">
+ <Textarea
+ rows={4}
+ value={form.description}
+ onChange={(e) =>
+ setForm((f) => ({ ...f, description: e.target.value }))
+ }
+ />
+ </Field>
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+ <Field label="Due date">
+ <Input
+ type="date"
+ value={form.dueDate}
+ onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))}
+ />
+ </Field>
+ <Field label="Max marks">
+ <Input
+ type="number"
+ min={0}
+ value={form.maxMarks}
+ onChange={(e) => setForm((f) => ({ ...f, maxMarks: e.target.value }))}
+ placeholder="e.g. 20"
+ />
+ </Field>
+ </div>
+ </div>
+ <DialogFooter className="gap-2">
+ <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+ Cancel
+ </Button>
+ <Button
+ className={cn("h-10", GRADIENT_BTN)}
+ onClick={() => void handleSave()}
+ disabled={saving}
  >
  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
  Save changes

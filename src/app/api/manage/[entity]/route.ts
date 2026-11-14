@@ -2,7 +2,8 @@ import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { handle, badRequest } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
-import { requireSession, ApiError, type SessionPayload } from "@/lib/session";
+import { requireSession, requireRole, ApiError, type SessionPayload } from "@/lib/session";
+import { logAdminAction, auditActor } from "@/lib/audit";
 import { hashPassword } from "@/lib/auth";
 import { gradeDistribution, passRate, resultPct } from "@/lib/grades";
 import { bdWeekday } from "@/lib/date-bd";
@@ -75,6 +76,28 @@ const VALID_CATEGORIES = new Set([
  "academic", "exam", "event", "general", "schedule_change", "assignment",
 ]);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Minimal CSV parser — quoted fields with "" escapes; CRLF-safe. */
+function parseCsv(text: string): string[][] {
+ const rows: string[][] = [];
+ let row: string[] = [];
+ let cell = "";
+ let inQuotes = false;
+ for (let i = 0; i < text.length; i++) {
+ const ch = text[i];
+ if (inQuotes) {
+ if (ch === '"') {
+ if (text[i + 1] === '"') { cell += '"'; i++; } else inQuotes = false;
+ } else cell += ch;
+ } else if (ch === '"') inQuotes = true;
+ else if (ch === ",") { row.push(cell); cell = ""; }
+ else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+ else if (ch === "\r") { /* CR inside line — ignore */ }
+ else cell += ch;
+ }
+ if (cell !== "" || row.length > 0) { row.push(cell); rows.push(row); }
+ return rows;
+}
 
 /** Trim + hard length cap — keeps free-text abuse from bloating rows. */
 function cleanStr(v: unknown, max: number): string {
@@ -185,6 +208,10 @@ const ENTITIES = [
  "changes",
  "attendance-report",
  "sessions",
+ "activity",
+ "import",
+ "assignments",
+ "results",
 ] as const;
 type Entity = (typeof ENTITIES)[number];
 
@@ -641,6 +668,77 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  };
  }
 
+ case "assignments": {
+ // D13: dept-wide assignment oversight — the teacher route lists only
+ // the caller's own assignments, which is useless for a dept head.
+ const url = new URL(req.url);
+ const courseId = url.searchParams.get("courseId");
+ const rows = await db.assignment.findMany({
+ where: { departmentId, ...(courseId ? { courseId } : {}) },
+ include: {
+ course: { select: { code: true, name: true } },
+ teacher: { select: { fullName: true } },
+ },
+ orderBy: { createdAt: "desc" },
+ take: 300,
+ });
+ return { assignments: rows };
+ }
+
+ case "results": {
+ // D13: dept-wide results oversight (read-only) — per course/exam with
+ // student identity, feeding the Results tab table + CSV export.
+ const url = new URL(req.url);
+ const courseId = url.searchParams.get("courseId");
+ const examType = url.searchParams.get("examType");
+ const rows = await db.result.findMany({
+ where: {
+ departmentId,
+ ...(courseId ? { courseId } : {}),
+ ...(examType ? { examType } : {}),
+ },
+ include: {
+ course: { select: { code: true, name: true } },
+ student: {
+ select: { fullName: true, rollNumber: true, studentIdNumber: true },
+ },
+ },
+ orderBy: { updatedAt: "desc" },
+ take: 2000,
+ });
+ return { results: rows };
+ }
+
+ case "activity": {
+ // Dept-scoped audit trail (D8): own-department mutations plus
+ // university-level actions taken on this tenant by super admins.
+ const { searchParams: sp } = new URL(req.url);
+ const page = Math.max(1, Math.floor(Number(sp.get("page")) || 1));
+ const pageSize = Math.min(
+ 100,
+ Math.max(1, Math.floor(Number(sp.get("pageSize")) || 20))
+ );
+ const uniId = await resolveUniversityId(departmentId);
+ const where: Record<string, unknown> = {
+ OR: [{ departmentId }, { universityId: uniId, departmentId: null }],
+ };
+ const [logs, total] = await Promise.all([
+ db.auditLog.findMany({
+ where,
+ orderBy: { createdAt: "desc" },
+ skip: (page - 1) * pageSize,
+ take: pageSize,
+ }),
+ db.auditLog.count({ where }),
+ ]);
+ return {
+ logs,
+ total,
+ page,
+ pages: Math.max(1, Math.ceil(total / pageSize)),
+ };
+ }
+
  case "sessions": {
  // Department-scoped live QR windows — the dept head's supervision view
  // (same kill-switch semantics the super admin has platform-wide, but
@@ -685,10 +783,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (!ENTITIES.includes(entity)) return badRequest("Unknown entity");
 
  return handle(async () => {
- const session = await requireSession();
- if (!["super_admin", "dept_admin"].includes(session.role)) {
- throw new ApiError(403, "Management access required");
- }
+ const session = await requireRole("super_admin", "dept_admin");
+ const actor = auditActor(session);
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
  const departmentId = await getDeptId(session, req, body);
 
@@ -896,6 +992,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  if (programId) {
  await assertProgramInDepartment(String(programId), departmentId);
  }
+ // D6: expiry + attachment were schema-only — expose them to the UI.
+ const attachmentURL =
+ typeof body.attachmentURL === "string" ? body.attachmentURL.trim() : "";
+ if (attachmentURL && !/^https?:\/\/.+/i.test(attachmentURL)) {
+ throw new ApiError(400, "Attachment URL must start with http:// or https://");
+ }
+ let expiryDate: Date | null = null;
+ if (typeof body.expiryDate === "string" && body.expiryDate.trim()) {
+ const d = new Date(body.expiryDate.trim());
+ if (Number.isNaN(d.getTime()))
+ throw new ApiError(400, "Expiry date must be a valid date");
+ expiryDate = d;
+ }
  const notice = await db.notice.create({
  data: {
  departmentId,
@@ -906,6 +1015,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  programId: programId ? String(programId) : null,
  semester: semester ? Number(semester) : null,
  isPinned: Boolean(isPinned),
+ attachmentURL: attachmentURL || null,
+ expiryDate,
  postedBy: session.userId,
  postedByName: session.name,
  },
@@ -947,6 +1058,15 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  if (fanout.length) await db.notification.createMany({ data: fanout });
 
+ await logAdminAction({
+ ...actor,
+ universityId: await resolveUniversityId(departmentId),
+ departmentId,
+ action: "create",
+ entity: "notice",
+ entityId: notice.id,
+ entityLabel: notice.title,
+ });
  return notice;
  }
 
@@ -1055,6 +1175,225 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  });
  }
 
+ case "import": {
+ // D10-11: bulk CSV import for teachers & students — dry-run preview,
+ // per-row error report, plan-cap aware, atomic commit.
+ const importEntity = String(body.entity || "");
+ const dryRun = Boolean(body.dryRun);
+ const csv = typeof body.csv === "string" ? body.csv.slice(0, 500_000) : "";
+ if (importEntity !== "teachers" && importEntity !== "students")
+ throw new ApiError(400, "entity must be teachers or students");
+ if (!csv.trim()) throw new ApiError(400, "CSV content is required");
+ const universityId = await resolveUniversityId(departmentId);
+ const rows = parseCsv(csv);
+ if (rows.length < 2)
+ throw new ApiError(400, "CSV needs a header row and at least one data row");
+ const header = rows[0].map((h) => h.trim().toLowerCase());
+ const dataRows = rows
+ .slice(1)
+ .filter((r) => r.some((c) => c.trim() !== ""));
+ const errors: { row: number; message: string }[] = [];
+ const valid: Record<string, string | number | null>[] = [];
+
+ if (importEntity === "teachers") {
+ const col = (n: string) => header.indexOf(n);
+ const iName = col("fullname"), iEmail = col("email"), iPw = col("password");
+ const iDesig = col("designation"), iPhone = col("phone"), iOffice = col("officeroom");
+ if (iName < 0 || iEmail < 0 || iPw < 0)
+ throw new ApiError(400, "CSV must have fullname, email and password columns");
+ const seenEmails = new Set<string>();
+ for (let r = 0; r < dataRows.length; r++) {
+ const rowNum = r + 2;
+ const c = dataRows[r];
+ const fullName = (c[iName] ?? "").trim();
+ const email = (c[iEmail] ?? "").trim().toLowerCase();
+ const password = (c[iPw] ?? "").trim();
+ if (!fullName) { errors.push({ row: rowNum, message: "fullname is required" }); continue; }
+ if (!EMAIL_RE.test(email)) { errors.push({ row: rowNum, message: `invalid email "${email}"` }); continue; }
+ if (password.length < 8) { errors.push({ row: rowNum, message: "password must be at least 8 characters" }); continue; }
+ if (seenEmails.has(email)) { errors.push({ row: rowNum, message: `duplicate email in file: ${email}` }); continue; }
+ seenEmails.add(email);
+ valid.push({
+ fullName,
+ email,
+ password,
+ designation: (c[iDesig] ?? "").trim() || "Lecturer",
+ phone: (c[iPhone] ?? "").trim() || null,
+ officeRoom: (c[iOffice] ?? "").trim() || null,
+ });
+ }
+ // DB duplicates become row errors too — the commit only carries rows
+ // that are valid AND new.
+ const emails = valid.map((v) => String(v.email));
+ const existing = emails.length
+ ? await db.user.findMany({
+ where: { universityId, email: { in: emails } },
+ select: { email: true },
+ })
+ : [];
+ const taken = new Set(existing.map((e) => e.email));
+ for (let i = valid.length - 1; i >= 0; i--) {
+ if (taken.has(String(valid[i].email))) {
+ errors.push({ row: -1, message: `email already exists: ${valid[i].email}` });
+ valid.splice(i, 1);
+ }
+ }
+ // Hash before the transaction — bcrypt is deliberately slow.
+ for (const v of valid) v.password = await hashPassword(String(v.password));
+ } else {
+ const col = (n: string) => header.indexOf(n);
+ const iName = col("fullname"), iSid = col("studentidnumber"), iRoll = col("rollnumber");
+ const iProg = col("program"), iSem = col("semester"), iSec = col("section"), iPhone = col("phone");
+ if (iName < 0 || iSid < 0 || iRoll < 0)
+ throw new ApiError(400, "CSV must have fullname, studentidnumber and rollnumber columns");
+ const programs = await db.program.findMany({
+ where: { departmentId, isActive: true },
+ });
+ const progByKey = new Map<string, { id: string; semesterCount: number }>();
+ for (const p of programs) {
+ progByKey.set(p.shortName.toLowerCase(), { id: p.id, semesterCount: p.semesterCount });
+ progByKey.set(p.name.toLowerCase(), { id: p.id, semesterCount: p.semesterCount });
+ }
+ const seenSid = new Set<string>();
+ const seenRoll = new Set<string>();
+ for (let r = 0; r < dataRows.length; r++) {
+ const rowNum = r + 2;
+ const c = dataRows[r];
+ const fullName = (c[iName] ?? "").trim();
+ const sid = (c[iSid] ?? "").trim();
+ const roll = (c[iRoll] ?? "").trim();
+ if (!fullName) { errors.push({ row: rowNum, message: "fullname is required" }); continue; }
+ if (!sid) { errors.push({ row: rowNum, message: "studentidnumber is required" }); continue; }
+ if (!roll) { errors.push({ row: rowNum, message: "rollnumber is required" }); continue; }
+ if (seenSid.has(sid)) { errors.push({ row: rowNum, message: `duplicate ID number in file: ${sid}` }); continue; }
+ if (seenRoll.has(roll)) { errors.push({ row: rowNum, message: `duplicate roll in file: ${roll}` }); continue; }
+ seenSid.add(sid);
+ seenRoll.add(roll);
+ let programId: string | null = null;
+ let semester: number | null = null;
+ const progRaw = (c[iProg] ?? "").trim();
+ const semRaw = (c[iSem] ?? "").trim();
+ if (progRaw) {
+ const prog = progByKey.get(progRaw.toLowerCase());
+ if (!prog) { errors.push({ row: rowNum, message: `program "${progRaw}" not found in this department` }); continue; }
+ programId = prog.id;
+ if (semRaw) {
+ const n = Math.round(Number(semRaw));
+ if (!Number.isInteger(n) || n < 1 || n > prog.semesterCount) {
+ errors.push({ row: rowNum, message: `semester must be 1-${prog.semesterCount} for this program` });
+ continue;
+ }
+ semester = n;
+ }
+ } else if (semRaw) {
+ const n = Math.round(Number(semRaw));
+ if (!Number.isInteger(n) || n < 1 || n > 12) { errors.push({ row: rowNum, message: "semester must be 1-12" }); continue; }
+ semester = n;
+ }
+ valid.push({
+ fullName,
+ studentIdNumber: sid,
+ rollNumber: roll,
+ programId,
+ semester,
+ section: (c[iSec] ?? "").trim() || null,
+ phone: (c[iPhone] ?? "").trim() || null,
+ });
+ }
+ const sids = valid.map((v) => String(v.studentIdNumber));
+ const rolls = valid.map((v) => String(v.rollNumber));
+ const [exSid, exRoll] = await Promise.all([
+ sids.length
+ ? db.user.findMany({ where: { universityId, studentIdNumber: { in: sids } }, select: { studentIdNumber: true } })
+ : [],
+ rolls.length
+ ? db.user.findMany({ where: { universityId, rollNumber: { in: rolls } }, select: { rollNumber: true } })
+ : [],
+ ]);
+ const takenSid = new Set(exSid.map((e) => e.studentIdNumber));
+ const takenRoll = new Set(exRoll.map((e) => e.rollNumber));
+ for (let i = valid.length - 1; i >= 0; i--) {
+ const v = valid[i];
+ if (takenSid.has(String(v.studentIdNumber))) {
+ errors.push({ row: -1, message: `student ID already exists: ${v.studentIdNumber}` });
+ valid.splice(i, 1);
+ } else if (takenRoll.has(String(v.rollNumber))) {
+ errors.push({ row: -1, message: `roll already exists: ${v.rollNumber}` });
+ valid.splice(i, 1);
+ }
+ }
+ }
+
+ let committed = false;
+ if (!dryRun && valid.length > 0) {
+ const cap = importEntity === "teachers" ? "maxTeachers" : "maxStudents";
+ const role = importEntity === "teachers" ? "teacher" : "student";
+ await db.$transaction(async (tx) => {
+ const uni = await tx.university.findUnique({
+ where: { id: universityId },
+ select: { plan: { select: { maxTeachers: true, maxStudents: true } } },
+ });
+ const limit = uni?.plan?.[cap] ?? -1;
+ const existingCount = await tx.user.count({
+ where: { universityId, role, isActive: true },
+ });
+ if (limit >= 0 && existingCount + valid.length > limit) {
+ throw new ApiError(
+ 403,
+ `Plan limit: ${existingCount} active ${importEntity} + ${valid.length} imported would exceed the limit of ${limit}. Remove rows or upgrade the plan.`
+ );
+ }
+ if (importEntity === "teachers") {
+ await tx.user.createMany({
+ data: valid.map((v) => ({
+ universityId,
+ departmentId,
+ role: "teacher",
+ fullName: String(v.fullName),
+ email: String(v.email),
+ password: String(v.password),
+ designation: String(v.designation),
+ phone: v.phone as string | null,
+ officeRoom: v.officeRoom as string | null,
+ isActive: true,
+ })),
+ });
+ } else {
+ await tx.user.createMany({
+ data: valid.map((v) => ({
+ universityId,
+ departmentId,
+ role: "student",
+ fullName: String(v.fullName),
+ studentIdNumber: String(v.studentIdNumber),
+ rollNumber: String(v.rollNumber),
+ programId: v.programId as string | null,
+ semester: v.semester as number | null,
+ section: v.section as string | null,
+ phone: v.phone as string | null,
+ isActive: true,
+ })),
+ });
+ }
+ });
+ committed = true;
+ }
+ await logAdminAction({
+ ...actor,
+ universityId,
+ departmentId,
+ action: "import",
+ entity: importEntity,
+ detail: `dryRun=${dryRun} valid=${valid.length} errors=${errors.length} committed=${committed}`,
+ });
+ return {
+ totalRows: dataRows.length,
+ valid: valid.length,
+ errors,
+ committed,
+ };
+ }
+
  default:
  throw new ApiError(400, "Cannot create this entity");
  }
@@ -1065,10 +1404,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  const { entity: raw } = await ctx.params;
  const entity = raw as Entity;
  return handle(async () => {
- const session = await requireSession();
- if (!["super_admin", "dept_admin"].includes(session.role)) {
- throw new ApiError(403, "Management access required");
- }
+ const session = await requireRole("super_admin", "dept_admin");
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
  if (!id) throw new ApiError(400, "id query param is required");
@@ -1206,6 +1542,24 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (!VALID_CATEGORIES.has(String(body.category)))
  throw new ApiError(400, "Invalid notice category");
  }
+ // D6: expiry + attachment on update — validated like POST. Previously
+ // these schema columns had no update path at all.
+ if (entity === "notices" && body.attachmentURL !== undefined) {
+ const a = body.attachmentURL ? String(body.attachmentURL).trim() : "";
+ if (a && !/^https?:\/\/.+/i.test(a))
+ throw new ApiError(400, "Attachment URL must start with http:// or https://");
+ data.attachmentURL = a || null;
+ }
+ if (entity === "notices" && body.expiryDate !== undefined) {
+ if (body.expiryDate === null || body.expiryDate === "") {
+ data.expiryDate = null;
+ } else {
+ const d = new Date(String(body.expiryDate));
+ if (Number.isNaN(d.getTime()))
+ throw new ApiError(400, "Expiry date must be a valid date");
+ data.expiryDate = d;
+ }
+ }
 
  // Numeric bounds on Int columns — fractions/oversized values previously
  // surfaced as opaque Prisma 500s; reject them with friendly 400s here.
@@ -1250,10 +1604,13 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  where: { id },
  select: { universityId: true },
  });
+ if (!target) throw new ApiError(404, "User not found");
  const clash = await db.user.findFirst({
  where: {
  email: emailNorm,
- universityId: target?.universityId ?? null,
+ // A corrupted null-university row must not silently compare against
+ // the platform super-admin namespace — use an impossible sentinel.
+ universityId: target.universityId ?? "__no_university__",
  id: { not: id },
  },
  select: { id: true },
@@ -1267,6 +1624,16 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  await assertProgramInDepartment(String(data.programId), departmentId);
  }
  const updated = await db.user.update({ where: { id }, data });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: updated.universityId,
+ departmentId: updated.departmentId,
+ action: data.isActive === false ? "deactivate" : "update",
+ entity: updated.role,
+ entityId: updated.id,
+ entityLabel: updated.email ?? updated.fullName,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
  return stripPassword(updated);
  }
  case "courses": {
@@ -1296,6 +1663,16 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  console.warn("[manage/courses] schedule label sync failed:", syncErr);
  }
  }
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(departmentId),
+ departmentId,
+ action: "update",
+ entity: "course",
+ entityId: updated.id,
+ entityLabel: updated.code,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
  return updated;
  }
  case "rooms": {
@@ -1311,6 +1688,16 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  console.warn("[manage/rooms] schedule label sync failed:", syncErr);
  }
  }
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(departmentId),
+ departmentId,
+ action: "update",
+ entity: "room",
+ entityId: updated.id,
+ entityLabel: updated.roomNumber,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
  return updated;
  }
  case "timeslots": {
@@ -1329,10 +1716,32 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  console.warn("[manage/timeslots] schedule label sync failed:", syncErr);
  }
  }
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(departmentId),
+ departmentId,
+ action: "update",
+ entity: "timeslot",
+ entityId: updated.id,
+ entityLabel: updated.label,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
  return updated;
  }
- case "programs":
- return db.program.update({ where: { id }, data });
+ case "programs": {
+ const updatedProgram = await db.program.update({ where: { id }, data });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(departmentId),
+ departmentId,
+ action: "update",
+ entity: "program",
+ entityId: updatedProgram.id,
+ entityLabel: updatedProgram.name,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
+ return updatedProgram;
+ }
  case "notices": {
  if (data.programId) {
  await assertProgramInDepartment(String(data.programId), departmentId);
@@ -1349,7 +1758,18 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (!effProgramId)
  throw new ApiError(400, "A program must be selected when a semester is set");
  }
- return db.notice.update({ where: { id }, data });
+ const updatedNotice = await db.notice.update({ where: { id }, data });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(departmentId),
+ departmentId,
+ action: "update",
+ entity: "notice",
+ entityId: updatedNotice.id,
+ entityLabel: updatedNotice.title,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
+ return updatedNotice;
  }
  case "schedules": {
  // If slot/day changed, re-run conflict detection
@@ -1482,7 +1902,18 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  `Conflict with ${clash.courseCode} (${clash.teacherName}) at this time`
  );
  }
- return db.schedule.update({ where: { id }, data });
+ const updatedSchedule = await db.schedule.update({ where: { id }, data });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(departmentId),
+ departmentId,
+ action: "update",
+ entity: "schedule",
+ entityId: updatedSchedule.id,
+ entityLabel: updatedSchedule.courseCode,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
+ return updatedSchedule;
  }
  default:
  throw new ApiError(400, "Cannot update this entity");
@@ -1494,10 +1925,7 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const { entity: raw } = await ctx.params;
  const entity = raw as Entity;
  return handle(async () => {
- const session = await requireSession();
- if (!["super_admin", "dept_admin"].includes(session.role)) {
- throw new ApiError(403, "Management access required");
- }
+ const session = await requireRole("super_admin", "dept_admin");
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
  if (!id) throw new ApiError(400, "id query param is required");
@@ -1519,6 +1947,16 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  // Soft-delete: schedules/results/attendance reference users, so a
  // hard delete would either cascade-wipe history or fail with a 500.
  await db.user.update({ where: { id }, data: { isActive: false } });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: user.universityId,
+ departmentId: user.departmentId,
+ action: "deactivate",
+ entity: user.role,
+ entityId: user.id,
+ entityLabel: user.email ?? user.fullName,
+ detail: "soft delete (isActive=false)",
+ });
  return { deleted: true, deactivated: true };
  }
  case "courses": {
@@ -1536,6 +1974,15 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  { label: "result(s)", count: resultCount },
  ]);
  await db.course.delete({ where: { id } });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(c.departmentId),
+ departmentId: c.departmentId,
+ action: "delete",
+ entity: "course",
+ entityId: id,
+ entityLabel: c.code,
+ });
  return { deleted: true };
  }
  case "rooms": {
@@ -1545,6 +1992,15 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const scheduleCount = await db.schedule.count({ where: { roomId: id } });
  await assertNotReferenced([{ label: "schedule(s)", count: scheduleCount }]);
  await db.room.delete({ where: { id } });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(r.departmentId),
+ departmentId: r.departmentId,
+ action: "delete",
+ entity: "room",
+ entityId: id,
+ entityLabel: r.roomNumber,
+ });
  return { deleted: true };
  }
  case "timeslots": {
@@ -1554,6 +2010,15 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const scheduleCount = await db.schedule.count({ where: { timeSlotId: id } });
  await assertNotReferenced([{ label: "schedule(s)", count: scheduleCount }]);
  await db.timeSlot.delete({ where: { id } });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(t.departmentId),
+ departmentId: t.departmentId,
+ action: "delete",
+ entity: "timeslot",
+ entityId: id,
+ entityLabel: t.label,
+ });
  return { deleted: true };
  }
  case "programs": {
@@ -1571,6 +2036,15 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  { label: "student(s)", count: studentCount },
  ]);
  await db.program.delete({ where: { id } });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(p.departmentId),
+ departmentId: p.departmentId,
+ action: "delete",
+ entity: "program",
+ entityId: id,
+ entityLabel: p.name,
+ });
  return { deleted: true };
  }
  case "notices": {
@@ -1578,6 +2052,15 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  if (!n) throw new ApiError(404, "Notice not found");
  await assertDeptAccess(session, n.departmentId);
  await db.notice.delete({ where: { id } });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(n.departmentId),
+ departmentId: n.departmentId,
+ action: "delete",
+ entity: "notice",
+ entityId: id,
+ entityLabel: n.title,
+ });
  return { deleted: true };
  }
  case "schedules": {
@@ -1596,6 +2079,15 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  ]);
  await db.scheduleChange.deleteMany({ where: { scheduleId: id } });
  await db.schedule.delete({ where: { id } });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(s.departmentId),
+ departmentId: s.departmentId,
+ action: "delete",
+ entity: "schedule",
+ entityId: id,
+ entityLabel: s.courseCode,
+ });
  return { deleted: true };
  }
  case "sessions": {
@@ -1612,6 +2104,15 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  await db.attendanceSession.update({
  where: { id },
  data: { closed: true },
+ });
+ await logAdminAction({
+ ...auditActor(session),
+ universityId: await resolveUniversityId(s.departmentId),
+ departmentId: s.departmentId,
+ action: "force_close",
+ entity: "session",
+ entityId: id,
+ detail: "QR window force-closed by department head",
  });
  return { closed: true };
  }

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { handle, getClientIp, rateLimit } from "@/lib/api-helpers";
-import { findStaffByEmail, verifyPassword, toSessionUser } from "@/lib/auth";
+import { findStaffByEmail, verifyPassword, toSessionUser, assertSubscriptionActive } from "@/lib/auth";
 import { createSession, ApiError } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
@@ -24,6 +24,10 @@ export async function POST(req: NextRequest) {
  if (!valid) {
  throw new ApiError(401, "Invalid email or password");
  }
+
+ // D14: an expired tenant cannot sign in until a super admin renews.
+ // Super admins (universityId null) pass through untouched.
+ assertSubscriptionActive(user.university);
 
  await createSession({
  userId: user.id,

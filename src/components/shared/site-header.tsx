@@ -66,6 +66,18 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
     ("Dr. A. Rahman" → "AR", honorifics skipped). */
  const userInitials = user?.fullName ? initials(user.fullName) : "";
 
+ /* D14 — subscription grace banner: tenant staff see an amber strip
+    14 days before expiry and a rose strip once lapsed (sign-in is blocked
+    for NEW sessions, but a live session may still be open). */
+ const expiryInfo = (() => {
+ if (!user || user.role === "super_admin" || !user.planExpiresAt || view !== "dashboard")
+ return null;
+ const ms = new Date(user.planExpiresAt).getTime() - Date.now();
+ const days = Math.ceil(ms / 86_400_000);
+ if (days > 14) return null;
+ return { days, expired: days < 0 };
+ })();
+
  return (
  <motion.header
  initial={{ y: -60, opacity: 0 }}
@@ -84,6 +96,21 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
  >
  Skip to main content
  </a>
+ {expiryInfo && (
+ <div
+ role="status"
+ className={cn(
+ "w-full px-3 py-1.5 text-center text-[11px] font-semibold sm:text-xs",
+ expiryInfo.expired
+ ? "bg-rose-600 text-white"
+ : "bg-amber-400 text-[#241C15]"
+ )}
+ >
+ {expiryInfo.expired
+ ? "This university's subscription has expired — contact the platform administrator to renew."
+ : `Subscription expires in ${expiryInfo.days} day${expiryInfo.days === 1 ? "" : "s"} — ask the platform administrator to renew if needed.`}
+ </div>
+ )}
  <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 h-16 flex items-center justify-between gap-2">
  {/* Brand — hidden on lg+ where the sidebar rail carries the brand */}
  <button

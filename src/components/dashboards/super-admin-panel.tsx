@@ -4,12 +4,14 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { motion } from "framer-motion";
 import {
  Building2,
+ CalendarClock,
  CalendarDays,
  ChartNoAxesColumn,
  Check,
  CreditCard,
  DollarSign,
  GraduationCap,
+ History,
  Layers,
  Loader2,
  MoreVertical,
@@ -23,6 +25,7 @@ import {
  TrendingUp,
  TriangleAlert,
  UserPlus,
+ UserRoundPlus,
  Users,
 } from "lucide-react";
 
@@ -171,6 +174,7 @@ interface UniFormState {
  contactPhone: string;
  websiteURL: string;
  planId: string; // "" = no plan
+ planExpiresAt: string; // yyyy-mm-dd (date input) — "" = no expiry
  aboutText: string;
  isActive: boolean;
 }
@@ -184,6 +188,7 @@ const EMPTY_UNI_FORM: UniFormState = {
  contactPhone: "",
  websiteURL: "",
  planId: "",
+ planExpiresAt: "",
  aboutText: "",
  isActive: true,
 };
@@ -233,6 +238,47 @@ interface PlanDraft {
  isActive: boolean;
  features: string; // comma separated
 }
+
+interface ActivityLog {
+ id: string;
+ actorName: string | null;
+ actorRole: string | null;
+ action: string;
+ entity: string;
+ entityId: string | null;
+ entityLabel: string | null;
+ detail: string | null;
+ createdAt: string;
+ universityId: string | null;
+ departmentId: string | null;
+}
+
+interface StudentProgramOption {
+ id: string;
+ name: string;
+ shortName: string;
+ semesterCount: number;
+}
+
+interface StudentFormState {
+ fullName: string;
+ studentIdNumber: string;
+ rollNumber: string;
+ programId: string;
+ semester: string;
+ section: string;
+ phone: string;
+}
+
+const EMPTY_STUDENT_FORM: StudentFormState = {
+ fullName: "",
+ studentIdNumber: "",
+ rollNumber: "",
+ programId: "",
+ semester: "",
+ section: "",
+ phone: "",
+};
 
 /* ---------------- small helpers ---------------- */
 
@@ -289,6 +335,27 @@ function fmtLimit(v: number): string {
 function numOr(value: string, fallback: number): number {
  const n = Number(value);
  return Number.isFinite(n) ? n : fallback;
+}
+
+function fmtDay(iso: string | null | undefined): string {
+ if (!iso) return "—";
+ const d = new Date(iso);
+ return Number.isNaN(d.getTime())
+ ? "—"
+ : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** Expiry badge tone: rose when lapsed, amber within 30 days, else neutral. */
+function expiryTone(iso: string | null | undefined): string {
+ if (!iso) return "";
+ const d = new Date(iso).getTime();
+ if (Number.isNaN(d)) return "";
+ const days = Math.ceil((d - Date.now()) / 86_400_000);
+ if (days < 0)
+ return "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300";
+ if (days <= 30)
+ return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
+ return "bg-muted text-muted-foreground";
 }
 
 /* ---------------- tiny UI atoms ---------------- */
@@ -408,13 +475,31 @@ export function SuperAdminPanel({
  const [provisionForm, setProvisionForm] = useState<ProvisionFormState>(EMPTY_PROVISION_FORM);
  const [provisionSaving, setProvisionSaving] = useState(false);
 
+ /* -------- department activate/deactivate toggle (D5) -------- */
+ const [deptToggleTarget, setDeptToggleTarget] = useState<DetailDept | null>(null);
+ const [deptToggling, setDeptToggling] = useState(false);
+
+ /* -------- student provisioning per department (D5) -------- */
+ const [studentDept, setStudentDept] = useState<DetailDept | null>(null);
+ const [studentForm, setStudentForm] = useState<StudentFormState>(EMPTY_STUDENT_FORM);
+ const [studentPrograms, setStudentPrograms] = useState<StudentProgramOption[]>([]);
+ const [studentSaving, setStudentSaving] = useState(false);
+
+ /* -------- activity tab (D8, lazy) -------- */
+ const [activity, setActivity] = useState<ActivityLog[] | null>(null);
+ const [activityTotal, setActivityTotal] = useState(0);
+ const [activityPage, setActivityPage] = useState(1);
+ const [activityPages, setActivityPages] = useState(1);
+ const [activityLoading, setActivityLoading] = useState(false);
+ const [activityQ, setActivityQ] = useState("");
+ const [activityEntity, setActivityEntity] = useState("all");
+
  /* ---------------- analytics (Day 43, lazy) ---------------- */
  const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
  const [analyticsLoading, setAnalyticsLoading] = useState(false);
  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
  // Monotonic request id — rapid tab toggles must not interleave responses.
  const analyticsReqRef = useRef(0);
- // Refetch every time the analytics tab is opened — never serve a stale cache.
  const loadAnalytics = useCallback(async () => {
  if (analyticsLoading) return;
  const seq = ++analyticsReqRef.current;
@@ -435,13 +520,52 @@ export function SuperAdminPanel({
  }
  }, [analyticsLoading]);
 
+ /* -------- activity loader (D8) -------- */
+ const activityReqRef = useRef(0);
+ const loadActivity = useCallback(
+ async (page = 1, q?: string, entity?: string) => {
+ const seq = ++activityReqRef.current;
+ const qEff = q ?? activityQ;
+ const entityEff = entity ?? activityEntity;
+ setActivityLoading(true);
+ try {
+ const params = new URLSearchParams({ page: String(page), pageSize: "30" });
+ if (qEff.trim()) params.set("q", qEff.trim());
+ if (entityEff !== "all") params.set("entity", entityEff);
+ const res = await apiGet<{
+ logs: ActivityLog[];
+ total: number;
+ page: number;
+ pages: number;
+ }>(`/api/admin/activity?${params.toString()}`);
+ if (seq !== activityReqRef.current) return;
+ setActivity(res.logs ?? []);
+ setActivityTotal(res.total ?? 0);
+ setActivityPage(res.page ?? 1);
+ setActivityPages(res.pages ?? 1);
+ } catch (err) {
+ if (seq !== activityReqRef.current) return;
+ setActivity([]);
+ toast({
+ title: "Failed to load activity",
+ description: errMsg(err),
+ variant: "destructive",
+ });
+ } finally {
+ if (seq === activityReqRef.current) setActivityLoading(false);
+ }
+ },
+ [activityQ, activityEntity]
+ );
+
  const handleTabChange = useCallback(
  (v: string) => {
  setLocalTab(v);
  onTabChange?.(v);
  if (v === "analytics") void loadAnalytics();
+ if (v === "activity") void loadActivity(1);
  },
- [loadAnalytics, onTabChange]
+ [loadAnalytics, loadActivity, onTabChange]
  );
 
  // Deep-link support: landing directly on ?tab=analytics (no tab-change
@@ -451,6 +575,13 @@ export function SuperAdminPanel({
  void loadAnalytics();
  }
  }, [activeTab, analytics, analyticsLoading, analyticsError, loadAnalytics]);
+
+ // Same deep-link treatment for the Activity tab.
+ useEffect(() => {
+ if (activeTab === "activity" && !activity && !activityLoading) {
+ void loadActivity(1);
+ }
+ }, [activeTab, activity, activityLoading, loadActivity]);
 
  /* ---------------- loaders ---------------- */
 
@@ -521,6 +652,7 @@ export function SuperAdminPanel({
  contactPhone: u.contactPhone ?? "",
  websiteURL: u.websiteURL ?? "",
  planId: u.planId ?? "",
+ planExpiresAt: u.planExpiresAt ? u.planExpiresAt.slice(0, 10) : "",
  aboutText: u.aboutText ?? "",
  isActive: u.isActive,
  });
@@ -550,6 +682,7 @@ export function SuperAdminPanel({
  websiteURL: uniForm.websiteURL.trim() || null,
  aboutText: uniForm.aboutText.trim() || null,
  planId: uniForm.planId || null,
+ planExpiresAt: uniForm.planExpiresAt || null,
  };
  try {
  if (editingUniId) {
@@ -712,6 +845,86 @@ export function SuperAdminPanel({
  });
  } finally {
  setDeleting(false);
+ }
+ }
+
+ /* ---------------- department activate/deactivate (D5) ---------------- */
+
+ async function confirmDeptToggle() {
+ if (!deptToggleTarget) return;
+ const t = deptToggleTarget;
+ setDeptToggling(true);
+ try {
+ await apiPut(`/api/department?id=${t.id}`, { isActive: !t.isActive });
+ toast({
+ title: t.isActive ? "Department deactivated" : "Department activated",
+ description: t.name,
+ });
+ setDeptToggleTarget(null);
+ if (expandedId) await fetchDetail(expandedId);
+ } catch (err) {
+ toast({
+ title: "Could not update department",
+ description: errMsg(err),
+ variant: "destructive",
+ });
+ } finally {
+ setDeptToggling(false);
+ }
+ }
+
+ /* ---------------- enroll student per department (D5) ---------------- */
+
+ function openStudentProvision(d: DetailDept) {
+ setStudentDept(d);
+ setStudentForm(EMPTY_STUDENT_FORM);
+ setStudentPrograms([]);
+ void apiGet<StudentProgramOption[]>(
+ `/api/manage/programs?departmentId=${d.id}`
+ )
+ .then((list) => setStudentPrograms(Array.isArray(list) ? list : []))
+ .catch(() => setStudentPrograms([]));
+ }
+
+ async function submitStudent() {
+ if (!studentDept) return;
+ const fullName = studentForm.fullName.trim();
+ const sid = studentForm.studentIdNumber.trim();
+ const roll = studentForm.rollNumber.trim();
+ if (!fullName || !sid || !roll) {
+ toast({
+ title: "Missing information",
+ description: "Name, ID number and roll number are required.",
+ variant: "destructive",
+ });
+ return;
+ }
+ setStudentSaving(true);
+ try {
+ await apiPost("/api/manage/students", {
+ departmentId: studentDept.id,
+ fullName,
+ studentIdNumber: sid,
+ rollNumber: roll,
+ programId: studentForm.programId || null,
+ semester: studentForm.semester ? Number(studentForm.semester) : null,
+ section: studentForm.section.trim() || null,
+ phone: studentForm.phone.trim() || null,
+ });
+ toast({
+ title: "Student enrolled",
+ description: `${fullName} added to ${studentDept.shortName || studentDept.name}.`,
+ });
+ setStudentDept(null);
+ if (expandedId) await fetchDetail(expandedId);
+ } catch (err) {
+ toast({
+ title: "Could not enroll student",
+ description: errMsg(err),
+ variant: "destructive",
+ });
+ } finally {
+ setStudentSaving(false);
  }
  }
 
@@ -1104,6 +1317,13 @@ export function SuperAdminPanel({
  >
  {u.planName ?? "No plan"}
  </Badge>
+ {u.planExpiresAt && (
+ <Badge className={expiryTone(u.planExpiresAt)}>
+ <CalendarClock className="mr-1 h-3 w-3" />
+ {new Date(u.planExpiresAt).getTime() < Date.now() ? "Expired" : "Expires"}{" "}
+ {fmtDay(u.planExpiresAt)}
+ </Badge>
+ )}
  <Badge variant="outline">
  {u._count?.departments ?? 0} depts
  </Badge>
@@ -1173,6 +1393,26 @@ export function SuperAdminPanel({
  onClick={() => openProvision(d)}
  >
  <UserPlus className="h-4 w-4" />
+ </Button>
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label={`Enroll student in ${d.name}`}
+ title="Add Student"
+ className="h-10 w-10 sm:h-8 sm:w-8"
+ onClick={() => openStudentProvision(d)}
+ >
+ <UserRoundPlus className="h-4 w-4" />
+ </Button>
+ <Button
+ variant="ghost"
+ size="icon"
+ aria-label={`${d.isActive ? "Deactivate" : "Activate"} ${d.name}`}
+ title={d.isActive ? "Deactivate department" : "Activate department"}
+ className="h-10 w-10 text-amber-600 hover:text-amber-700 sm:h-8 sm:w-8"
+ onClick={() => setDeptToggleTarget(d)}
+ >
+ <Power className="h-4 w-4" />
  </Button>
  <Button
  variant="ghost"
@@ -1532,6 +1772,154 @@ export function SuperAdminPanel({
  />
  </TabsContent>
 
+ {/* ===== Activity tab (D8) ===== */}
+ <TabsContent value="activity" className="space-y-4">
+ <SectionCard
+ title="Platform Activity"
+ icon={History}
+ action={
+ <div className="flex flex-wrap items-center gap-2">
+ <Input
+ value={activityQ}
+ onChange={(e) => setActivityQ(e.target.value)}
+ placeholder="Search actor or target…"
+ className="h-9 w-40 sm:w-56"
+ onKeyDown={(e) => {
+ if (e.key === "Enter") void loadActivity(1);
+ }}
+ />
+ <Select
+ value={activityEntity}
+ onValueChange={(v) => {
+ setActivityEntity(v);
+ void loadActivity(1, activityQ, v);
+ }}
+ >
+ <SelectTrigger className="h-9 w-36">
+ <SelectValue />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="all">All entities</SelectItem>
+ {[
+ "university", "department", "user", "teacher", "student",
+ "plan", "course", "room", "timeslot", "program",
+ "notice", "schedule", "session", "notification", "system",
+ ].map((e) => (
+ <SelectItem key={e} value={e}>
+ {e}
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-9"
+ onClick={() => void loadActivity(1)}
+ >
+ <RefreshCw className="mr-1 h-3.5 w-3.5" />
+ Refresh
+ </Button>
+ </div>
+ }
+ >
+ {activityLoading && !activity ? (
+ <PanelLoader label="Loading activity…" />
+ ) : !activity || activity.length === 0 ? (
+ <EmptyState
+ icon={History}
+ title="No activity recorded yet"
+ hint="Admin and management actions appear here with who, what and when."
+ />
+ ) : (
+ <>
+ <div className="max-h-[520px] space-y-1.5 overflow-y-auto pr-1">
+ {activity.map((log) => (
+ <div
+ key={log.id}
+ className="flex items-start gap-3 rounded-xl border p-2.5"
+ >
+ <Badge
+ className={cn(
+ "shrink-0 capitalize",
+ log.action === "delete" || log.action === "deactivate"
+ ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+ : log.action === "create"
+ ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+ : "bg-muted text-muted-foreground"
+ )}
+ >
+ {log.action.replace("_", " ")}
+ </Badge>
+ <div className="min-w-0 flex-1">
+ <p className="truncate text-sm">
+ <span className="font-semibold">
+ {log.actorName ?? "System"}
+ </span>
+ {log.actorRole && (
+ <span className="text-muted-foreground">
+ {" "}({log.actorRole.replace("_", " ")})
+ </span>
+ )}
+ {" · "}
+ <span className="font-medium">{log.entity}</span>
+ {log.entityLabel && (
+ <span className="text-muted-foreground">
+ {" "}— {log.entityLabel}
+ </span>
+ )}
+ </p>
+ {log.detail && (
+ <p
+ className="truncate text-[11px] text-muted-foreground"
+ title={log.detail}
+ >
+ {log.detail}
+ </p>
+ )}
+ <p className="text-[10px] text-muted-foreground">
+ {new Date(log.createdAt).toLocaleString("en-GB", {
+ day: "numeric",
+ month: "short",
+ hour: "2-digit",
+ minute: "2-digit",
+ })}
+ </p>
+ </div>
+ </div>
+ ))}
+ </div>
+ <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
+ <span>{activityTotal} events</span>
+ <div className="flex items-center gap-2">
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-8"
+ disabled={activityPage <= 1}
+ onClick={() => void loadActivity(activityPage - 1)}
+ >
+ Prev
+ </Button>
+ <span>
+ {activityPage} / {activityPages}
+ </span>
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-8"
+ disabled={activityPage >= activityPages}
+ onClick={() => void loadActivity(activityPage + 1)}
+ >
+ Next
+ </Button>
+ </div>
+ </div>
+ </>
+ )}
+ </SectionCard>
+ </TabsContent>
+
  {/* ===== System Control tab ===== */}
  <TabsContent value="system" className="space-y-4">
  <SuperAdminSystemCard />
@@ -1783,6 +2171,35 @@ export function SuperAdminPanel({
  </Select>
  </Field>
  </div>
+ <Field label="Subscription expires">
+ <div className="flex gap-2">
+ <Input
+ type="date"
+ value={uniForm.planExpiresAt}
+ onChange={(e) =>
+ setUniForm((f) => ({ ...f, planExpiresAt: e.target.value }))
+ }
+ className="flex-1"
+ />
+ <Button
+ type="button"
+ variant="outline"
+ className="h-10 shrink-0"
+ title="Extend one year from today"
+ onClick={() =>
+ setUniForm((f) => ({
+ ...f,
+ planExpiresAt: new Date(Date.now() + 365 * 86_400_000)
+ .toISOString()
+ .slice(0, 10),
+ }))
+ }
+ >
+ <RefreshCw className="mr-1 h-4 w-4" />
+ +1 yr
+ </Button>
+ </div>
+ </Field>
  <Field label="About">
  <Textarea
  rows={3}
@@ -2069,6 +2486,154 @@ export function SuperAdminPanel({
  disabled={deleting}
  >
  Delete permanently
+ </AlertDialogAction>
+ </AlertDialogFooter>
+ </AlertDialogContent>
+ </AlertDialog>
+
+ {/* ---------- enroll student dialog (D5) ---------- */}
+ <Dialog
+ open={!!studentDept}
+ onOpenChange={(open) => {
+ if (!open) setStudentDept(null);
+ }}
+ >
+ <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+ <DialogHeader>
+ <DialogTitle>Enroll Student</DialogTitle>
+ <DialogDescription>
+ {studentDept
+ ? `Create a student account inside ${studentDept.name}. Students sign in with their ID number + roll number — no password.`
+ : "Create a student account."}
+ </DialogDescription>
+ </DialogHeader>
+ <div className="grid grid-cols-1 gap-3">
+ <Field label="Full name" required>
+ <Input
+ value={studentForm.fullName}
+ placeholder="Rakib Hasan"
+ onChange={(e) =>
+ setStudentForm((f) => ({ ...f, fullName: e.target.value }))
+ }
+ />
+ </Field>
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+ <Field label="ID number" required>
+ <Input
+ value={studentForm.studentIdNumber}
+ placeholder="2103007"
+ onChange={(e) =>
+ setStudentForm((f) => ({ ...f, studentIdNumber: e.target.value }))
+ }
+ />
+ </Field>
+ <Field label="Roll number" required>
+ <Input
+ value={studentForm.rollNumber}
+ placeholder="2103007"
+ onChange={(e) =>
+ setStudentForm((f) => ({ ...f, rollNumber: e.target.value }))
+ }
+ />
+ </Field>
+ </div>
+ <Field label="Program">
+ <Select
+ value={studentForm.programId || "none"}
+ onValueChange={(v) =>
+ setStudentForm((f) => ({ ...f, programId: v === "none" ? "" : v }))
+ }
+ >
+ <SelectTrigger className="w-full">
+ <SelectValue placeholder="Select program" />
+ </SelectTrigger>
+ <SelectContent>
+ <SelectItem value="none">No program</SelectItem>
+ {studentPrograms.map((p) => (
+ <SelectItem key={p.id} value={p.id}>
+ {p.shortName} — {p.name}
+ </SelectItem>
+ ))}
+ </SelectContent>
+ </Select>
+ </Field>
+ <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+ <Field label="Semester">
+ <Input
+ type="number"
+ min="1"
+ max="12"
+ value={studentForm.semester}
+ onChange={(e) =>
+ setStudentForm((f) => ({ ...f, semester: e.target.value }))
+ }
+ />
+ </Field>
+ <Field label="Section">
+ <Input
+ value={studentForm.section}
+ placeholder="A"
+ onChange={(e) =>
+ setStudentForm((f) => ({ ...f, section: e.target.value }))
+ }
+ />
+ </Field>
+ <Field label="Phone">
+ <Input
+ value={studentForm.phone}
+ placeholder="+8801…"
+ onChange={(e) =>
+ setStudentForm((f) => ({ ...f, phone: e.target.value }))
+ }
+ />
+ </Field>
+ </div>
+ </div>
+ <DialogFooter className="gap-2">
+ <Button variant="outline" onClick={() => setStudentDept(null)}>
+ Cancel
+ </Button>
+ <Button
+ className={cn("h-10", GRADIENT_BTN)}
+ onClick={() => void submitStudent()}
+ disabled={studentSaving}
+ >
+ {studentSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+ Enroll student
+ </Button>
+ </DialogFooter>
+ </DialogContent>
+ </Dialog>
+
+ {/* ---------- activate / deactivate department confirm (D5) ---------- */}
+ <AlertDialog
+ open={!!deptToggleTarget}
+ onOpenChange={(open) => {
+ if (!open) setDeptToggleTarget(null);
+ }}
+ >
+ <AlertDialogContent>
+ <AlertDialogHeader>
+ <AlertDialogTitle>
+ {deptToggleTarget?.isActive ? "Deactivate" : "Activate"} “
+ {deptToggleTarget?.name}”?
+ </AlertDialogTitle>
+ <AlertDialogDescription>
+ {deptToggleTarget?.isActive
+ ? "The department will be hidden from public pages and its members lose access until it is re-activated."
+ : "The department and its members become visible and active again."}
+ </AlertDialogDescription>
+ </AlertDialogHeader>
+ <AlertDialogFooter>
+ <AlertDialogCancel>Cancel</AlertDialogCancel>
+ <AlertDialogAction
+ className={cn(
+ deptToggleTarget?.isActive && "bg-rose-600 text-white hover:bg-rose-700"
+ )}
+ onClick={() => void confirmDeptToggle()}
+ disabled={deptToggling}
+ >
+ {deptToggleTarget?.isActive ? "Deactivate" : "Activate"}
  </AlertDialogAction>
  </AlertDialogFooter>
  </AlertDialogContent>

@@ -482,6 +482,30 @@ model Result {
   @@index([departmentId, examType]) // analytics aggregation
 }
 
+// ============ PLATFORM AUDIT TRAIL ============
+
+// Who did what — every admin/manage mutation lands here. Best-effort
+// writes: a logging failure never blocks the operation itself.
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorId      String? // User.id of the actor (null = system/cron)
+  actorName    String?
+  actorRole    String?
+  universityId String? // tenant scope (null = platform-level)
+  departmentId String?
+  action       String // create | update | deactivate | delete | broadcast | cleanup | force_close | import | promote
+  entity       String // university | plan | user | department | teacher | student | course | room | timeslot | program | notice | schedule | session | assignment | result
+  entityId     String?
+  entityLabel  String? // human-readable name (email, course code, ...)
+  detail       String? // short summary of what changed
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([universityId, createdAt])
+  @@index([entity, createdAt])
+  @@index([actorId, createdAt])
+}
+
 // ============ SETTINGS & CALENDAR ============
 
 model SiteSettings {

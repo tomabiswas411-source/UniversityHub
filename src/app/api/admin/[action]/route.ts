@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
-import { requireSession, ApiError } from "@/lib/session";
+import { requireRole, ApiError } from "@/lib/session";
+import { logAdminAction, auditActor } from "@/lib/audit";
 import { hashPassword } from "@/lib/auth";
 import { runCleanup } from "@/lib/cleanup";
 
@@ -46,10 +47,7 @@ type Ctx = { params: Promise<{ action: string }> };
 export async function GET(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
  return handle(async () => {
- const session = await requireSession();
- if (session.role !== "super_admin") {
- throw new ApiError(403, "Super admin access required");
- }
+ const session = await requireRole("super_admin");
  const { searchParams } = new URL(req.url);
 
  if (action === "overview") {
@@ -428,6 +426,39 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  return { active, closedToday };
  }
 
+ if (action === "activity") {
+ // Platform audit trail (D8) — who did what, filterable. Pagination
+ // mirrors the users directory so huge trails stay bounded.
+ const q = (searchParams.get("q") ?? "").trim();
+ const universityId = searchParams.get("universityId");
+ const entity = searchParams.get("entity");
+ const page = Math.max(1, Math.floor(Number(searchParams.get("page")) || 1));
+ const pageSize = Math.min(
+ 200,
+ Math.max(1, Math.floor(Number(searchParams.get("pageSize")) || 50))
+ );
+ const where: Record<string, unknown> = {};
+ if (universityId) where.universityId = universityId;
+ if (entity && entity !== "all") where.entity = entity;
+ if (q) {
+ where.OR = [
+ { actorName: { contains: q } },
+ { entityLabel: { contains: q } },
+ { detail: { contains: q } },
+ ];
+ }
+ const [logs, total] = await Promise.all([
+ db.auditLog.findMany({
+ where,
+ orderBy: { createdAt: "desc" },
+ skip: (page - 1) * pageSize,
+ take: pageSize,
+ }),
+ db.auditLog.count({ where }),
+ ]);
+ return { logs, total, page, pages: Math.max(1, Math.ceil(total / pageSize)) };
+ }
+
  throw new ApiError(404, "Unknown action");
  });
 }
@@ -435,10 +466,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 export async function POST(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
  return handle(async () => {
- const session = await requireSession();
- if (session.role !== "super_admin") {
- throw new ApiError(403, "Super admin access required");
- }
+ const session = await requireRole("super_admin");
+ const actor = auditActor(session);
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
  if (action === "universities") {
@@ -524,15 +553,69 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  throw err;
  });
 
+ await logAdminAction({
+ ...actor,
+ universityId: university.id,
+ action: "create",
+ entity: "university",
+ entityId: university.id,
+ entityLabel: university.name,
+ detail: `planId=${university.planId ?? "none"}`,
+ });
+
  return { university };
  }
 
  if (action === "users") {
- // Provision a Department Head or Teacher account inside a department
+ // Provision a platform super admin OR a Department Head / Teacher.
  const { name, email, password, departmentId, role } =
  body as Record<string, string>;
  const cleanName = typeof name === "string" ? name.trim() : "";
  const cleanEmail = typeof email === "string" ? email.trim() : "";
+
+ // Super-admin creation — platform-level account (no university /
+ // department). Previously a second super admin could only be seeded
+ // by hand, leaving the platform one lockout away from being unmanaged.
+ if (role === "super_admin") {
+ if (!cleanName || !cleanEmail || !password) {
+ throw new ApiError(400, "name, email and password are required");
+ }
+ if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+ throw new ApiError(400, "Please provide a valid email address");
+ }
+ validatePassword(password);
+ // NULL universityId rows are distinct under the compound unique, so
+ // duplicates must be checked manually here.
+ const existingSuper = await db.user.findFirst({
+ where: { universityId: null, email: cleanEmail },
+ });
+ if (existingSuper) {
+ throw new ApiError(409, "A super admin with this email already exists");
+ }
+ const superHash = await hashPassword(password);
+ const superAdmin = await db.user.create({
+ data: {
+ universityId: null,
+ departmentId: null,
+ role: "super_admin",
+ fullName: cleanName,
+ email: cleanEmail,
+ password: superHash,
+ isActive: true,
+ },
+ });
+ await logAdminAction({
+ ...actor,
+ action: "create",
+ entity: "user",
+ entityId: superAdmin.id,
+ entityLabel: superAdmin.email ?? cleanName,
+ detail: "role=super_admin",
+ });
+ const { password: _spw, ...safeSuper } = superAdmin;
+ return { user: safeSuper };
+ }
+
  if (!cleanName || !cleanEmail || !password || !departmentId) {
  throw new ApiError(400, "name, email, password and departmentId are required");
  }
@@ -597,6 +680,16 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  isActive: true,
  },
  });
+ await logAdminAction({
+ ...actor,
+ universityId: department.universityId,
+ departmentId: department.id,
+ action: "create",
+ entity: role,
+ entityId: user.id,
+ entityLabel: user.email ?? cleanName,
+ detail: `provisioned into ${department.shortName || department.name}`,
+ });
  const { password: _pw, ...safeUser } = user;
  return { user: safeUser };
  }
@@ -605,6 +698,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  // Run the retention sweep NOW from the System Control tab.
  // Same idempotent sweep the daily cron uses — safe to repeat.
  const result = await runCleanup();
+ await logAdminAction({
+ ...actor,
+ action: "cleanup",
+ entity: "system",
+ detail: `purged=${JSON.stringify(result)}`.slice(0, 500),
+ });
  return { cleanup: result };
  }
 
@@ -650,6 +749,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  sortOrder: Math.max(0, Math.round(Number(sortOrder ?? 0))),
  },
  });
+ await logAdminAction({
+ ...actor,
+ action: "create",
+ entity: "plan",
+ entityId: plan.id,
+ entityLabel: plan.name,
+ detail: `maxD=${plan.maxDepartments} maxT=${plan.maxTeachers} maxS=${plan.maxStudents}`,
+ });
  return { plan };
  }
 
@@ -672,29 +779,50 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  : audience === "admins"
  ? ["dept_admin" as const]
  : ["student", "teacher", "dept_admin"] as const;
- const recipients = await db.user.findMany({
- where: {
+ // Full fan-out in chunks of 500 — the old take-2000 silently truncated
+ // large platforms with no error signal.
+ const scope = {
  isActive: true,
  role: { in: [...roles] },
  ...(typeof universityId === "string" && universityId ? { universityId } : {}),
- },
- select: { id: true },
- take: 2000,
- orderBy: { createdAt: "asc" },
- });
- if (recipients.length === 0) {
- throw new ApiError(400, "No active users match this broadcast scope");
- }
- await db.notification.createMany({
- data: recipients.map((r) => ({
- userId: r.id,
+ };
+ const CHUNK = 500;
+ const base = {
  type: "general",
  title: cleanStr(cleanTitle, 150),
  body: cleanStr(cleanMessage, 500),
  link: typeof link === "string" && link.startsWith("/") ? link.slice(0, 200) : "/?view=dashboard",
- })),
+ };
+ let sent = 0;
+ let cursor: string | undefined;
+ for (;;) {
+ const batch = await db.user.findMany({
+ where: scope,
+ select: { id: true },
+ orderBy: { createdAt: "asc" },
+ ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+ take: CHUNK,
  });
- return { sent: recipients.length };
+ if (batch.length === 0) break;
+ await db.notification.createMany({
+ data: batch.map((r) => ({ userId: r.id, ...base })),
+ });
+ sent += batch.length;
+ cursor = batch[batch.length - 1].id;
+ if (batch.length < CHUNK) break;
+ }
+ if (sent === 0) {
+ throw new ApiError(400, "No active users match this broadcast scope");
+ }
+ await logAdminAction({
+ ...actor,
+ universityId: typeof universityId === "string" && universityId ? universityId : null,
+ action: "broadcast",
+ entity: "notification",
+ entityLabel: cleanTitle.slice(0, 100),
+ detail: `sent=${sent} audience=${audience ?? "all"}`,
+ });
+ return { sent };
  }
 
 
@@ -705,10 +833,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 export async function PUT(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
  return handle(async () => {
- const session = await requireSession();
- if (session.role !== "super_admin") {
- throw new ApiError(403, "Super admin access required");
- }
+ const session = await requireRole("super_admin");
+ const actor = auditActor(session);
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
@@ -730,15 +856,80 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (body[f] !== undefined)
  data[f] = body[f] ? cleanStr(body[f], STRING_CAPS[f]) : null;
  }
+ // Format parity with POST — edits previously skipped the email/URL
+ // checks and a typo'd value rendered straight onto the public portal.
+ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+ if (
+ typeof data.contactEmail === "string" &&
+ data.contactEmail &&
+ !EMAIL_RE.test(data.contactEmail)
+ ) {
+ throw new ApiError(400, "Contact email is not a valid email address");
+ }
+ if (
+ typeof data.websiteURL === "string" &&
+ data.websiteURL &&
+ !/^https?:\/\/.+/i.test(data.websiteURL)
+ ) {
+ throw new ApiError(400, "Website URL must start with http:// or https://");
+ }
  if (body.planId !== undefined) {
  if (body.planId) {
+ const newPlanId = String(body.planId);
  const plan = await db.plan.findUnique({
- where: { id: String(body.planId) },
- select: { id: true },
+ where: { id: newPlanId },
+ select: {
+ id: true,
+ name: true,
+ maxDepartments: true,
+ maxTeachers: true,
+ maxStudents: true,
+ },
  });
  if (!plan) throw new ApiError(400, "Selected plan does not exist");
+ // Plan-downgrade guard: caps only bite on the next create, so moving
+ // a tenant onto a plan smaller than its current usage would strand
+ // it permanently over-limit. Validate BEFORE the swap.
+ const current = await db.university.findUnique({
+ where: { id },
+ select: { planId: true },
+ });
+ if (current && current.planId !== newPlanId) {
+ const [deptCount, teacherCount, studentCount] = await Promise.all([
+ db.department.count({ where: { universityId: id, isActive: true } }),
+ db.user.count({ where: { universityId: id, role: "teacher", isActive: true } }),
+ db.user.count({ where: { universityId: id, role: "student", isActive: true } }),
+ ]);
+ const over: string[] = [];
+ if (plan.maxDepartments >= 0 && deptCount > plan.maxDepartments)
+ over.push(`${deptCount} active departments (plan allows ${plan.maxDepartments})`);
+ if (plan.maxTeachers >= 0 && teacherCount > plan.maxTeachers)
+ over.push(`${teacherCount} active teachers (plan allows ${plan.maxTeachers})`);
+ if (plan.maxStudents >= 0 && studentCount > plan.maxStudents)
+ over.push(`${studentCount} active students (plan allows ${plan.maxStudents})`);
+ if (over.length > 0) {
+ throw new ApiError(
+ 409,
+ `Cannot move this university to the ${plan.name} plan — current usage exceeds it: ${over.join("; ")}. Reduce usage or pick a larger plan.`
+ );
  }
- data.planId = body.planId || null;
+ }
+ data.planId = newPlanId;
+ } else {
+ data.planId = null;
+ }
+ }
+ // Subscription expiry (D14) — previously a dead column.
+ if (body.planExpiresAt !== undefined) {
+ if (body.planExpiresAt === null || body.planExpiresAt === "") {
+ data.planExpiresAt = null;
+ } else {
+ const d = new Date(String(body.planExpiresAt));
+ if (Number.isNaN(d.getTime())) {
+ throw new ApiError(400, "planExpiresAt must be a valid date");
+ }
+ data.planExpiresAt = d;
+ }
  }
  if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
  if (body.slug !== undefined) {
@@ -753,7 +944,20 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (existing) throw new ApiError(409, "Slug already in use");
  data.slug = cleanSlug;
  }
- return db.university.update({ where: { id }, data });
+ if (Object.keys(data).length === 0) {
+ throw new ApiError(400, "Nothing to update");
+ }
+ const updated = await db.university.update({ where: { id }, data });
+ await logAdminAction({
+ ...actor,
+ universityId: updated.id,
+ action: data.isActive === false ? "deactivate" : "update",
+ entity: "university",
+ entityId: updated.id,
+ entityLabel: updated.name,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
+ return updated;
  }
 
  if (action === "users") {
@@ -764,9 +968,22 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  const target = await db.user.findUnique({ where: { id } });
  if (!target) throw new ApiError(404, "User not found");
  if (target.role === "super_admin") {
- throw new ApiError(400, "Super admin accounts cannot be modified here");
- }
+ // Another super admin: activate/deactivate + password reset are safe
+ // (recovery path for a lost platform owner account). Role changes and
+ // identity edits stay locked to avoid a platform lockout.
  if (target.id === session.userId) {
+ throw new ApiError(400, "You cannot modify your own account from here");
+ }
+ const allowedKeys =
+ Object.keys(body).length > 0 &&
+ Object.keys(body).every((k) => k === "isActive" || k === "password");
+ if (!allowedKeys) {
+ throw new ApiError(
+ 400,
+ "Super admin accounts only support activate/deactivate and password reset here"
+ );
+ }
+ } else if (target.id === session.userId) {
  throw new ApiError(400, "You cannot modify your own account from here");
  }
 
@@ -833,6 +1050,22 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  throw err;
  }
  const { password: _pw, ...safeUser } = updated;
+ const changeBits: string[] = [];
+ if (data.isActive !== undefined) changeBits.push(`isActive=${String(data.isActive)}`);
+ if (data.role !== undefined) changeBits.push(`role→${String(data.role)}`);
+ if (data.password !== undefined) changeBits.push("password reset");
+ if (data.studentIdNumber !== undefined) changeBits.push("studentIdNumber set");
+ if (data.rollNumber !== undefined) changeBits.push("rollNumber set");
+ await logAdminAction({
+ ...actor,
+ universityId: updated.universityId,
+ departmentId: updated.departmentId,
+ action: data.isActive === false ? "deactivate" : "update",
+ entity: updated.role,
+ entityId: updated.id,
+ entityLabel: updated.email ?? updated.fullName,
+ detail: changeBits.join(", ") || "update",
+ });
  return { user: safeUser };
  }
 
@@ -861,7 +1094,24 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  return rounded;
  };
  const data: Record<string, unknown> = {};
- if (body.name !== undefined) data.name = String(body.name);
+ if (body.name !== undefined) {
+ const cleanName = String(body.name).trim();
+ if (!cleanName) throw new ApiError(400, "Plan name is required");
+ const newSlug = cleanName
+ .toLowerCase()
+ .replace(/[^a-z0-9]+/g, "-")
+ .replace(/-{2,}/g, "-")
+ .replace(/^-+|-+$/g, "");
+ if (!newSlug) throw new ApiError(400, "Plan name must contain letters or numbers");
+ const clash = await db.plan.findFirst({
+ where: { slug: newSlug, id: { not: id } },
+ });
+ if (clash) throw new ApiError(409, "A plan with this name already exists");
+ // Slug resync on rename — display name and URL slug previously drifted
+ // apart, and duplicate display names became possible on edit.
+ data.name = cleanStr(cleanName, 60);
+ data.slug = newSlug;
+ }
  if (body.tagline !== undefined)
  data.tagline = body.tagline == null ? null : String(body.tagline);
  if (body.priceMonthly !== undefined)
@@ -900,7 +1150,85 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  }
  data.features = JSON.stringify(features);
  }
- return db.plan.update({ where: { id }, data });
+ // Cap-reduction guard: lowering caps below what existing tenants already
+ // use would make their next create fail with a confusing limit error.
+ const capKeys = ["maxDepartments", "maxTeachers", "maxStudents"] as const;
+ if (capKeys.some((k) => data[k] !== undefined)) {
+ const currentPlan = await db.plan.findUnique({
+ where: { id },
+ select: {
+ name: true,
+ maxDepartments: true,
+ maxTeachers: true,
+ maxStudents: true,
+ },
+ });
+ if (currentPlan) {
+ const eff = {
+ maxDepartments:
+ (data.maxDepartments as number | undefined) ?? currentPlan.maxDepartments,
+ maxTeachers:
+ (data.maxTeachers as number | undefined) ?? currentPlan.maxTeachers,
+ maxStudents:
+ (data.maxStudents as number | undefined) ?? currentPlan.maxStudents,
+ };
+ const unis = await db.university.findMany({
+ where: { planId: id, isActive: true },
+ select: { id: true, name: true, shortName: true },
+ });
+ if (unis.length > 0) {
+ const uniIds = unis.map((u) => u.id);
+ const [deptGroups, teacherGroups, studentGroups] = await Promise.all([
+ db.department.groupBy({
+ by: ["universityId"],
+ _count: true,
+ where: { universityId: { in: uniIds }, isActive: true },
+ }),
+ db.user.groupBy({
+ by: ["universityId"],
+ _count: true,
+ where: { universityId: { in: uniIds }, role: "teacher", isActive: true },
+ }),
+ db.user.groupBy({
+ by: ["universityId"],
+ _count: true,
+ where: { universityId: { in: uniIds }, role: "student", isActive: true },
+ }),
+ ]);
+ const deptMap = new Map(deptGroups.map((g) => [g.universityId, g._count]));
+ const teacherMap = new Map(teacherGroups.map((g) => [g.universityId, g._count]));
+ const studentMap = new Map(studentGroups.map((g) => [g.universityId, g._count]));
+ const problems: string[] = [];
+ for (const u of unis) {
+ const bits: string[] = [];
+ if (eff.maxDepartments >= 0 && (deptMap.get(u.id) ?? 0) > eff.maxDepartments)
+ bits.push(`${deptMap.get(u.id) ?? 0} departments > ${eff.maxDepartments}`);
+ if (eff.maxTeachers >= 0 && (teacherMap.get(u.id) ?? 0) > eff.maxTeachers)
+ bits.push(`${teacherMap.get(u.id) ?? 0} teachers > ${eff.maxTeachers}`);
+ if (eff.maxStudents >= 0 && (studentMap.get(u.id) ?? 0) > eff.maxStudents)
+ bits.push(`${studentMap.get(u.id) ?? 0} students > ${eff.maxStudents}`);
+ if (bits.length > 0)
+ problems.push(`${u.shortName || u.name}: ${bits.join(", ")}`);
+ }
+ if (problems.length > 0) {
+ throw new ApiError(
+ 409,
+ `Cannot lower these caps — universities already exceed them: ${problems.join("; ")}`
+ );
+ }
+ }
+ }
+ }
+ const updatedPlan = await db.plan.update({ where: { id }, data });
+ await logAdminAction({
+ ...actor,
+ action: "update",
+ entity: "plan",
+ entityId: updatedPlan.id,
+ entityLabel: updatedPlan.name,
+ detail: `fields=${Object.keys(data).join(",")}`,
+ });
+ return updatedPlan;
  }
 
  throw new ApiError(404, "Unknown action");
@@ -910,10 +1238,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 export async function DELETE(req: NextRequest, ctx: Ctx) {
  const { action } = await ctx.params;
  return handle(async () => {
- const session = await requireSession();
- if (session.role !== "super_admin") {
- throw new ApiError(403, "Super admin access required");
- }
+ const session = await requireRole("super_admin");
+ const actor = auditActor(session);
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
  if (!id) throw new ApiError(400, "id is required");
@@ -923,6 +1249,15 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  const university = await db.university.update({
  where: { id },
  data: { isActive: false },
+ });
+ await logAdminAction({
+ ...actor,
+ universityId: university.id,
+ action: "deactivate",
+ entity: "university",
+ entityId: university.id,
+ entityLabel: university.name,
+ detail: "soft delete (isActive=false)",
  });
  return { university };
  }
@@ -942,6 +1277,13 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  data: { closed: true },
  select: { id: true, closed: true },
  });
+ await logAdminAction({
+ ...actor,
+ action: "force_close",
+ entity: "session",
+ entityId: id,
+ detail: "QR window force-closed platform-wide",
+ });
  return { closed: true, session: updated };
  }
 
@@ -956,6 +1298,13 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
  );
  }
  await db.plan.delete({ where: { id } });
+ await logAdminAction({
+ ...actor,
+ action: "delete",
+ entity: "plan",
+ entityId: id,
+ detail: "hard delete (unused plan)",
+ });
  return { deleted: true };
  }
 

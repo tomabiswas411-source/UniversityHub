@@ -24,6 +24,21 @@ export function toSafeUser(user: User): Omit<User, "password"> {
 }
 export type SafeUser = Omit<User, "password">;
 
+/**
+ * D14: subscription lifecycle — an expired tenant is locked out of login
+ * until a super admin renews. Super admins (universityId null) bypass it.
+ */
+export function assertSubscriptionActive(university: {
+ planExpiresAt?: Date | null;
+} | null): void {
+ if (university?.planExpiresAt && university.planExpiresAt.getTime() < Date.now()) {
+ throw new ApiError(
+ 403,
+ "This university's subscription has expired. Please contact the platform administrator to renew."
+ );
+ }
+}
+
 /** Staff login: email + password */
 export async function findStaffByEmail(email: string) {
  // Emails are stored normalized (trim + lowercase) — lookups must match
@@ -51,6 +66,7 @@ export async function findStudentForLogin(
  if (!university || !university.isActive) {
  throw new ApiError(404, "University not found");
  }
+ assertSubscriptionActive(university);
 
  const student = await db.user.findFirst({
  where: {
@@ -75,7 +91,7 @@ export async function loadSessionUser(
  const user = await db.user.findUnique({
  where: { id: session.userId },
  include: {
- university: { select: { name: true, slug: true } },
+ university: { select: { name: true, slug: true, planExpiresAt: true } },
  department: { select: { name: true, shortName: true } },
  },
  });
@@ -93,7 +109,11 @@ export async function loadSessionUser(
  */
 export function toSessionUser(
  user: User & {
- university?: { name: string | null; slug: string | null } | null;
+ university?: {
+ name: string | null;
+ slug: string | null;
+ planExpiresAt?: Date | null;
+ } | null;
  department?: { name: string | null; shortName: string | null } | null;
  }
 ) {
@@ -104,6 +124,10 @@ export function toSessionUser(
  universitySlug: user.university?.slug ?? null,
  departmentName: user.department?.name ?? null,
  departmentShortName: user.department?.shortName ?? null,
+ // D14: exposed so the dashboard can show a renewal grace banner.
+ planExpiresAt: user.university?.planExpiresAt
+ ? user.university.planExpiresAt.toISOString()
+ : null,
  };
 }
 

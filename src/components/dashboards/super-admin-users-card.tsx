@@ -23,9 +23,10 @@ import {
   ShieldCheck,
   TriangleAlert,
   UserCog,
+  UserPlus,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { apiGet, apiPut } from "@/lib/api-client";
+import { apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import {
   AlertDialog,
@@ -169,6 +170,41 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
   const [roleSid, setRoleSid] = useState("");
   const [roleRoll, setRoleRoll] = useState("");
 
+  /* ---------- add super admin (D8: no more seed-only platform owners) ---------- */
+  const [saDialogOpen, setSaDialogOpen] = useState(false);
+  const [saForm, setSaForm] = useState({ name: "", email: "", password: "" });
+  const [saSaving, setSaSaving] = useState(false);
+
+  const submitSuperAdmin = useCallback(async () => {
+    const name = saForm.name.trim();
+    const email = saForm.email.trim();
+    const password = saForm.password;
+    if (!name || !email || !password) {
+      toast({ title: "Name, email and password are required", variant: "destructive" });
+      return;
+    }
+    if (password.length < 8) {
+      toast({ title: "Password must be at least 8 characters", variant: "destructive" });
+      return;
+    }
+    setSaSaving(true);
+    try {
+      await apiPost("/api/admin/users", { name, email, password, role: "super_admin" });
+      toast({ title: "Super admin created", description: email });
+      setSaDialogOpen(false);
+      setSaForm({ name: "", email: "", password: "" });
+      void load();
+    } catch (err) {
+      toast({
+        title: "Could not create super admin",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSaSaving(false);
+    }
+  }, [saForm, load]);
+
   const patchUser = useCallback(
     async (u: DirectoryUser, patch: Record<string, unknown>, okMsg: string): Promise<boolean> => {
       setBusyId(u.id);
@@ -264,12 +300,22 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
       title="Platform Users"
       icon={ShieldCheck}
       action={
-        stats ? (
-          <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-muted-foreground sm:flex">
-            <Badge variant="outline">{total} users total</Badge>
-            <Badge variant="outline" className="text-green">{stats.active} active here</Badge>
-          </span>
-        ) : undefined
+        <div className="flex items-center gap-2">
+          {stats && (
+            <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-muted-foreground sm:flex">
+              <Badge variant="outline">{total} users total</Badge>
+              <Badge variant="outline" className="text-green">{stats.active} active here</Badge>
+            </span>
+          )}
+          <Button
+            size="sm"
+            className="h-8 bg-[#2D4F35] text-white hover:bg-[#3A6B47]"
+            onClick={() => setSaDialogOpen(true)}
+          >
+            <UserPlus className="mr-1 h-3.5 w-3.5" />
+            Add Super Admin
+          </Button>
+        </div>
       }
     >
       {/* filters */}
@@ -299,6 +345,7 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All roles</SelectItem>
+            <SelectItem value="super_admin">Super Admins</SelectItem>
             <SelectItem value="dept_admin">Department Heads</SelectItem>
             <SelectItem value="teacher">Teachers</SelectItem>
             <SelectItem value="student">Students</SelectItem>
@@ -655,6 +702,57 @@ export function SuperAdminUsersCard({ universities }: { universities: UniOption[
             >
               {roleSaving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
               Update role
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* add super admin dialog (D8) */}
+      <Dialog open={saDialogOpen} onOpenChange={setSaDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Super Admin</DialogTitle>
+            <DialogDescription>
+              Platform-level account — no university or department. They can
+              manage every tenant, plan and user.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="sa-name">Full name</Label>
+            <Input
+              id="sa-name"
+              value={saForm.name}
+              onChange={(e) => setSaForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Platform Owner"
+            />
+            <Label htmlFor="sa-email">Email</Label>
+            <Input
+              id="sa-email"
+              type="email"
+              value={saForm.email}
+              onChange={(e) => setSaForm((f) => ({ ...f, email: e.target.value }))}
+              placeholder="owner@platform.com"
+            />
+            <Label htmlFor="sa-password">Password</Label>
+            <Input
+              id="sa-password"
+              type="password"
+              value={saForm.password}
+              onChange={(e) => setSaForm((f) => ({ ...f, password: e.target.value }))}
+              placeholder="At least 8 characters"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-[#2D4F35] text-white hover:bg-[#3A6B47]"
+              onClick={() => void submitSuperAdmin()}
+              disabled={saSaving}
+            >
+              {saSaving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+              Create super admin
             </Button>
           </DialogFooter>
         </DialogContent>
