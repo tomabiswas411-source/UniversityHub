@@ -2739,12 +2739,12 @@ function TeacherDialog({
  });
  return;
  }
- // Server rejects passwords under 6 characters — catch it client-side.
+ // Server rejects passwords under 8 characters — catch it client-side.
  const pwTrimmed = form.password.trim();
- if (pwTrimmed && pwTrimmed.length < 6) {
+ if (pwTrimmed && pwTrimmed.length < 8) {
  toast({
  title: "Password too short",
- description: "Passwords must be at least 6 characters.",
+ description: "Passwords must be at least 8 characters.",
  variant: "destructive",
  });
  return;
@@ -2790,8 +2790,8 @@ function TeacherDialog({
  onChange={upd("password")}
  placeholder={isEdit ? "Leave blank to keep current" : "Set a login password"}
  />
- {form.password.trim().length > 0 && form.password.trim().length < 6 && (
- <p className="text-[11px] text-rose-600">Password must be at least 6 characters.</p>
+ {form.password.trim().length > 0 && form.password.trim().length < 8 && (
+ <p className="text-[11px] text-rose-600">Password must be at least 8 characters.</p>
  )}
  </Field>
  </div>

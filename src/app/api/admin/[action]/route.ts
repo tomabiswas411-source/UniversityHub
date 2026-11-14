@@ -11,12 +11,15 @@ function cleanStr(v: unknown, maxLen: number): string {
   return String(v).trim().slice(0, maxLen);
 }
 
-const PASSWORD_MIN = 6;
+const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 72; // bcrypt only hashes the first 72 bytes
 
 function validatePassword(pw: string): void {
   if (pw.length < PASSWORD_MIN) {
-    throw new ApiError(400, "Password must be at least 8 characters");
+    throw new ApiError(
+      400,
+      `Password must be at least ${PASSWORD_MIN} characters`
+    );
   }
   if (pw.length > PASSWORD_MAX) {
     throw new ApiError(
@@ -545,6 +548,31 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  where: { id: departmentId },
  });
  if (!department) throw new ApiError(404, "Department not found");
+
+ // Plan-cap guard (parity with /api/manage): super-admin provisioning must
+ // not bypass the university's teacher limit. -1 = unlimited.
+ if (role === "teacher") {
+   const uni = await db.university.findUnique({
+     where: { id: department.universityId },
+     select: { plan: { select: { maxTeachers: true } } },
+   });
+   const limit = uni?.plan?.maxTeachers ?? -1;
+   if (limit >= 0) {
+     const activeTeachers = await db.user.count({
+       where: {
+         universityId: department.universityId,
+         role: "teacher",
+         isActive: true,
+       },
+     });
+     if (activeTeachers >= limit) {
+       throw new ApiError(
+         403,
+         `Your plan limit for teachers is reached (limit ${limit}). Upgrade the plan to add more.`
+       );
+     }
+   }
+ }
 
  // Per-university email uniqueness (User.@@unique([universityId, email]))
  const existing = await db.user.findFirst({
