@@ -72,7 +72,7 @@
 
 ---
 
-## 4. Phase 1 — Command & Control Completion (Day 1–14)
+## 4. Phase 1 — Command & Control Completion (Day 1–14) ✅ EXECUTED (commit `45b9b20`)
 
 **Goal:** dept_admin and super_admin can control *everything* in their scope, with an audit trail and no logic errors.
 
@@ -105,7 +105,9 @@
 
 ---
 
-## 5. Phase 2 — Student Excellence (Day 15–28)
+## 5. Phase 2 — Student Excellence (Day 15–28) ✅ EXECUTED (commit `7669de7`)
+
+**Delivered:** `AssignmentSubmission` model (Turso DDL via `qa/create-submission-turso.ts`), student submit API + file download route (2 MB / MIME / ext guards client+server), teacher submissions GET + `grade-submission` PUT (max-marks clamp, student notification), student Assignments tab submit/re-submit/grade+feedback UI, teacher grading dialog ("X of Y submitted", late flags, not-submitted list), printable UGC transcript (window.print, GPA/CGPA credit-weighted), notice category + alert type filter chips, 75% shortage banner, 15-week BD-anchored attendance heatmap, next-class countdown (Dhaka clock, 30 s tick), self-service profile (phone/guardian/photo canvas-resize ≤ 150 KB), dept CSV helper bug fix (`downloadCsvText` → `downloadCsv`). Browser-verified: student submit → teacher grade → student sees 17/20 + feedback + notification; profile PATCH persisted; transcript PDF renders only the sheet; guard matrix 401/403/400 all pass.
 
 **Goal:** every student facility complete and self-service, matching teacher-grade polish.
 
