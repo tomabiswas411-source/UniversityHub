@@ -102,7 +102,7 @@ import {
 } from "@/components/dashboards/analytics-charts";
 import { timeAgo } from "@/components/shared/notification-bell";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
-import { downloadCsvText } from "@/lib/csv";
+import { downloadCsv, downloadCsvText } from "@/lib/csv";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
@@ -2854,7 +2854,7 @@ export function DeptAdminPanel({
  className="h-9"
  onClick={() => {
  if (filteredResults.length === 0) return;
- downloadCsvText(
+ downloadCsv(
  `results-overview-${new Date().toISOString().slice(0, 10)}.csv`,
  [
  ["course", "student", "roll", "exam", "marks", "max", "grade"],

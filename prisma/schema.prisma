@@ -141,6 +141,7 @@ model User {
   attendanceRecords Attendance[]   @relation("AttendanceStudent")
   attendanceSessions AttendanceSession[] @relation("SessionTeacher")
   notifications   Notification[]
+  submissions     AssignmentSubmission[] @relation("SubmissionStudent")
 
   @@unique([universityId, email])
   @@unique([universityId, studentIdNumber])
@@ -451,10 +452,47 @@ model Assignment {
   department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   course     Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
   teacher    User       @relation(fields: [teacherId], references: [id])
+  submissions AssignmentSubmission[]
 
   @@index([departmentId, courseId])
   @@index([teacherId, isActive]) // teacher insights + assignment lists
   @@index([dueDate]) // upcoming deadline sorting
+}
+
+// Student's answer to an assignment. One row per (assignment, student) —
+// a resubmission overwrites the content but keeps the grading trail
+// (grade/feedback persist until the teacher re-grades).
+// Files ride as data URLs (small doc/image files only — size & type are
+// guarded on both client and server; there is no object store in this
+// deployment).
+model AssignmentSubmission {
+  id           String   @id @default(cuid())
+  assignmentId String
+  studentId    String
+  departmentId String
+
+  text     String?
+  fileName String?
+  fileURL  String? // data URL — ≤ 2 MB decoded, doc/image/zip types only
+
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  resubmitted Boolean  @default(false)
+
+  // Grading (teacher)
+  grade        Float?
+  feedback     String?
+  gradedBy     String?
+  gradedByName String?
+  gradedAt     DateTime?
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student    User       @relation("SubmissionStudent", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, studentId])
+  @@index([assignmentId])
+  @@index([studentId])
+  @@index([departmentId])
 }
 
 model Result {

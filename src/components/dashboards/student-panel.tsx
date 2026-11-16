@@ -12,28 +12,49 @@ import {
  CalendarDays,
  CalendarRange,
  CalendarX2,
+ CheckCircle2,
+ Clock3,
  CloudOff,
  Coffee,
  ClipboardList,
  CreditCard,
+ Download,
+ FileText,
  GraduationCap,
  Hash,
  MapPin,
  Megaphone,
+ Paperclip,
  Pin,
+ Printer,
  RefreshCw,
  ScanLine,
+ Send,
  Sunrise,
+ Timer,
  TrendingUp,
+ TriangleAlert,
+ Upload,
  User,
+ XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { apiGet, apiPatch } from "@/lib/api-client";
+import {
+ Dialog,
+ DialogContent,
+ DialogDescription,
+ DialogHeader,
+ DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/store/auth-store";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
  CategoryBadge,
  ChangeTypeBadge,
@@ -103,6 +124,7 @@ interface StudentProfile {
  programShortName?: string | null;
  phone?: string | null;
  guardianPhone?: string | null;
+ photoURL?: string | null;
  memberSince?: string;
  accountActive?: boolean;
 }
@@ -122,6 +144,23 @@ interface StudentDashboardData {
  todayClasses: number;
  attendance?: StudentAttendance;
  analytics?: StudentAnalytics;
+ /** Phase 2: this student's submissions, keyed lookup built client-side. */
+ submissions?: SubmissionDTO[];
+ /** Phase 2 heatmap source rows (trailing ~150 days). */
+ attendanceDates?: { date: string; status: string }[];
+}
+
+interface SubmissionDTO {
+ id: string;
+ assignmentId: string;
+ text: string | null;
+ fileName: string | null;
+ submittedAt: string;
+ resubmitted: boolean;
+ grade: number | null;
+ feedback: string | null;
+ gradedByName: string | null;
+ gradedAt: string | null;
 }
 
 interface StudentAttendance {
@@ -225,6 +264,281 @@ function dueChip(dueISO: string | null): { label: string; cls: string } {
  ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
  : "bg-muted text-muted-foreground";
  return { label: `${text} · ${fmtDate(dueISO)}`, cls };
+}
+
+/* ---------------- Phase 2 helpers (D17–D26) ---------------- */
+
+/** Current Asia/Dhaka wall-clock time as "HH:MM" — countdowns agree with
+    the timetable no matter what timezone the phone is set to. */
+function bdNowHM(): { hm: string; minutes: number } {
+ const parts = new Intl.DateTimeFormat("en-US", {
+ timeZone: "Asia/Dhaka",
+ hour: "2-digit",
+ minute: "2-digit",
+ hour12: false,
+ }).format(new Date());
+ const hm = parts === "24:00" ? "00:00" : parts;
+ const [h, m] = hm.split(":").map(Number);
+ return { hm, minutes: h * 60 + m };
+}
+
+/** Minutes until a "HH:MM" class today (negative = already started/past). */
+function minutesUntilClass(startTime: string, nowMinutes: number): number {
+ const [h, m] = startTime.split(":").map(Number);
+ return h * 60 + m - nowMinutes;
+}
+
+/** Submission file constants — mirrored server-side (submit-assignment). */
+const SUBMIT_FILE_BYTES_MAX = 2 * 1024 * 1024; // 2 MB
+const SUBMIT_FILE_EXT = /\.(pdf|zip|doc|docx|ppt|pptx|txt|png|jpe?g|webp)$/i;
+
+/** Read a File as a data URL after client-side size/extension guards.
+    Throws Error with a user-facing message when the file is rejected. */
+async function fileToDataUrl(file: File): Promise<string> {
+ if (!SUBMIT_FILE_EXT.test(file.name)) {
+ throw new Error("Allowed file types: pdf, doc, ppt, txt, image or zip");
+ }
+ if (file.size > SUBMIT_FILE_BYTES_MAX) {
+ throw new Error("File is too large (max 2 MB)");
+ }
+ return new Promise((resolve, reject) => {
+ const reader = new FileReader();
+ reader.onload = () => resolve(String(reader.result));
+ reader.onerror = () => reject(new Error("Couldn't read the file"));
+ reader.readAsDataURL(file);
+ });
+}
+
+/** Compact pill-row filter (category/type chips) — shared by the Notices
+    and Alerts tabs. */
+function FilterChips({
+ options,
+ value,
+ onChange,
+ ariaLabel,
+}: {
+ options: { value: string; label: string }[];
+ value: string;
+ onChange: (v: string) => void;
+ ariaLabel: string;
+}) {
+ return (
+ <div
+ role="group"
+ aria-label={ariaLabel}
+ className="flex flex-wrap items-center gap-1.5"
+ >
+ {options.map((o) => (
+ <button
+ key={o.value}
+ type="button"
+ onClick={() => onChange(o.value)}
+ aria-pressed={value === o.value}
+ className={cn(
+ "rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors",
+ value === o.value
+ ? "bg-[#2D4F35] text-white shadow-sm"
+ : "bg-muted text-muted-foreground hover:bg-accent"
+ )}
+ >
+ {o.label}
+ </button>
+ ))}
+ </div>
+ );
+}
+
+/** Personal attendance heatmap (D23-24) — trailing weeks grid, BD week
+    (Saturday-first). One cell per day: worst status wins (absent > late >
+    present > excused), no records = empty. */
+function AttendanceHeatmap({ dates }: { dates: { date: string; status: string }[] }) {
+ const byDate = useMemo(() => {
+ const map = new Map<string, string>();
+ for (const row of dates) {
+ const prev = map.get(row.date);
+ if (!prev) {
+ map.set(row.date, row.status);
+ continue;
+ }
+ // Worst-news-first aggregation across a day's classes.
+ const rank: Record<string, number> = { absent: 0, late: 1, present: 2, excused: 3 };
+ const cur = rank[row.status] ?? 2;
+ const old = rank[prev] ?? 2;
+ if (cur < old) map.set(row.date, row.status);
+ }
+ return map;
+ }, [dates]);
+
+ /* 15 trailing weeks, ending this BD week. Columns = weeks, rows = Sat..Fri. */
+ const weeks = useMemo(() => {
+ // Today in Dhaka as a date-only string.
+ const todayIso = new Intl.DateTimeFormat("en-CA", {
+ timeZone: "Asia/Dhaka",
+ }).format(new Date());
+ const today = parseDateOnly(todayIso);
+ // BD week: Saturday-first row order.
+ const dowOf = (d: Date) => (d.getDay() + 1) % 7; // Sat=0 .. Fri=6
+ // Align to the end of the current week (Friday).
+ const end = new Date(today);
+ end.setDate(end.getDate() + (6 - dowOf(today)));
+ const cols: Date[][] = [];
+ for (let w = 14; w >= 0; w--) {
+ const col: Date[] = [];
+ for (let dow = 0; dow < 7; dow++) {
+ const d = new Date(end);
+ d.setDate(d.getDate() - w * 7 - (6 - dow));
+ col.push(d);
+ }
+ cols.push(col);
+ }
+ return { cols, todayIso };
+ }, []);
+
+ const CELL: Record<string, string> = {
+ present: "bg-[#2D4F35]",
+ late: "bg-amber-400",
+ absent: "bg-rose-500",
+ excused: "bg-slate-300 dark:bg-slate-600",
+ };
+
+ return (
+ <div className="overflow-x-auto pb-1">
+ <div className="flex gap-[3px]">
+ {weeks.cols.map((col, wi) => (
+ <div key={wi} className="flex flex-col gap-[3px]">
+ {col.map((d) => {
+ const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+ const status = byDate.get(iso);
+ const isFuture = iso > weeks.todayIso;
+ const isToday = iso === weeks.todayIso;
+ return (
+ <span
+ key={iso}
+ title={
+ isFuture
+ ? undefined
+ : `${fmtDate(iso)}${status ? ` · ${status}` : " · no class record"}`
+ }
+ className={cn(
+ "h-3 w-3 rounded-[3px]",
+ status ? CELL[status] ?? "bg-muted" : "bg-muted/60",
+ isFuture && "opacity-30",
+ isToday && "ring-1 ring-[#2D4F35] ring-offset-1"
+ )}
+ />
+ );
+ })}
+ </div>
+ ))}
+ </div>
+ <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+ <span className="inline-flex items-center gap-1">
+ <span className="h-2.5 w-2.5 rounded-[3px] bg-[#2D4F35]" /> Present
+ </span>
+ <span className="inline-flex items-center gap-1">
+ <span className="h-2.5 w-2.5 rounded-[3px] bg-amber-400" /> Late
+ </span>
+ <span className="inline-flex items-center gap-1">
+ <span className="h-2.5 w-2.5 rounded-[3px] bg-rose-500" /> Absent
+ </span>
+ <span className="inline-flex items-center gap-1">
+ <span className="h-2.5 w-2.5 rounded-[3px] bg-slate-300 dark:bg-slate-600" /> Excused
+ </span>
+ <span>Last 15 weeks · box marks today</span>
+ </div>
+ </div>
+ );
+}
+
+/** Printable transcript (D19-20) — hidden on screen, shown only in print.
+    GPA/CGPA math mirrors the server's UGC rules (credit-weighted). */
+function TranscriptSheet({
+ profile,
+ analytics,
+}: {
+ profile: StudentProfile;
+ analytics: StudentAnalytics;
+}) {
+ const totalCredits = analytics.coursePerformance.reduce((a, c) => a + c.creditHours, 0);
+ const weighted = analytics.coursePerformance.reduce(
+ (a, c) => a + c.gpaPoint * c.creditHours,
+ 0
+ );
+ const cgpa = totalCredits > 0 ? weighted / totalCredits : 0;
+
+ return (
+ <div id="transcript-print" className="hidden print:block">
+ <style
+ dangerouslySetInnerHTML={{
+ __html: `@media print { body * { visibility: hidden !important; } #transcript-print, #transcript-print * { visibility: visible !important; } #transcript-print { position: absolute; inset: 0; padding: 24px; color: #111; background: #fff; } }`,
+ }}
+ />
+ <div className="text-center">
+ <p className="text-lg font-bold uppercase tracking-wide">
+ {profile.universityName ?? "University"}
+ </p>
+ <p className="text-sm">{profile.departmentName ?? ""}</p>
+ <p className="mt-1 text-base font-bold">Unofficial Academic Transcript</p>
+ </div>
+ <div className="mt-4 grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
+ <p>
+ <b>Name:</b> {profile.fullName}
+ </p>
+ <p>
+ <b>Roll:</b> {profile.rollNumber ?? "—"}
+ </p>
+ <p>
+ <b>Student ID:</b> {profile.studentIdNumber ?? "—"}
+ </p>
+ <p>
+ <b>Program:</b> {profile.programName ?? "—"}
+ </p>
+ <p>
+ <b>Semester:</b> {profile.semester ?? "—"}
+ </p>
+ <p>
+ <b>Section:</b> {profile.section ?? "—"}
+ </p>
+ </div>
+ <table className="mt-4 w-full border-collapse text-sm">
+ <thead>
+ <tr className="border-b-2 border-black text-left">
+ <th className="py-1 pr-2">Course</th>
+ <th className="py-1 pr-2">Title</th>
+ <th className="py-1 pr-2">Credits</th>
+ <th className="py-1 pr-2">Exams</th>
+ <th className="py-1 pr-2">Average</th>
+ <th className="py-1 pr-2">Grade</th>
+ <th className="py-1">GP</th>
+ </tr>
+ </thead>
+ <tbody>
+ {analytics.coursePerformance.map((c) => (
+ <tr key={c.courseId} className="border-b border-neutral-300">
+ <td className="py-1 pr-2 font-semibold">{c.courseCode}</td>
+ <td className="py-1 pr-2">{c.courseName}</td>
+ <td className="py-1 pr-2">{c.creditHours}</td>
+ <td className="py-1 pr-2">{c.examCount}</td>
+ <td className="py-1 pr-2">{c.avgPct}%</td>
+ <td className="py-1 pr-2 font-bold">{c.grade}</td>
+ <td className="py-1">{c.gpaPoint.toFixed(2)}</td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ <div className="mt-4 flex flex-wrap justify-between gap-4 text-sm font-bold">
+ <p>Credits attempted: {totalCredits}</p>
+ <p>CGPA (est.): {cgpa.toFixed(2)} / 4.00</p>
+ </div>
+ <p className="mt-4 text-[10px] leading-snug">
+ Generated from {analytics.totalEntries} entered exam result
+ {analytics.totalEntries === 1 ? "" : "s"} on UniversityHub on{" "}
+ {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}.
+ GPA follows the Bangladesh UGC 4.00 scale. This is an UNOFFICIAL transcript —
+ the official document is issued by the department office.
+ </p>
+ </div>
+ );
 }
 
 /* ---------------- small local pieces ---------------- */
@@ -448,6 +762,128 @@ export function StudentPanel({
  [notifs, notifUnread]
  );
 
+ /* ---- Phase 2 (D17-18): assignment submission ---- */
+ const [submitId, setSubmitId] = useState<string | null>(null);
+ const [submitText, setSubmitText] = useState("");
+ const [submitFile, setSubmitFile] = useState<{ name: string; dataUrl: string } | null>(null);
+ const [submitting, setSubmitting] = useState(false);
+ const submitInputRef = useRef<HTMLInputElement | null>(null);
+
+ const openSubmit = useCallback(
+ (assignment: AssignmentDTO) => {
+ setSubmitId(assignment.id);
+ setSubmitText("");
+ setSubmitFile(null);
+ },
+ []
+ );
+
+ const closeSubmit = useCallback(() => {
+ if (submitting) return;
+ setSubmitId(null);
+ setSubmitText("");
+ setSubmitFile(null);
+ }, [submitting]);
+
+ const pickSubmitFile = useCallback(
+ async (file: File | undefined | null) => {
+ if (!file) return;
+ try {
+ const dataUrl = await fileToDataUrl(file);
+ setSubmitFile({ name: file.name, dataUrl });
+ } catch (err) {
+ toast({
+ title: "File rejected",
+ description: err instanceof Error ? err.message : "Try a different file",
+ variant: "destructive",
+ });
+ }
+ },
+ []
+ );
+
+ const submitAssignment = useCallback(async () => {
+ if (!submitId || submitting) return;
+ setSubmitting(true);
+ try {
+ await apiPost("/api/student/submit-assignment", {
+ assignmentId: submitId,
+ text: submitText.trim() || undefined,
+ fileData: submitFile?.dataUrl,
+ fileName: submitFile?.name,
+ });
+ toast({
+ title: "Submitted",
+ description: "Your teacher has been notified.",
+ });
+ setSubmitId(null);
+ setSubmitText("");
+ setSubmitFile(null);
+ void load(); // refresh submission state
+ } catch (err) {
+ toast({
+ title: "Couldn't submit",
+ description: err instanceof Error ? err.message : "Please try again",
+ variant: "destructive",
+ });
+ } finally {
+ setSubmitting(false);
+ }
+ }, [submitId, submitting, submitText, submitFile, load]);
+
+ /* ---- Phase 2 (D21-22): category / type filters ---- */
+ const [noticeCat, setNoticeCat] = useState("all");
+ const [alertType, setAlertType] = useState("all");
+
+ const noticeCategories = useMemo(() => {
+ const set = new Set((data?.notices ?? []).map((n) => n.category));
+ return [
+ { value: "all", label: "All" },
+ ...Array.from(set).map((c) => ({
+ value: c,
+ label:
+ c === "schedule_change"
+ ? "Schedule"
+ : c.charAt(0).toUpperCase() + c.slice(1),
+ })),
+ ];
+ }, [data]);
+
+ const filteredNotices = useMemo(() => {
+ const list = data?.notices ?? [];
+ if (noticeCat === "all") return list;
+ return list.filter((n) => n.category === noticeCat);
+ }, [data, noticeCat]);
+
+ const ALERT_TYPE_OPTIONS = [
+ { value: "all", label: "All" },
+ { value: "class", label: "Class changes" },
+ { value: "notice", label: "Notices" },
+ { value: "result", label: "Results" },
+ { value: "assignment", label: "Assignments" },
+ { value: "general", label: "General" },
+ ] as const;
+
+ const filteredNotifs = useMemo(() => {
+ if (alertType === "all") return notifs;
+ const clsTypes = new Set(["class_cancelled", "class_rescheduled", "room_changed", "extra_class", "time_changed"]);
+ return notifs.filter((n) => {
+ if (alertType === "class") return clsTypes.has(n.type);
+ return n.type === alertType;
+ });
+ }, [notifs, alertType]);
+
+ /* ---- Phase 2 (D25-26): next-class countdown (BD clock, 30s tick) ---- */
+ const [nowMin, setNowMin] = useState(() => bdNowHM().minutes);
+ useEffect(() => {
+ const t = setInterval(() => setNowMin(bdNowHM().minutes), 30_000);
+ return () => clearInterval(t);
+ }, []);
+
+ const printTranscript = useCallback(() => {
+ window.print();
+ }, []);
+
  /* ---- profile (API is source of truth, auth store as fallback) ---- */
  const profile = data?.profile ?? null;
  const fullName = profile?.fullName || authUser?.fullName || "Student";
@@ -471,6 +907,14 @@ export function StudentPanel({
  .sort((a, b) => a.startTime.localeCompare(b.startTime));
  }, [data, today]);
 
+ /* Next upcoming class today — rendered as a live countdown chip. A
+ class stays visible until ~15 min past its start. */
+ const nextClass = useMemo(() => {
+ return todayList
+ .map((s) => ({ s, diff: minutesUntilClass(s.startTime, nowMin) }))
+ .find((x) => x.diff >= -15);
+ }, [todayList, nowMin]);
+
  const uniqueCourses = useMemo(
  () => new Set((data?.schedules ?? []).map((s) => s.courseCode)).size,
  [data]
@@ -484,6 +928,13 @@ export function StudentPanel({
  return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
  });
  }, [data]);
+
+ /* Phase 2 (D17-18): submission state per assignment */
+ const submissionByAssignment = useMemo(
+ () => new Map((data?.submissions ?? []).map((s) => [s.assignmentId, s])),
+ [data]
+ );
+ const submittedCount = (data?.submissions ?? []).length;
 
  const soonestDue = sortedAssignments.find(
  // Dhaka-day math (daysUntilDate) — NOT raw Date.now(): the assignment
@@ -682,6 +1133,44 @@ export function StudentPanel({
  {/* ===== Today & Routine ===== */}
  <TabsContent value="routine" className="mt-4">
  <motion.div {...tabMotion} className="space-y-6">
+ {/* Next-class countdown (D25-26) */}
+ {nextClass && (
+ <div
+ className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-[#2D4F35]/25 bg-gradient-to-r from-[#2D4F35]/8 to-transparent p-4"
+ role="status"
+ aria-live="polite"
+ >
+ <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#2D4F35] text-white shadow">
+ <Timer className="h-4.5 w-4.5" aria-hidden />
+ </span>
+ <div className="min-w-0">
+ <p className="text-sm font-bold">
+ Next class{" "}
+ <span className="font-medium text-muted-foreground">
+ · {nextClass.s.courseCode} · Room {nextClass.s.roomNumber}
+ </span>
+ </p>
+ <p className="text-xs text-muted-foreground">
+ Starts {fmtTime(nextClass.s.startTime)} with {nextClass.s.teacherName}
+ </p>
+ </div>
+ <span
+ className={cn(
+ "ml-auto inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold",
+ nextClass.diff <= 0
+ ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+ : "bg-[#2D4F35] text-white"
+ )}
+ >
+ <Clock3 className="h-3.5 w-3.5" aria-hidden />
+ {nextClass.diff <= 0
+ ? "Happening now"
+ : nextClass.diff >= 60
+ ? `in ${Math.floor(nextClass.diff / 60)}h ${nextClass.diff % 60}m`
+ : `in ${nextClass.diff} min`}
+ </span>
+ </div>
+ )}
  {/* Today's classes — timeline */}
  <SectionCard
  title="Today's Classes"
@@ -816,23 +1305,35 @@ export function StudentPanel({
  title="Notices"
  icon={Megaphone}
  action={
- (data?.notices ?? []).length > 0 ? (
+ <div className="flex flex-col items-start gap-2 sm:items-end">
  <span className="text-xs font-medium text-muted-foreground">
- {(data?.notices ?? []).length} notice
- {(data?.notices ?? []).length === 1 ? "" : "s"}
+ {filteredNotices.length} notice
+ {filteredNotices.length === 1 ? "" : "s"}
+ {(data?.notices ?? []).length !== filteredNotices.length &&
+ ` of ${(data?.notices ?? []).length}`}
  </span>
- ) : undefined
+ <FilterChips
+ options={noticeCategories}
+ value={noticeCat}
+ onChange={setNoticeCat}
+ ariaLabel="Filter notices by category"
+ />
+ </div>
  }
  >
- {(data?.notices ?? []).length === 0 ? (
+ {filteredNotices.length === 0 ? (
  <EmptyState
  icon={Megaphone}
- title="No notices yet"
+ title={
+ (data?.notices ?? []).length === 0
+ ? "No notices yet"
+ : "No notices in this category"
+ }
  hint="Department announcements will appear here."
  />
  ) : (
  <div className="max-h-[60vh] divide-y overflow-y-auto pr-1 sm:max-h-96">
- {(data?.notices ?? []).map((n) => {
+ {filteredNotices.map((n) => {
  const isExpanded = !!expandedNotices[n.id];
  const showToggle =
  n.content.length > 180 || n.content.split("\n").length > 4;
@@ -867,8 +1368,27 @@ export function StudentPanel({
  {isExpanded ? "Show less" : "Show more"}
  </button>
  )}
- <p className="mt-2 text-[11px] text-muted-foreground/80">
+ {n.attachmentURL && (
+ <a
+ href={n.attachmentURL}
+ target="_blank"
+ rel="noopener noreferrer"
+ className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-green hover:bg-accent"
+ >
+ <Paperclip className="h-3.5 w-3.5" aria-hidden />
+ Attachment
+ </a>
+ )}
+ <p className="mt-2 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground/80">
+ <span>
  Posted by {n.postedByName} · {timeAgo(n.createdAt)}
+ </span>
+ {n.expiryDate && (
+ <span className="inline-flex items-center gap-1">
+ · <CalendarX2 className="h-3 w-3" aria-hidden />
+ Expires {fmtDate(n.expiryDate)}
+ </span>
+ )}
  </p>
  </article>
  );
@@ -889,6 +1409,8 @@ export function StudentPanel({
  sortedAssignments.length > 0 ? (
  <span className="text-xs font-medium text-muted-foreground">
  {sortedAssignments.length} total
+ {submittedCount > 0 &&
+ ` · ${submittedCount} submitted`}
  </span>
  ) : undefined
  }
@@ -903,6 +1425,8 @@ export function StudentPanel({
  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
  {sortedAssignments.map((a) => {
  const chip = dueChip(a.dueDate);
+ const sub = submissionByAssignment.get(a.id);
+ const graded = sub?.grade != null;
  return (
  <article
  key={a.id}
@@ -937,7 +1461,7 @@ export function StudentPanel({
  <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">
  {a.description}
  </p>
- <div className="mt-auto pt-3">
+ <div className="mt-3 flex flex-wrap items-center gap-2">
  <span
  className={cn(
  "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
@@ -947,6 +1471,70 @@ export function StudentPanel({
  <CalendarClock className="h-3 w-3" aria-hidden />
  {chip.label}
  </span>
+ {/* Submission state chip */}
+ {graded ? (
+ <span className="inline-flex items-center gap-1 rounded-full bg-green/10 px-2.5 py-1 text-[11px] font-bold text-green">
+ <CheckCircle2 className="h-3 w-3" aria-hidden />
+ Graded {sub?.grade}
+ {a.maxMarks != null ? `/${a.maxMarks}` : ""}
+ </span>
+ ) : sub ? (
+ <span
+ className={cn(
+ "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+ sub.submittedAt && a.dueDate &&
+ new Date(sub.submittedAt).getTime() >
+ new Date(a.dueDate).getTime()
+ ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+ : "bg-green/10 text-green"
+ )}
+ >
+ <CheckCircle2 className="h-3 w-3" aria-hidden />
+ Submitted
+ {sub.resubmitted ? " again" : ""} · {timeAgo(sub.submittedAt)}
+ </span>
+ ) : (
+ <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
+ <XCircle className="h-3 w-3" aria-hidden />
+ Not submitted
+ </span>
+ )}
+ </div>
+ {/* Graded feedback (D17-18) */}
+ {graded && sub?.feedback && (
+ <div className="mt-2 rounded-xl border border-green/30 bg-green/5 p-2.5">
+ <p className="text-[11px] font-bold text-green">Teacher feedback</p>
+ <p className="mt-0.5 whitespace-pre-line text-xs text-muted-foreground">
+ {sub.feedback}
+ </p>
+ {sub.gradedByName && (
+ <p className="mt-1 text-[10px] text-muted-foreground/70">
+ — {sub.gradedByName}
+ {sub.gradedAt ? ` · ${timeAgo(sub.gradedAt)}` : ""}
+ </p>
+ )}
+ </div>
+ )}
+ <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
+ <Button
+ size="sm"
+ variant={sub ? "outline" : "default"}
+ className={cn("h-8 rounded-full px-3 text-xs", !sub && GRADIENT_BTN)}
+ onClick={() => openSubmit(a)}
+ >
+ <Upload className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+ {sub ? "Re-submit" : "Submit"}
+ </Button>
+ {sub?.fileName && (
+ <a
+ href={`/api/student/submission-file?id=${sub.id}`}
+ className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-accent"
+ download={sub.fileName}
+ >
+ <Paperclip className="h-3 w-3" aria-hidden />
+ {sub.fileName}
+ </a>
+ )}
  </div>
  </article>
  );
@@ -959,7 +1547,48 @@ export function StudentPanel({
 
  {/* ===== Results ===== */}
  <TabsContent value="results" className="mt-4">
- <motion.div {...tabMotion}>
+ <motion.div {...tabMotion} className="space-y-4">
+ {/* Printable transcript (D19-20) */}
+ {data?.analytics?.hasData && (
+ <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border bg-card p-4">
+ <div className="min-w-0">
+ <p className="text-sm font-bold">Official transcript copy</p>
+ <p className="text-xs text-muted-foreground">
+ GPA {data.analytics.estimatedGPA.toFixed(2)} / 4.00 ·{" "}
+ {data.analytics.coursePerformance.length} course
+ {data.analytics.coursePerformance.length === 1 ? "" : "s"} ·{" "}
+ {data.analytics.totalEntries} exam entries
+ </p>
+ </div>
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-9 rounded-full px-4 text-xs"
+ onClick={printTranscript}
+ aria-label="Print unofficial transcript"
+ >
+ <Printer className="mr-1.5 h-4 w-4" aria-hidden />
+ Print transcript
+ </Button>
+ </div>
+ )}
+ {data?.analytics && (
+ <TranscriptSheet
+ profile={{
+ fullName,
+ rollNumber,
+ studentIdNumber,
+ semester,
+ section,
+ departmentName: profile?.departmentName ?? null,
+ departmentShortName: profile?.departmentShortName ?? null,
+ universityName: profile?.universityName ?? null,
+ programId: null,
+ programName: profile?.programName ?? null,
+ }}
+ analytics={data.analytics}
+ />
+ )}
  <SectionCard title="Exam Results" icon={Award}>
  {resultGroups.length === 0 ? (
  <EmptyState
@@ -1018,6 +1647,47 @@ export function StudentPanel({
  {/* Attendance — visible even before any results are published */}
  {data?.attendance?.hasData ? (
  <div className="mb-4 space-y-4">
+ {/* 75% shortage warning (D23-24) — exam-eligibility risk, worst first */}
+ {(() => {
+ const shortage = data.attendance.perCourse.filter((c) => c.pct < 75);
+ if (shortage.length === 0) return null;
+ return (
+ <div
+ className="flex flex-col gap-2 rounded-2xl border border-rose-300 bg-rose-50 p-4 dark:border-rose-800 dark:bg-rose-950/30 sm:flex-row sm:items-start"
+ role="alert"
+ >
+ <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600 dark:bg-rose-900/60 dark:text-rose-300">
+ <TriangleAlert className="h-5 w-5" aria-hidden />
+ </span>
+ <div className="min-w-0">
+ <p className="text-sm font-bold text-rose-700 dark:text-rose-300">
+ Attendance below 75% in {shortage.length} course
+ {shortage.length === 1 ? "" : "s"}
+ </p>
+ <p className="mt-0.5 text-xs text-rose-600/80 dark:text-rose-400/80">
+ 75% attendance is usually required to sit for exams:{" "}
+ {shortage.map((c) => `${c.courseCode} (${c.pct}%)`).join(", ")}
+ </p>
+ </div>
+ </div>
+ );
+ })()}
+ {/* Personal monthly heatmap (D23-24) */}
+ <SectionCard title="Attendance heatmap" icon={CalendarCheck}>
+ {(() => {
+ const dates = data?.attendanceDates ?? [];
+ if (dates.length === 0) {
+ return (
+ <EmptyState
+ icon={CalendarDays}
+ title="No attendance records yet"
+ hint="Your day-by-day attendance pattern will appear here."
+ />
+ );
+ }
+ return <AttendanceHeatmap dates={dates} />;
+ })()}
+ </SectionCard>
  {/* ONE sheet per subject — every class day in order, like the teacher's register */}
  <StudentAttendanceSheetCard />
  <div className="flex flex-wrap items-center justify-around gap-4 rounded-xl border bg-card p-5 shadow-sm">
@@ -1220,6 +1890,7 @@ export function StudentPanel({
  title="Notifications"
  icon={Bell}
  action={
+ <div className="flex flex-col items-start gap-2 sm:items-end">
  <Button
  variant="ghost"
  size="sm"
@@ -1229,6 +1900,13 @@ export function StudentPanel({
  >
  Mark all read
  </Button>
+ <FilterChips
+ options={[...ALERT_TYPE_OPTIONS]}
+ value={alertType}
+ onChange={setAlertType}
+ ariaLabel="Filter notifications by type"
+ />
+ </div>
  }
  >
  {notifsLoading ? (
@@ -1246,15 +1924,17 @@ export function StudentPanel({
  <RefreshCw className="mr-2 h-4 w-4" aria-hidden /> Retry
  </Button>
  </div>
- ) : notifs.length === 0 ? (
+ ) : filteredNotifs.length === 0 ? (
  <EmptyState
  icon={Bell}
- title="No notifications yet"
+ title={
+ notifs.length === 0 ? "No notifications yet" : "Nothing in this filter"
+ }
  hint="Class changes, results and announcements will ping you here."
  />
  ) : (
  <div className="max-h-[60vh] divide-y overflow-y-auto pr-1 sm:max-h-96">
- {notifs.map((n) => {
+ {filteredNotifs.map((n) => {
  const { Icon, cls } = typeIcon(n.type);
  return (
  <button
@@ -1424,15 +2104,131 @@ export function StudentPanel({
  programName: profile?.programName ?? null,
  phone: profile?.phone ?? null,
  guardianPhone: profile?.guardianPhone ?? null,
+ photoURL: profile?.photoURL ?? null,
  memberSince: profile?.memberSince ?? new Date().toISOString(),
  accountActive: profile?.accountActive ?? true,
  }}
  teachers={data?.teachers ?? []}
  courses={data?.courses ?? []}
+ onChanged={() => void load()}
  />
  </motion.div>
  </TabsContent>
  </Tabs>
+
+ {/* ---------- Assignment submit dialog (D17-18) ---------- */}
+ <Dialog
+ open={submitId !== null}
+ onOpenChange={(open) => {
+ if (!open) closeSubmit();
+ }}
+ >
+ <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+ <DialogHeader>
+ <DialogTitle>
+ {submitId
+ ? (data?.assignments.find((a) => a.id === submitId)?.title ??
+ "Submit assignment")
+ : "Submit assignment"}
+ </DialogTitle>
+ <DialogDescription>
+ Write your answer and/or attach a file (max 2 MB — pdf, doc, ppt,
+ txt, image, zip). You can re-submit until it&apos;s graded.
+ </DialogDescription>
+ </DialogHeader>
+ <form
+ onSubmit={(e) => {
+ e.preventDefault();
+ void submitAssignment();
+ }}
+ className="space-y-4"
+ >
+ <div className="space-y-1.5">
+ <Label htmlFor="sub-text">Your answer</Label>
+ <Textarea
+ id="sub-text"
+ rows={6}
+ placeholder="Type your answer here…"
+ value={submitText}
+ onChange={(e) => setSubmitText(e.target.value)}
+ maxLength={8000}
+ disabled={submitting}
+ />
+ <p className="text-[11px] text-muted-foreground">
+ {submitText.length}/8000 characters
+ </p>
+ </div>
+ <div className="space-y-1.5">
+ <Label htmlFor="sub-file">Attached file</Label>
+ <input
+ ref={submitInputRef}
+ id="sub-file"
+ type="file"
+ className="hidden"
+ accept=".pdf,.zip,.doc,.docx,.ppt,.pptx,.txt,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp,text/plain"
+ onChange={(e) => {
+ void pickSubmitFile(e.target.files?.[0]);
+ e.target.value = ""; // allow re-picking the same file
+ }}
+ />
+ <div className="flex flex-wrap items-center gap-2">
+ <Button
+ type="button"
+ variant="outline"
+ size="sm"
+ className="h-9"
+ disabled={submitting}
+ onClick={() => submitInputRef.current?.click()}
+ >
+ <Paperclip className="mr-1.5 h-4 w-4" aria-hidden />
+ Choose file
+ </Button>
+ {submitFile && (
+ <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-xs font-semibold">
+ <FileText className="h-3.5 w-3.5" aria-hidden />
+ {submitFile.name}
+ <button
+ type="button"
+ aria-label="Remove attachment"
+ className="ml-1 text-muted-foreground hover:text-rose-500"
+ onClick={() => setSubmitFile(null)}
+ >
+ ×
+ </button>
+ </span>
+ )}
+ </div>
+ </div>
+ <div className="flex justify-end gap-2">
+ <Button
+ type="button"
+ variant="ghost"
+ onClick={closeSubmit}
+ disabled={submitting}
+ >
+ Cancel
+ </Button>
+ <Button
+ type="submit"
+ className={cn(GRADIENT_BTN, "min-h-11 sm:min-h-10")}
+ disabled={submitting || (!submitText.trim() && !submitFile)}
+ >
+ {submitting ? (
+ <>
+ <RefreshCw className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+ Submitting…
+ </>
+ ) : (
+ <>
+ <Send className="mr-2 h-4 w-4" aria-hidden />
+ Submit
+ </>
+ )}
+ </Button>
+ </div>
+ </form>
+ </DialogContent>
+ </Dialog>
  </div>
  );
 }

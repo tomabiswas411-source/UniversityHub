@@ -1,34 +1,32 @@
 "use client";
 
-/**
- * StudentProfileTab — the student's account, people and how-to hub.
- *
- * 1. My Profile        — identity card (roll, ID, program, contacts, status)
- * 2. My Courses        — this semester's courses with credit hours
- * 3. My Teachers       — who teaches what, with contact details
- * 4. How attendance works — scan QR, statuses, the 75% exam rule
- *
- * All data comes from /api/student/dashboard (already loaded by the
- * panel) — ZERO extra server requests for this tab.
- */
-
+import { useCallback, useRef, useState } from "react";
 import {
   BookOpen,
+  Check,
   GraduationCap,
   Info,
   Mail,
   MapPin,
+  Pencil,
   Phone,
   QrCode,
   ScanLine,
   ShieldCheck,
   UserRound,
   Users,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { apiPatch } from "@/lib/api-client";
+import { toast } from "@/hooks/use-toast";
 import { initials } from "@/lib/format";
 import { parseDateOnly } from "@/lib/date-bd";
 import { EmptyState, SectionCard } from "@/components/dashboards/dashboard-shared";
+import { cn } from "@/lib/utils";
 
 export interface StudentTeacher {
   id: string;
@@ -49,6 +47,51 @@ export interface StudentCourse {
   semester: number;
 }
 
+/* ---------------- Phase 2 (D27): photo resize ---------------- */
+const PHOTO_MAX_BYTES = 150 * 1024; // 150 KB — mirrors the server guard
+
+/** Client-side canvas resize: square-crop to 256px JPEG. Iteratively
+    lowers quality until the data URL fits the server's 150 KB cap. */
+async function resizePhotoToDataUrl(file: File): Promise<string> {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+    throw new Error("Photo must be a PNG, JPEG or WebP image");
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("Photo is too large (max 10 MB original)");
+  }
+  const bitmap = await createImageBitmap(file);
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Couldn't process the image");
+  // Square center-crop
+  const side = Math.min(bitmap.width, bitmap.height);
+  ctx.drawImage(
+    bitmap,
+    (bitmap.width - side) / 2,
+    (bitmap.height - side) / 2,
+    side,
+    side,
+    0,
+    0,
+    size,
+    size
+  );
+  bitmap.close();
+  let quality = 0.85;
+  let dataUrl = canvas.toDataURL("image/jpeg", quality);
+  while (dataUrl.length * 0.75 > PHOTO_MAX_BYTES && quality > 0.4) {
+    quality -= 0.15;
+    dataUrl = canvas.toDataURL("image/jpeg", quality);
+  }
+  if (dataUrl.length * 0.75 > PHOTO_MAX_BYTES) {
+    throw new Error("Photo is too large after compression — try a simpler image");
+  }
+  return dataUrl;
+}
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3 border-b border-border/60 py-2 last:border-0">
@@ -62,6 +105,7 @@ export function StudentProfileTab({
   profile,
   teachers,
   courses,
+  onChanged,
 }: {
   profile: {
     fullName: string;
@@ -74,11 +118,15 @@ export function StudentProfileTab({
     programName: string | null;
     phone: string | null;
     guardianPhone: string | null;
+    photoURL?: string | null;
     memberSince: string;
     accountActive: boolean;
   };
   teachers: StudentTeacher[];
   courses: StudentCourse[];
+  /** Called after a successful profile save — the panel reloads so the
+      API stays the source of truth. */
+  onChanged?: () => void;
 }) {
   const totalCredits = courses.reduce((sum, c) => sum + (c.creditHours ?? 0), 0);
   const memberSince = parseDateOnly(profile.memberSince.slice(0, 10)).toLocaleDateString(
@@ -86,13 +134,146 @@ export function StudentProfileTab({
     { day: "numeric", month: "long", year: "numeric" }
   );
 
+  /* ---- Phase 2 (D27): self-service edit state ---- */
+  const [editing, setEditing] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState(profile.phone ?? "");
+  const [guardianDraft, setGuardianDraft] = useState(profile.guardianPhone ?? "");
+  const [photoDraft, setPhotoDraft] = useState<string | null | undefined>(undefined); // undefined = untouched
+  const [saving, setSaving] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+
+  const startEdit = useCallback(() => {
+    setPhoneDraft(profile.phone ?? "");
+    setGuardianDraft(profile.guardianPhone ?? "");
+    setPhotoDraft(undefined);
+    setEditing(true);
+  }, [profile.phone, profile.guardianPhone]);
+
+  const pickPhoto = useCallback(async (file: File | undefined | null) => {
+    if (!file) return;
+    try {
+      const dataUrl = await resizePhotoToDataUrl(file);
+      setPhotoDraft(dataUrl);
+    } catch (err) {
+      toast({
+        title: "Photo rejected",
+        description: err instanceof Error ? err.message : "Try a different image",
+        variant: "destructive",
+      });
+    }
+  }, []);
+
+  const saveProfile = useCallback(async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = {};
+      if (phoneDraft !== (profile.phone ?? "")) body.phone = phoneDraft;
+      if (guardianDraft !== (profile.guardianPhone ?? "")) body.guardianPhone = guardianDraft;
+      if (photoDraft !== undefined) body.photoURL = photoDraft;
+      if (Object.keys(body).length === 0) {
+        setEditing(false);
+        return;
+      }
+      await apiPatch("/api/student/profile", body);
+      toast({ title: "Profile updated" });
+      setEditing(false);
+      onChanged?.();
+    } catch (err) {
+      toast({
+        title: "Couldn't save profile",
+        description: err instanceof Error ? err.message : "Please try again",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }, [saving, phoneDraft, guardianDraft, photoDraft, profile.phone, profile.guardianPhone, onChanged]);
+
+  const shownPhoto = photoDraft === undefined ? (profile.photoURL ?? null) : photoDraft;
+
   return (
     <div className="mt-4 grid grid-cols-1 gap-6 xl:grid-cols-2">
       {/* ---------- Identity card ---------- */}
-      <SectionCard title="My Profile" icon={UserRound}>
+      <SectionCard
+        title="My Profile"
+        icon={UserRound}
+        action={
+          editing ? (
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 rounded-full px-3 text-xs"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+              >
+                <X className="mr-1 h-3.5 w-3.5" aria-hidden />
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 rounded-full bg-[#2D4F35] px-3 text-xs text-white hover:bg-[#24402b]"
+                onClick={() => void saveProfile()}
+                disabled={saving}
+              >
+                {saving ? "Saving…" : (
+                  <>
+                    <Check className="mr-1 h-3.5 w-3.5" aria-hidden />
+                    Save
+                  </>
+                )}
+              </Button>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 rounded-full px-3 text-xs"
+              onClick={startEdit}
+              aria-label="Edit contact details and photo"
+            >
+              <Pencil className="mr-1 h-3.5 w-3.5" aria-hidden />
+              Edit
+            </Button>
+          )
+        }
+      >
         <div className="flex items-center gap-4">
-          <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-xl font-extrabold text-white shadow-lg shadow-[#2D4F35]/25">
-            {initials(profile.fullName)}
+          <span className="relative shrink-0">
+            {shownPhoto ? (
+              <img
+                src={shownPhoto}
+                alt={`${profile.fullName}'s profile photo`}
+                className="h-16 w-16 rounded-2xl object-cover shadow-lg shadow-[#2D4F35]/25"
+              />
+            ) : (
+              <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#2D4F35] to-[#4A7C58] text-xl font-extrabold text-white shadow-lg shadow-[#2D4F35]/25">
+                {initials(profile.fullName)}
+              </span>
+            )}
+            {editing && (
+              <>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  className="hidden"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(e) => {
+                    void pickPhoto(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => photoInputRef.current?.click()}
+                  aria-label="Change profile photo"
+                  className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-[#2D4F35] text-white shadow transition-transform hover:scale-110"
+                >
+                  <Pencil className="h-3 w-3" aria-hidden />
+                </button>
+              </>
+            )}
           </span>
           <div className="min-w-0">
             <p className="truncate text-lg font-extrabold leading-tight">{profile.fullName}</p>
@@ -127,13 +308,49 @@ export function StudentProfileTab({
           <InfoRow label="Program" value={profile.programName ?? ""} />
           <InfoRow label="Department" value={profile.departmentName ?? ""} />
           <InfoRow label="University" value={profile.universityName ?? ""} />
-          <InfoRow label="My Phone" value={profile.phone ?? ""} />
-          <InfoRow label="Guardian Phone" value={profile.guardianPhone ?? ""} />
+          {editing ? (
+            <div className="mt-3 space-y-3 rounded-xl border bg-background/60 p-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="sp-phone">My phone</Label>
+                <Input
+                  id="sp-phone"
+                  type="tel"
+                  placeholder="+8801XXXXXXXXX"
+                  value={phoneDraft}
+                  onChange={(e) => setPhoneDraft(e.target.value)}
+                  maxLength={30}
+                  disabled={saving}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="sp-guardian">Guardian phone</Label>
+                <Input
+                  id="sp-guardian"
+                  type="tel"
+                  placeholder="+8801XXXXXXXXX"
+                  value={guardianDraft}
+                  onChange={(e) => setGuardianDraft(e.target.value)}
+                  maxLength={30}
+                  disabled={saving}
+                />
+              </div>
+              {photoDraft !== undefined && (
+                <p className="text-xs text-muted-foreground">
+                  New photo selected — it will be uploaded when you save.
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <InfoRow label="My Phone" value={profile.phone ?? ""} />
+              <InfoRow label="Guardian Phone" value={profile.guardianPhone ?? ""} />
+            </>
+          )}
           <InfoRow label="Member Since" value={memberSince} />
         </div>
         <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
-          To correct your name, phone or guardian contact, contact your department office —
-          students cannot edit academic records themselves.
+          You can edit your contact details and photo yourself. Name, roll,
+          semester and section changes go through your department office.
         </p>
       </SectionCard>
 

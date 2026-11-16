@@ -642,6 +642,90 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  return { assignments };
  }
 
+ // Phase 2 (D17-18): submissions for one of the teacher's assignments —
+ // roster of the batch joined with who submitted, so the teacher also
+ // sees who has NOT submitted yet.
+ if (action === "submissions") {
+ const id = searchParams.get("id");
+ if (!id) throw new ApiError(400, "id query param is required");
+ const assignment = await db.assignment.findUnique({
+ where: { id },
+ include: { course: { select: { code: true, name: true, programId: true, semester: true } } },
+ });
+ if (!assignment) throw new ApiError(404, "Assignment not found");
+ if (assignment.teacherId !== session.userId && session.role !== "dept_admin") {
+ throw new ApiError(403, "Not your assignment");
+ }
+ assertDepartmentAccess(session, assignment.departmentId);
+
+ const [submissions, roster] = await Promise.all([
+ db.assignmentSubmission.findMany({
+ where: { assignmentId: id },
+ orderBy: { submittedAt: "desc" },
+ }),
+ db.user.findMany({
+ where: {
+ departmentId: assignment.departmentId,
+ role: "student",
+ isActive: true,
+ programId: assignment.course?.programId,
+ semester: assignment.course?.semester,
+ },
+ select: { id: true, fullName: true, rollNumber: true, studentIdNumber: true, photoURL: true },
+ orderBy: { rollNumber: "asc" },
+ }),
+ ]);
+
+ const byStudent = new Map(submissions.map((s) => [s.studentId, s]));
+ const rows = roster.map((st) => {
+ const sub = byStudent.get(st.id);
+ return {
+ studentId: st.id,
+ studentName: st.fullName,
+ rollNumber: st.rollNumber,
+ studentIdNumber: st.studentIdNumber,
+ photoURL: st.photoURL,
+ submission: sub
+  ? {
+   id: sub.id,
+   text: sub.text,
+   fileName: sub.fileName,
+   fileURL: sub.fileURL,
+   submittedAt: sub.submittedAt.toISOString(),
+   resubmitted: sub.resubmitted,
+   grade: sub.grade,
+   feedback: sub.feedback,
+   gradedByName: sub.gradedByName,
+   gradedAt: sub.gradedAt?.toISOString() ?? null,
+   isLate: !!(assignment.dueDate && sub.submittedAt.getTime() > assignment.dueDate.getTime()),
+  }
+  : null,
+ };
+ });
+ // Submitted first (newest), then the missing ones by roll
+ rows.sort((a, b) => {
+ if (a.submission && b.submission) {
+  return new Date(b.submission.submittedAt).getTime() - new Date(a.submission.submittedAt).getTime();
+ }
+ if (a.submission) return -1;
+ if (b.submission) return 1;
+ return (a.rollNumber ?? "").localeCompare(b.rollNumber ?? "");
+ });
+
+ return {
+ assignment: {
+  id: assignment.id,
+  title: assignment.title,
+  dueDate: assignment.dueDate?.toISOString() ?? null,
+  maxMarks: assignment.maxMarks,
+  courseCode: assignment.course?.code ?? "",
+ },
+ rows,
+ submittedCount: submissions.length,
+ rosterCount: roster.length,
+ };
+ }
+
  if (action === "results") {
  const courseId = searchParams.get("courseId");
  if (!courseId) throw new ApiError(400, "courseId is required");
@@ -2120,6 +2204,76 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  const { searchParams } = new URL(req.url);
  const id = searchParams.get("id");
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+
+ // ---------- Phase 2 (D17-18): grade a submission ----------
+ if (action === "grade-submission") {
+ if (!id) throw new ApiError(400, "id query param is required");
+ const sub = await db.assignmentSubmission.findUnique({
+ where: { id },
+ include: {
+  assignment: { include: { course: { select: { code: true } } } },
+ },
+ });
+ if (!sub) throw new ApiError(404, "Submission not found");
+ if (sub.assignment.teacherId !== session.userId && session.role !== "dept_admin") {
+ throw new ApiError(403, "Not your assignment");
+ }
+ assertDepartmentAccess(session, sub.departmentId);
+
+ const data: Record<string, unknown> = {};
+ if (body.grade !== undefined) {
+ if (body.grade === null || body.grade === "") {
+ data.grade = null;
+ } else {
+ const g = Number(body.grade);
+ if (!Number.isFinite(g) || g < 0) {
+ throw new ApiError(400, "Grade must be a non-negative number");
+ }
+ if (sub.assignment.maxMarks != null && g > sub.assignment.maxMarks) {
+ throw new ApiError(400, `Grade cannot exceed the max marks (${sub.assignment.maxMarks})`);
+ }
+ data.grade = g;
+ }
+ }
+ if (body.feedback !== undefined) {
+ const f = String(body.feedback ?? "").trim().slice(0, 2000);
+ data.feedback = f || null;
+ }
+ if (Object.keys(data).length === 0) {
+ throw new ApiError(400, "Nothing to update");
+ }
+ data.gradedBy = session.userId;
+ data.gradedByName = session.name;
+ data.gradedAt = new Date();
+
+ const updated = await db.assignmentSubmission.update({ where: { id }, data });
+
+ // Best-effort ping to the student — grading is the event they wait for.
+ try {
+ const maxMarks = sub.assignment.maxMarks;
+ await db.notification.create({
+ data: {
+  userId: sub.studentId,
+  title: `Graded: ${sub.assignment.title.slice(0, 60)}`,
+  body: `${sub.assignment.course?.code ?? "Course"} · ${data.grade != null ? `Score ${updated.grade}${maxMarks != null ? "/" + maxMarks : ""}` : "feedback added"}${updated.feedback ? " — see feedback" : ""}`,
+  type: "result",
+  link: "/?view=dashboard&tab=assignments",
+ },
+ });
+ } catch {
+ // non-fatal
+ }
+
+ return {
+ submission: {
+  id: updated.id,
+  grade: updated.grade,
+  feedback: updated.feedback,
+  gradedByName: updated.gradedByName,
+  gradedAt: updated.gradedAt?.toISOString() ?? null,
+ },
+ };
+ }
 
  // ---------- Update assignment ----------
  if (action === "assignments") {

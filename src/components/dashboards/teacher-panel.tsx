@@ -10,19 +10,23 @@ import {
  CalendarClock,
  CalendarDays,
  CheckCheck,
+ ChevronDown,
  ChevronRight,
  RefreshCw,
  ClipboardCheck,
  ClipboardList,
  Clock,
+ Download,
  GraduationCap,
  TriangleAlert,
  History,
+ Inbox,
  ListChecks,
  Loader2,
  MapPin,
  Megaphone,
  MousePointerClick,
+ Paperclip,
  Pencil,
  Pin,
  Plus,
@@ -140,6 +144,39 @@ type ResultRow = ResultDTO & {
 type StudentRow = { id: string; fullName: string; rollNumber: string | null; studentIdNumber: string };
 type AssignmentRow = AssignmentDTO & { course?: { code: string; name: string } };
 type ChangeFormType = "cancelled" | "rescheduled" | "room_changed" | "time_changed" | "extra_class";
+
+/* Phase 2 (D17-18) — teacher grading: GET /api/teacher/submissions response.
+   Roster rows joined with each student's submission (null = not submitted). */
+type SubmissionDetail = {
+ id: string;
+ text: string | null;
+ fileName: string | null;
+ fileURL: string | null; /* data URL */
+ submittedAt: string;
+ resubmitted: boolean;
+ grade: number | null;
+ feedback: string | null;
+ gradedByName: string | null;
+ gradedAt: string | null;
+ isLate: boolean;
+};
+type SubmissionsRow = {
+ studentId: string;
+ studentName: string;
+ rollNumber: string | null;
+ studentIdNumber: string | null;
+ photoURL: string | null;
+ submission: SubmissionDetail | null;
+};
+type SubmissionsResponse = {
+ assignment: { id: string; title: string; dueDate: string | null; maxMarks: number | null; courseCode: string };
+ rows: SubmissionsRow[];
+ submittedCount: number;
+ rosterCount: number;
+};
+type GradeSubmissionResponse = {
+ submission: { id: string; grade: number | null; feedback: string | null; gradedByName: string | null; gradedAt: string | null };
+};
 
 const EXAM_LABELS: Record<string, string> = { ct1: "CT-1", ct2: "CT-2", midterm: "Midterm", final: "Final" };
 
@@ -818,6 +855,116 @@ export function TeacherPanel({
  if (effectiveTab !== "assignments") return;
  void loadAssignments();
  }, [effectiveTab, assignmentFilter, loadAssignments]);
+
+ /* ---------------- assignment submissions (grading, Phase 2 D17-18) ---------------- */
+ const [subsDialogId, setSubsDialogId] = useState<string | null>(null);
+ const [subsData, setSubsData] = useState<SubmissionsResponse | null>(null);
+ const [subsLoading, setSubsLoading] = useState(false);
+ const [subsErr, setSubsErr] = useState<string | null>(null);
+ /* Per-submission grade form drafts, keyed by submission id. */
+ const [gradeDrafts, setGradeDrafts] = useState<Record<string, { grade: string; feedback: string }>>({});
+ const [openSubDetails, setOpenSubDetails] = useState<Record<string, boolean>>({});
+ const [savingGradeId, setSavingGradeId] = useState<string | null>(null);
+ /* Stale-response guard when assignments are opened in quick succession */
+ const subsReqSeq = useRef(0);
+
+ const loadSubmissions = useCallback(async (assignmentId: string) => {
+ const seq = ++subsReqSeq.current;
+ setSubsLoading(true);
+ setSubsErr(null);
+ try {
+ const data = await apiGet<SubmissionsResponse>(`/api/teacher/submissions?id=${encodeURIComponent(assignmentId)}`);
+ if (seq !== subsReqSeq.current) return; // stale dialog response — drop
+ setSubsData(data);
+ /* Seed each grade form with the submission's current grade/feedback. */
+ setGradeDrafts((prev) => {
+ const next = { ...prev };
+ for (const row of data.rows) {
+ if (!row.submission) continue;
+ next[row.submission.id] = {
+ grade: row.submission.grade != null ? String(row.submission.grade) : "",
+ feedback: row.submission.feedback ?? "",
+ };
+ }
+ return next;
+ });
+ } catch (err) {
+ if (seq !== subsReqSeq.current) return;
+ setSubsErr(errMsg(err));
+ } finally {
+ if (seq === subsReqSeq.current) setSubsLoading(false);
+ }
+ }, []);
+
+ function openSubmissions(a: AssignmentRow) {
+ setSubsDialogId(a.id);
+ setSubsData(null);
+ setSubsErr(null);
+ setOpenSubDetails({});
+ void loadSubmissions(a.id);
+ }
+
+ async function saveGrade(row: SubmissionsRow) {
+ const sub = row.submission;
+ if (!sub) return;
+ const draft = gradeDrafts[sub.id] ?? { grade: "", feedback: "" };
+ /* Client-side mirror of the server's validation — fail fast with a toast. */
+ const trimmed = draft.grade.trim();
+ let gradeValue: number | null = null;
+ if (trimmed !== "") {
+ const n = Number(trimmed);
+ const max = subsData?.assignment.maxMarks ?? null;
+ if (!Number.isFinite(n) || n < 0) {
+ toast({ title: "Invalid grade", description: "Grade must be a number that is 0 or more.", variant: "destructive" });
+ return;
+ }
+ if (max != null && n > max) {
+ toast({ title: "Grade too high", description: `Grade cannot exceed the max marks (${max}).`, variant: "destructive" });
+ return;
+ }
+ gradeValue = n;
+ }
+ setSavingGradeId(sub.id);
+ try {
+ const data = await apiPut<GradeSubmissionResponse>(
+ `/api/teacher/grade-submission?id=${encodeURIComponent(sub.id)}`,
+ { grade: gradeValue, feedback: draft.feedback }
+ );
+ /* Patch the saved grade into the local row so the badges update instantly. */
+ setSubsData((prev) => {
+ if (!prev) return prev;
+ return {
+ ...prev,
+ rows: prev.rows.map((r) =>
+ r.submission?.id === sub.id && r.submission
+ ? {
+ ...r,
+ submission: {
+ ...r.submission,
+ grade: data.submission.grade,
+ feedback: data.submission.feedback,
+ gradedByName: data.submission.gradedByName,
+ gradedAt: data.submission.gradedAt,
+ },
+ }
+ : r
+ ),
+ };
+ });
+ setGradeDrafts((prev) => ({
+ ...prev,
+ [sub.id]: {
+ grade: data.submission.grade != null ? String(data.submission.grade) : "",
+ feedback: data.submission.feedback ?? "",
+ },
+ }));
+ toast({ title: "Submission graded", description: `${row.studentName} has been notified.` });
+ } catch (err) {
+ toast({ title: "Couldn't save grade", description: errMsg(err), variant: "destructive" });
+ } finally {
+ setSavingGradeId(null);
+ }
+ }
 
  function openAssignmentDialog(a?: AssignmentRow) {
  if (a) {
@@ -1799,6 +1946,15 @@ export function TeacherPanel({
  <Button
  variant="ghost"
  size="icon"
+ className="h-9 w-9 sm:h-8 sm:w-8 shrink-0 text-[#2D4F35] hover:bg-green/10 dark:text-[#7FB08F]"
+ onClick={() => openSubmissions(a)}
+ aria-label={`View submissions for ${a.title}`}
+ >
+ <Inbox className="h-4 w-4" />
+ </Button>
+ <Button
+ variant="ghost"
+ size="icon"
  className="h-9 w-9 sm:h-8 sm:w-8 text-[#2D4F35] hover:bg-green/10 dark:text-[#7FB08F]"
  onClick={() => openAssignmentDialog(a)}
  aria-label={`Edit assignment ${a.title}`}
@@ -1947,6 +2103,185 @@ export function TeacherPanel({
  </AlertDialogFooter>
  </AlertDialogContent>
  </AlertDialog>
+
+ {/* Submissions / grading dialog (Phase 2 D17-18) */}
+ <Dialog open={subsDialogId !== null} onOpenChange={(o) => { if (!o) setSubsDialogId(null); }}>
+ <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+ <DialogHeader>
+ <DialogTitle className="flex flex-wrap items-center gap-2">
+ {subsData ? subsData.assignment.title : "Submissions"}
+ {subsData && subsData.assignment.courseCode && (
+ <Badge variant="outline" className="border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300">
+ {subsData.assignment.courseCode}
+ </Badge>
+ )}
+ </DialogTitle>
+ <DialogDescription>Review student submissions, leave grades and private feedback.</DialogDescription>
+ </DialogHeader>
+ {subsLoading ? (
+ <PanelLoader label="Loading submissions…" />
+ ) : subsErr ? (
+ <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-10 text-center">
+ <AlertTriangle className="h-6 w-6 text-rose-500" />
+ <p className="text-sm font-semibold text-rose-600 dark:text-rose-400">{subsErr}</p>
+ <Button
+ variant="outline"
+ size="sm"
+ onClick={() => { if (subsDialogId) void loadSubmissions(subsDialogId); }}
+ >
+ <RefreshCw className="h-4 w-4" /> Try again
+ </Button>
+ </div>
+ ) : subsData ? (
+ <div className="space-y-3">
+ {/* summary — due chip + how many turned it in */}
+ <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-xs">
+ <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold", dueChip(subsData.assignment.dueDate).cls)}>
+ <CalendarDays className="h-3 w-3" />
+ {dueChip(subsData.assignment.dueDate).text}
+ </span>
+ <span className="ml-auto font-bold text-[#2D4F35] dark:text-[#7FB08F]">
+ {subsData.submittedCount} of {subsData.rosterCount} submitted
+ </span>
+ </div>
+ {/* roster rows — submitted first (newest), then not-submitted by roll (server-sorted) */}
+ <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+ {subsData.rows.length === 0 ? (
+ <p className="py-6 text-center text-sm text-muted-foreground">No students enrolled in this course yet.</p>
+ ) : (
+ subsData.rows.map((row) => {
+ const sub = row.submission;
+ const draft = (sub && gradeDrafts[sub.id]) ?? { grade: "", feedback: "" };
+ const detailOpen = sub ? Boolean(openSubDetails[sub.id]) : false;
+ const maxMarks = subsData?.assignment.maxMarks ?? null;
+ return (
+ <div key={row.studentId} className="rounded-xl border p-4">
+ <div className="flex items-start justify-between gap-2">
+ <div className="min-w-0">
+ <div className="flex flex-wrap items-center gap-2">
+ <p className="text-sm font-bold">{row.studentName}</p>
+ {row.rollNumber && (
+ <Badge variant="outline" className="text-[11px] font-medium text-muted-foreground">
+ Roll {row.rollNumber}
+ </Badge>
+ )}
+ </div>
+ <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+ {!sub ? (
+ <Badge variant="outline" className="bg-muted text-muted-foreground">Not submitted</Badge>
+ ) : (
+ <>
+ <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold", sub.isLate ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300")}>
+ <CheckCheck className="h-3 w-3" />
+ {sub.isLate ? "Submitted · Late" : "Submitted"}
+ </span>
+ <span className="text-muted-foreground">{timeAgo(sub.submittedAt)}</span>
+ {sub.resubmitted && (
+ <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 font-semibold text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+ <RefreshCw className="h-3 w-3" /> Re-submitted
+ </span>
+ )}
+ {sub.grade != null && (
+ <span className="inline-flex items-center gap-1 rounded-full bg-green/10 px-2 py-0.5 font-semibold text-green">
+ <GraduationCap className="h-3 w-3" />
+ {maxMarks != null ? `${sub.grade}/${maxMarks}` : sub.grade}
+ </span>
+ )}
+ {sub.gradedByName && sub.gradedAt && (
+ <span className="text-muted-foreground">Graded by {sub.gradedByName} · {timeAgo(sub.gradedAt)}</span>
+ )}
+ </>
+ )}
+ </div>
+ </div>
+ {sub && (
+ <Button
+ variant="ghost"
+ size="icon"
+ className="h-8 w-8 shrink-0 text-muted-foreground"
+ onClick={() => setOpenSubDetails((prev) => ({ ...prev, [sub.id]: !prev[sub.id] }))}
+ aria-expanded={detailOpen}
+ aria-label={detailOpen ? `Hide submission from ${row.studentName}` : `Show submission from ${row.studentName}`}
+ >
+ <ChevronDown className={cn("h-4 w-4 transition-transform", detailOpen && "rotate-180")} />
+ </Button>
+ )}
+ </div>
+ {sub && (
+ <div className="mt-3 space-y-3 border-t pt-3">
+ {detailOpen && (
+ <div className="space-y-2">
+ {sub.text && (
+ <p className="whitespace-pre-wrap rounded-lg bg-muted/60 p-3 text-xs text-muted-foreground">{sub.text}</p>
+ )}
+ {sub.fileURL && (
+ <a
+ href={sub.fileURL}
+ download={sub.fileName ?? "submission"}
+ className="inline-flex max-w-full items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold text-[#2D4F35] transition-colors hover:bg-green/10 dark:text-[#7FB08F]"
+ >
+ <Paperclip className="h-3.5 w-3.5 shrink-0" />
+ <span className="truncate">{sub.fileName ?? "Attached file"}</span>
+ <Download className="h-3.5 w-3.5 shrink-0" />
+ </a>
+ )}
+ {!sub.text && !sub.fileURL && (
+ <p className="text-xs italic text-muted-foreground">Submitted without text or an attached file.</p>
+ )}
+ </div>
+ )}
+ {/* grade form */}
+ <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+ <div className="space-y-1.5 sm:w-36">
+ <Label htmlFor={`grade-${sub.id}`}>Grade{maxMarks != null ? ` / ${maxMarks}` : ""}</Label>
+ <Input
+ id={`grade-${sub.id}`}
+ type="number"
+ min={0}
+ max={maxMarks ?? undefined}
+ placeholder={maxMarks != null ? `≤ ${maxMarks}` : "Marks"}
+ value={draft.grade}
+ onChange={(e) => setGradeDrafts((prev) => ({ ...prev, [sub.id]: { ...draft, grade: e.target.value } }))}
+ />
+ </div>
+ <div className="flex-1 space-y-1.5">
+ <Label htmlFor={`fb-${sub.id}`}>Feedback</Label>
+ <Textarea
+ id={`fb-${sub.id}`}
+ rows={2}
+ placeholder="Private feedback for this student…"
+ value={draft.feedback}
+ onChange={(e) => setGradeDrafts((prev) => ({ ...prev, [sub.id]: { ...draft, feedback: e.target.value } }))}
+ />
+ </div>
+ </div>
+ <div className="flex items-center justify-end gap-2">
+ {sub.grade != null && (
+ <span className="mr-auto text-[11px] text-muted-foreground">
+ Current: {maxMarks != null ? `${sub.grade}/${maxMarks}` : sub.grade}{sub.gradedByName ? ` · by ${sub.gradedByName}` : ""}
+ </span>
+ )}
+ <Button
+ size="sm"
+ className={cn("h-9", GRADIENT_BTN)}
+ disabled={savingGradeId === sub.id}
+ onClick={() => void saveGrade(row)}
+ >
+ {savingGradeId === sub.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+ {savingGradeId === sub.id ? "Saving…" : "Save Grade"}
+ </Button>
+ </div>
+ </div>
+ )}
+ </div>
+ );
+ })
+ )}
+ </div>
+ </div>
+ ) : null}
+ </DialogContent>
+ </Dialog>
  </TabsContent>
 
  {/* ============ RESULTS ============ */}
