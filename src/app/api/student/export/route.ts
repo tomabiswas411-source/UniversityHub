@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { handle } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { requireSession, ApiError } from "@/lib/session";
-import { bdTodayISO, bdDayStartUTC, weekdayOfDate } from "@/lib/date-bd";
+import { bdTodayISO, bdDayStartUTC, weekdayOfDate, bdDateOnlyText } from "@/lib/date-bd";
 import { percentToGrade, resultPct } from "@/lib/grades";
 import { DAY_LABELS, type DayOfWeek } from "@/types";
 
@@ -181,7 +181,7 @@ export async function GET(req: NextRequest) {
  `${resultPct(r)}%`,
  r.grade ?? percentToGrade(resultPct(r)).letter,
  r.remarks ?? "",
- r.createdAt.toISOString().slice(0, 10),
+ bdDateOnlyText(r.createdAt),
  ]),
  ]);
  break;
@@ -217,9 +217,9 @@ export async function GET(req: NextRequest) {
  a.course?.code ?? "",
  a.course?.name ?? "",
  a.teacher?.fullName ?? "",
- a.dueDate ? a.dueDate.toISOString().slice(0, 10) : "",
+ a.dueDate ? bdDateOnlyText(a.dueDate) : "",
  a.maxMarks ?? "",
- a.createdAt.toISOString().slice(0, 10),
+ bdDateOnlyText(a.createdAt),
  a.description ?? "",
  ]),
  ]);
@@ -250,8 +250,8 @@ export async function GET(req: NextRequest) {
  n.audience,
  n.isPinned ? "Yes" : "No",
  n.postedByName,
- n.createdAt.toISOString().slice(0, 10),
- n.expiryDate ? n.expiryDate.toISOString().slice(0, 10) : "Open-ended",
+ bdDateOnlyText(n.createdAt),
+ n.expiryDate ? bdDateOnlyText(n.expiryDate) : "Open-ended",
  n.content,
  ]),
  ]);
@@ -274,8 +274,8 @@ export async function GET(req: NextRequest) {
  ["Title", "Date", "End Date", "Type", "Scope", "Description"],
  ...events.map((e) => [
  e.title,
- e.date.toISOString().slice(0, 10),
- e.endDate ? e.endDate.toISOString().slice(0, 10) : "",
+ bdDateOnlyText(e.date),
+ e.endDate ? bdDateOnlyText(e.endDate) : "",
  e.eventType,
  e.departmentId ? "Department" : "University-wide",
  e.description ?? "",

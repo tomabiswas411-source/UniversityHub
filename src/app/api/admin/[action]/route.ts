@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { requireRole, ApiError } from "@/lib/session";
 import { logAdminAction, auditActor } from "@/lib/audit";
 import { hashPassword } from "@/lib/auth";
+import { bdEndOfDayUTC } from "@/lib/date-bd";
 import { runCleanup } from "@/lib/cleanup";
 
 /** Trimmed, hard-capped string — long-field caps keep free-text abuse
@@ -63,6 +64,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  },
  },
  orderBy: { createdAt: "desc" },
+ take: 500, // Phase 3 D40-41: hard cap
  }),
  db.plan.findMany({ orderBy: { sortOrder: "asc" } }),
  ]);
@@ -632,33 +634,39 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  });
  if (!department) throw new ApiError(404, "Department not found");
 
+ const hashed = await hashPassword(password);
+ // Phase 3 D36-37: cap-check + uniqueness + create now run inside one
+ // transaction (parity with /api/manage provisioning) so two concurrent
+ // provisions can no longer slip past the plan limit between the count
+ // and the create (TOCTOU).
+ const user = await db.$transaction(async (tx) => {
  // Plan-cap guard (parity with /api/manage): super-admin provisioning must
  // not bypass the university's teacher limit. -1 = unlimited.
  if (role === "teacher") {
-   const uni = await db.university.findUnique({
-     where: { id: department.universityId },
-     select: { plan: { select: { maxTeachers: true } } },
-   });
-   const limit = uni?.plan?.maxTeachers ?? -1;
-   if (limit >= 0) {
-     const activeTeachers = await db.user.count({
-       where: {
-         universityId: department.universityId,
-         role: "teacher",
-         isActive: true,
-       },
-     });
-     if (activeTeachers >= limit) {
-       throw new ApiError(
-         403,
-         `Your plan limit for teachers is reached (limit ${limit}). Upgrade the plan to add more.`
-       );
-     }
-   }
+ const uni = await tx.university.findUnique({
+ where: { id: department.universityId },
+ select: { plan: { select: { maxTeachers: true } } },
+ });
+ const limit = uni?.plan?.maxTeachers ?? -1;
+ if (limit >= 0) {
+ const activeTeachers = await tx.user.count({
+ where: {
+ universityId: department.universityId,
+ role: "teacher",
+ isActive: true,
+ },
+ });
+ if (activeTeachers >= limit) {
+ throw new ApiError(
+ 403,
+ `Your plan limit for teachers is reached (limit ${limit}). Upgrade the plan to add more.`
+ );
+ }
+ }
  }
 
  // Per-university email uniqueness (User.@@unique([universityId, email]))
- const existing = await db.user.findFirst({
+ const existing = await tx.user.findFirst({
  where: { universityId: department.universityId, email: cleanEmail },
  });
  if (existing) {
@@ -668,8 +676,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  );
  }
 
- const hashed = await hashPassword(password);
- const user = await db.user.create({
+ return tx.user.create({
  data: {
  universityId: department.universityId,
  departmentId: department.id,
@@ -679,6 +686,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  password: hashed,
  isActive: true,
  },
+ });
  });
  await logAdminAction({
  ...actor,
@@ -924,7 +932,10 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (body.planExpiresAt === null || body.planExpiresAt === "") {
  data.planExpiresAt = null;
  } else {
- const d = new Date(String(body.planExpiresAt));
+ // Phase 3 D34-35: date-only input previously cut the subscription
+ // off at UTC midnight (06:00 Dhaka on expiry day). Anchor at
+ // 23:59:59 Asia/Dhaka so "valid through Nov 30" covers all of Nov 30.
+ const d = bdEndOfDayUTC(String(body.planExpiresAt));
  if (Number.isNaN(d.getTime())) {
  throw new ApiError(400, "planExpiresAt must be a valid date");
  }

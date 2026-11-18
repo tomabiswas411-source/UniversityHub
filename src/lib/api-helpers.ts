@@ -2,7 +2,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { ApiError } from "@/lib/session";
 
 /** Standard JSON success response */
-export function ok<T>(data: T, init?: number) {
+function ok<T>(data: T, init?: number) {
   return NextResponse.json({ success: true, data }, { status: init ?? 200 });
 }
 
@@ -15,6 +15,11 @@ export function ok<T>(data: T, init?: number) {
 export async function handle<T>(fn: () => Promise<T>) {
   try {
     const data = await fn();
+    // Phase 3 D31-33: pass through pre-built responses. Previously a
+    // handler returning `badRequest(...)` had its NextResponse re-wrapped
+    // by ok() → the client got 200 {success:true,data:{}} instead of the
+    // intended 400, silently masking every such early-exit.
+    if (data instanceof NextResponse) return data;
     return ok(data);
   } catch (err) {
     if (err instanceof ApiError) {
@@ -43,9 +48,11 @@ export async function handle<T>(fn: () => Promise<T>) {
       );
     }
     if (code === "P2003") {
+      // Phase 3 D31-33: a FK violation means the referenced row is gone —
+      // a state conflict (409), not a malformed request (400).
       return NextResponse.json(
         { success: false, error: "That record references something that does not exist (invalid selection)" },
-        { status: 400 }
+        { status: 409 }
       );
     }
 

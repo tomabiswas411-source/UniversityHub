@@ -5,7 +5,7 @@
  */
 
 /** "HH:MM" → minutes since midnight; null when unparsable. */
-export function toMinutes(hhmm: string): number | null {
+function toMinutes(hhmm: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
   if (!m) return null;
   const h = Number(m[1]);

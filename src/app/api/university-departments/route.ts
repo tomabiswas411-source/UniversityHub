@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
  const departments = await db.department.findMany({
  where: { universityId: university.id, isActive: true },
  orderBy: { shortName: "asc" },
+ take: 500, // Phase 3 D40-41: hard cap
  include: {
  _count: {
  select: {

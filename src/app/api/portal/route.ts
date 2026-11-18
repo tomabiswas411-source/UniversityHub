@@ -28,6 +28,7 @@ export async function GET() {
  },
  },
  orderBy: { name: "asc" },
+ take: 200, // Phase 3 D40-41: hard cap on the public landing list
  }),
  db.plan.findMany({
  where: { isActive: true },

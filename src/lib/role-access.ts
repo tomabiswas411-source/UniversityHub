@@ -1,4 +1,4 @@
-import type { SessionUser, UserRole } from "@/types";
+import type { SessionUser } from "@/types";
 
 /**
  * Role-based visibility rules — "each role sees only the parts of the
@@ -23,7 +23,3 @@ export function canSeePricing(user: RoleUser): boolean {
   );
 }
 
-/** Staff roles that manage their department inside the dashboard. */
-export function isStaffRole(role: UserRole | string | undefined): boolean {
-  return role === "super_admin" || role === "dept_admin" || role === "teacher";
-}

@@ -27,6 +27,55 @@ export function bdDayStartUTC(): Date {
   return new Date(`${ymd}T00:00:00+06:00`);
 }
 
+/**
+ * Parse a date-only string ("2025-11-20") as the END of that calendar day
+ * in Asia/Dhaka (23:59:59 local) expressed as an absolute UTC instant.
+ *
+ * BUG CONTEXT (Phase 3, D34-35): expiry-style date-only inputs (notice
+ * expiry, plan subscription expiry) were parsed with `new Date("yyyy-mm-dd")`
+ * → UTC midnight = 06:00 Dhaka, so anything expiring "on the 20th" actually
+ * cut off at 06:00 Dhaka on the 20th — six hours before the day ended.
+ * Anchoring at end-of-day Dhaka makes "valid through Nov 20" mean the whole
+ * Nov 20 for Bangladeshi users, matching the assignment due-date convention.
+ */
+export function bdEndOfDayUTC(iso: string): Date {
+  const ymd = iso.trim().slice(0, 10); // accept "yyyy-mm-dd" or full ISO
+  return new Date(`${ymd}T23:59:59+06:00`);
+}
+
+/**
+ * Absolute Date → "dd MMM yyyy, hh:mm AM/PM" in Asia/Dhaka. Use for any
+ * user-facing timestamp (CSV cells, notification bodies) so the rendered
+ * day never depends on the server's timezone (Vercel = UTC).
+ */
+export function bdDateTimeText(d: Date | string | null | undefined): string {
+  if (!d) return "";
+  const date = typeof d === "string" ? new Date(d) : d;
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Dhaka",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+/** Absolute Date → "dd MMM yyyy" calendar day in Asia/Dhaka (CSV date columns). */
+export function bdDateOnlyText(d: Date | string | null | undefined): string {
+  if (!d) return "";
+  const date = typeof d === "string" ? new Date(d) : d;
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Dhaka",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
 const BD_WEEKDAYS: Record<string, string> = {
   Saturday: "saturday",
   Sunday: "sunday",

@@ -6,7 +6,7 @@ import { requireSession, requireRole, ApiError, type SessionPayload } from "@/li
 import { logAdminAction, auditActor } from "@/lib/audit";
 import { hashPassword } from "@/lib/auth";
 import { gradeDistribution, passRate, resultPct } from "@/lib/grades";
-import { bdWeekday } from "@/lib/date-bd";
+import { bdWeekday, bdEndOfDayUTC } from "@/lib/date-bd";
 import { windowsOverlap } from "@/lib/time-utils";
 
 /**
@@ -226,14 +226,17 @@ const CHANGE_TYPE_SET = new Set([
 
 export async function GET(req: NextRequest, ctx: Ctx) {
  const { entity: raw } = await ctx.params;
- const entity = raw as Entity;
- if (!ENTITIES.includes(entity)) return badRequest("Unknown entity");
 
  return handle(async () => {
+ // Phase 3 D40-41: auth FIRST — entity-name validation moved inside the
+ // handler so unauthenticated callers cannot probe which entity slugs
+ // exist (also aligns GET with PUT/DELETE, which validate post-auth).
  const session = await requireSession();
  if (!["super_admin", "dept_admin"].includes(session.role)) {
  throw new ApiError(403, "Management access required");
  }
+ const entity = raw as Entity;
+ if (!ENTITIES.includes(entity)) throw new ApiError(400, "Unknown entity");
 
  const departmentId = await getDeptId(session, req);
 
@@ -264,10 +267,11 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  where: { departmentId },
  include: { program: { select: { shortName: true } } },
  orderBy: { code: "asc" },
+ take: 1000, // Phase 3 D40-41: hard cap (dept-scoped, never near it)
  }),
- db.room.findMany({ where: { departmentId }, orderBy: { roomNumber: "asc" } }),
- db.timeSlot.findMany({ where: { departmentId }, orderBy: { slotOrder: "asc" } }),
- db.program.findMany({ where: { departmentId }, orderBy: { shortName: "asc" } }),
+ db.room.findMany({ where: { departmentId }, orderBy: { roomNumber: "asc" }, take: 1000 }),
+ db.timeSlot.findMany({ where: { departmentId }, orderBy: { slotOrder: "asc" }, take: 1000 }),
+ db.program.findMany({ where: { departmentId }, orderBy: { shortName: "asc" }, take: 500 }),
  db.notice.findMany({
  where: { departmentId },
  orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
@@ -276,6 +280,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.schedule.findMany({
  where: { departmentId, isActive: true },
  orderBy: { startTime: "asc" },
+ take: 1000, // Phase 3 D40-41: hard cap
  }),
  ]);
  return {
@@ -508,24 +513,28 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  where: { departmentId },
  include: { program: { select: { shortName: true } } },
  orderBy: { code: "asc" },
+ take: 1000, // Phase 3 D40-41: hard cap
  });
 
  case "rooms":
  return db.room.findMany({
  where: { departmentId },
  orderBy: { roomNumber: "asc" },
+ take: 1000,
  });
 
  case "timeslots":
  return db.timeSlot.findMany({
  where: { departmentId },
  orderBy: { slotOrder: "asc" },
+ take: 1000,
  });
 
  case "programs":
  return db.program.findMany({
  where: { departmentId },
  orderBy: { shortName: "asc" },
+ take: 500,
  });
 
  case "notices":
@@ -779,11 +788,12 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
  const { entity: raw } = await ctx.params;
- const entity = raw as Entity;
- if (!ENTITIES.includes(entity)) return badRequest("Unknown entity");
 
  return handle(async () => {
+ // Phase 3 D40-41: auth first (parity with GET/PUT/DELETE).
  const session = await requireRole("super_admin", "dept_admin");
+ const entity = raw as Entity;
+ if (!ENTITIES.includes(entity)) throw new ApiError(400, "Unknown entity");
  const actor = auditActor(session);
  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
  const departmentId = await getDeptId(session, req, body);
@@ -1000,7 +1010,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  }
  let expiryDate: Date | null = null;
  if (typeof body.expiryDate === "string" && body.expiryDate.trim()) {
- const d = new Date(body.expiryDate.trim());
+ // Phase 3 D34-35: date-only input previously parsed as UTC midnight
+ // (06:00 Dhaka) so notices vanished six hours before the expiry day
+ // actually ended. Anchor at 23:59:59 Asia/Dhaka.
+ const d = bdEndOfDayUTC(body.expiryDate.trim());
  if (Number.isNaN(d.getTime()))
  throw new ApiError(400, "Expiry date must be a valid date");
  expiryDate = d;
@@ -1554,7 +1567,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  if (body.expiryDate === null || body.expiryDate === "") {
  data.expiryDate = null;
  } else {
- const d = new Date(String(body.expiryDate));
+ // Phase 3 D34-35: end-of-day Dhaka (parity with the POST branch).
+ const d = bdEndOfDayUTC(String(body.expiryDate));
  if (Number.isNaN(d.getTime()))
  throw new ApiError(400, "Expiry date must be a valid date");
  data.expiryDate = d;

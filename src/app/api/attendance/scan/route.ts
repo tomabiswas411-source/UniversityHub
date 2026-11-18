@@ -133,8 +133,9 @@ export async function POST(req: NextRequest) {
         ? body.deviceId.slice(0, 64)
         : null;
     if (!deviceId) {
+      // Phase 3 D31-33: missing/invalid INPUT is 400 (403 is for authz).
       throw new ApiError(
-        403,
+        400,
         "Device verification required — open the attendance link again"
       );
     }
@@ -327,6 +328,19 @@ export async function POST(req: NextRequest) {
           select: { studentId: true, status: true },
         });
         if (winner && winner.studentId === session.userId) {
+          // Phase 3 D36-37: if the row that won the race was an ABSENT SWEEP
+          // (teacher superseded the window while this scan was in flight),
+          // tell the student the truth — the old code returned
+          // {already: true} which the client rendered as "already marked
+          // present" while the register actually says absent.
+          if (winner.status === "absent") {
+            return {
+              ok: true,
+              already: true,
+              sweptAbsent: true,
+              status: "absent",
+            };
+          }
           return { ok: true, already: true, status: winner.status };
         }
         throw new ApiError(403, "This phone has already checked in");

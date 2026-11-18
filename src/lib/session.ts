@@ -19,7 +19,7 @@ export interface SessionPayload {
  semester?: number | null;
 }
 
-export const SESSION_COOKIE = "uh_session";
+const SESSION_COOKIE = "uh_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
 function getSecretKey(): Uint8Array {
@@ -120,10 +120,33 @@ export async function requireSession(): Promise<SessionPayload> {
  role: true,
  departmentId: true,
  universityId: true,
+ university: { select: { isActive: true, planExpiresAt: true } },
  },
  });
  if (!user || !user.isActive) {
  throw new ApiError(401, "Your account is no longer active. Please contact your administrator.");
+ }
+ // Phase 3 D38-39: tenant liveness — an expired subscription or a
+ // deactivated university must not keep serving API calls on an
+ // unexpired cookie. Login is already blocked at both login routes;
+ // this closes the gap for tokens issued before expiry. Super admins
+ // (no university) bypass.
+ if (user.university) {
+ if (!user.university.isActive) {
+ throw new ApiError(
+ 401,
+ "Your university is currently deactivated. Please contact the platform administrator."
+ );
+ }
+ if (
+ user.university.planExpiresAt &&
+ user.university.planExpiresAt.getTime() < Date.now()
+ ) {
+ throw new ApiError(
+ 401,
+ "Your university's subscription has expired. Please contact your platform administrator to renew."
+ );
+ }
  }
  // Claim freshness check — null token fields match null DB fields.
  // The token payload always carries all three fields, so compare directly.

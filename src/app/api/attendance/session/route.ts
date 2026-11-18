@@ -106,7 +106,9 @@ export async function POST(req: NextRequest) {
     // Close+create are one transaction so a parallel POST can never open
     // two live windows for the same class-date.
     const expiresAt = new Date(Date.now() + duration * 1000);
-    const created = await db.$transaction(async (tx) => {
+    let created;
+    try {
+      created = await db.$transaction(async (tx) => {
       const superseded = await tx.attendanceSession.findMany({
         where: { scheduleId: schedule.id, date: classDate, closed: false },
         select: { id: true },
@@ -179,7 +181,23 @@ export async function POST(req: NextRequest) {
           ...(geo ?? {}),
         },
       });
-    });
+      });
+    } catch (err) {
+      // Phase 3 D36-37: two teachers opening a window for the same
+      // class-date at the same instant serialize on SQLite's write lock
+      // (BEGIN DEFERRED → SQLITE_BUSY) — surface a friendly 409 instead
+      // of an opaque 500. ApiErrors from inside the tx re-throw as-is.
+      if (!(err instanceof ApiError)) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/locked|busy/i.test(msg)) {
+          throw new ApiError(
+            409,
+            "Another QR window is being opened for this class right now — try again in a moment"
+          );
+        }
+      }
+      throw err;
+    }
 
     return {
       id: created.id,

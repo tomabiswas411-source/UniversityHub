@@ -17,7 +17,7 @@
  *  a leading apostrophe forces text interpretation. The guard runs on the
  *  raw cell BEFORE quoting so cells that also contain commas stay safe
  *  once Excel strips the CSV quotes. */
-export function csvEscape(value: string | number): string {
+function csvEscape(value: string | number): string {
   const s = String(value);
   const safe = /^[=+\-@\t\r]/.test(s.trim()) ? `'${s}` : s;
   if (/[",\n\r]/.test(safe)) return `"${safe.replace(/"/g, '""')}"`;
@@ -25,7 +25,7 @@ export function csvEscape(value: string | number): string {
 }
 
 /** Join a rows matrix into CSV text (LF line endings — Excel accepts them). */
-export function csvRowsToText(rows: (string | number)[][]): string {
+function csvRowsToText(rows: (string | number)[][]): string {
   return rows.map((row) => row.map(csvEscape).join(",")).join("\n");
 }
 

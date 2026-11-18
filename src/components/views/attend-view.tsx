@@ -54,7 +54,7 @@ interface ScanInfo {
   serverTime: string;
 }
 
-type Result = "success" | "already" | "corrected" | null;
+type Result = "success" | "already" | "corrected" | "absent" | null;
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong. Please try again.";
@@ -286,7 +286,11 @@ export function AttendView({ token }: { token: string | null }) {
         setCoords(pos);
         if (!pos) setGeoDenied(true);
       }
-      const data = await apiPost<{ already: boolean; corrected?: boolean }>(
+      const data = await apiPost<{
+        already: boolean;
+        corrected?: boolean;
+        sweptAbsent?: boolean;
+      }>(
         "/api/attendance/scan",
         {
           token,
@@ -296,7 +300,8 @@ export function AttendView({ token }: { token: string | null }) {
         { skipAuthRedirect: true } // inline login below handles auth itself
       );
       markedOnce.current = true;
-      if (data.corrected) setResult("corrected");
+      if (data.sweptAbsent) setResult("absent");
+      else if (data.corrected) setResult("corrected");
       else if (data.already) setResult("already");
       else setResult("success");
       void load(true); // silent refresh of myStatus/presentCount — UI untouched on failure
@@ -456,8 +461,8 @@ export function AttendView({ token }: { token: string | null }) {
         </div>
       </motion.div>
 
-      {/* success / already */}
-      {result && (
+      {/* success / already / late-absent */}
+      {result && result !== "absent" && (
         <motion.div
           initial={{ opacity: 0, scale: 0.94 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -477,6 +482,29 @@ export function AttendView({ token }: { token: string | null }) {
             {result === "corrected" && "Your status was corrected to PRESENT"}
           </p>
           <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-400/80">
+            {info.courseCode} · {fmtDateOnly(info.date)}
+          </p>
+        </motion.div>
+      )}
+
+      {/* Phase 3 D36-37: scan raced the supersede absent-sweep — tell the truth */}
+      {result === "absent" && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.94 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="rounded-2xl border border-amber-300 bg-amber-50 p-6 text-center dark:border-amber-900 dark:bg-amber-950/30"
+        >
+          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500 shadow-lg shadow-amber-500/30">
+            <AlertTriangle className="h-8 w-8 text-white" />
+          </div>
+          <p className="text-lg font-bold text-amber-800 dark:text-amber-300">
+            The check-in window was just closed — you were marked ABSENT
+          </p>
+          <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-400/80">
+            Your scan arrived as the teacher closed the window. Please contact
+            your teacher if you were in class.
+          </p>
+          <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-400/80">
             {info.courseCode} · {fmtDateOnly(info.date)}
           </p>
         </motion.div>

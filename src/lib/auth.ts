@@ -22,7 +22,7 @@ export function toSafeUser(user: User): Omit<User, "password"> {
  const { password: _password, ...safe } = user;
  return safe;
 }
-export type SafeUser = Omit<User, "password">;
+type SafeUser = Omit<User, "password">;
 
 /**
  * D14: subscription lifecycle — an expired tenant is locked out of login
@@ -91,11 +91,28 @@ export async function loadSessionUser(
  const user = await db.user.findUnique({
  where: { id: session.userId },
  include: {
- university: { select: { name: true, slug: true, planExpiresAt: true } },
+ university: {
+ select: { name: true, slug: true, planExpiresAt: true, isActive: true },
+ },
  department: { select: { name: true, shortName: true } },
  },
  });
  if (!user || !user.isActive) {
+ throw new ApiError(401, "Session user no longer exists");
+ }
+ // Phase 3 D38-39: tenant liveness (parity with requireSession). An
+ // expired/deactivated tenant's auth/me must return user:null so the
+ // frontend bounces to login, where the expiry message is friendly.
+ if (user.university) {
+ if (
+ !user.university.isActive ||
+ (user.university.planExpiresAt &&
+ user.university.planExpiresAt.getTime() < Date.now())
+ ) {
+ throw new ApiError(401, "Session tenant is not active");
+ }
+ } else if (user.role !== "super_admin") {
+ // Non-super-admin with no university row = corrupted/deleted tenant.
  throw new ApiError(401, "Session user no longer exists");
  }
  return toSessionUser(user);

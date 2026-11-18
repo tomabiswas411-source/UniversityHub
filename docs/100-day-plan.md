@@ -122,7 +122,9 @@
 
 ---
 
-## 6. Phase 3 — Error Hunt & Data Integrity (Day 29–42)
+## 6. Phase 3 — Error Hunt & Data Integrity (Day 29–42) ✅ EXECUTED
+
+**Delivered:** zero-warning lint + TS-strict clean; dead code removed (`use-mobile.ts` hook, 8 un-exported internal-only helpers/types); **systemic P1 fixed** — `handle()` re-wrapped `badRequest()` NextResponses into `200 {success:true}` (unknown-entity early-exits silently succeeded); now passes through pre-built responses + both manage call-sites throw `ApiError(400)`. Contract matrix `qa/phase3-contract-matrix.ts` **51/51 PASS** (13 unauth→401, 8 wrong-role→403, 10 invalid→400/404, 17 happy 200s, unknown admin action→404). Dhaka date integrity: `bdEndOfDayUTC()` for notice expiry (POST+PUT) and planExpiresAt (previously cut off at 06:00 Dhaka on expiry day); `bdDateTimeText()`/`bdDateOnlyText()` for CSV columns and assignment-notification bodies. Concurrency: super-admin provisioning cap-check+uniqueness+create now one transaction (TOCTOU parity with /api/manage); QR supersede parallel-POST maps SQLITE_BUSY → friendly 409; scan-vs-sweep race now returns truthful `sweptAbsent` and the scan view shows an amber "window just closed — marked ABSENT" card instead of a false "already present". Data integrity: `qa/phase3-integrity.ts` verifies **PRAGMA foreign_keys = 1 on live Turso** (cascades enforced), 17 orphan anti-joins all zero, duplicate (university,email)/(dept,roll) zero, 1 stale open QR session closed. Tenant liveness: expired/deactivated university now blocked mid-session in `requireSession` + `auth/me` (login was already blocked). Status codes: missing deviceId 403→400, Prisma P2003 400→409. Performance: hard `take` caps on 8 previously unbounded lists (manage overview/lists, teacher overview, admin universities, portal, university-departments, student dashboard attendanceDates); manage GET/POST validate entity only after auth (slug-probing closed).
 
 **Goal:** find and fix *all* remaining errors realistically — sweep, don't guess.
 

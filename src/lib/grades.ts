@@ -13,7 +13,7 @@ export interface GradeBand {
 }
 
 /** UGC uniform grading scale (Bangladesh) */
-export const UGC_SCALE: GradeBand[] = [
+const UGC_SCALE: GradeBand[] = [
   { min: 80, letter: "A+", gpa: 4.0 },
   { min: 75, letter: "A", gpa: 3.75 },
   { min: 70, letter: "A-", gpa: 3.5 },

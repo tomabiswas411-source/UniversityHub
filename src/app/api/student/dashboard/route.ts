@@ -176,6 +176,7 @@ export async function GET() {
  },
  select: { date: true, status: true },
  orderBy: { date: "asc" },
+ take: 2000, // Phase 3 D40-41: explicit cap inside the 150-day window
  }),
  ]);
 

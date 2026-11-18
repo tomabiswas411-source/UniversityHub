@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 
-export interface AuditEntry {
+interface AuditEntry {
   actorId?: string | null;
   actorName?: string | null;
   actorRole?: string | null;

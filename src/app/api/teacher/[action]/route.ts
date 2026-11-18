@@ -9,7 +9,7 @@ import {
  toSafeUser,
 } from "@/lib/auth";
 import { percentToGrade, resultPct } from "@/lib/grades";
-import { bdTodayISO, bdWeekday, bdDaysAgoISO, weekdayOfDate } from "@/lib/date-bd";
+import { bdTodayISO, bdWeekday, bdDaysAgoISO, weekdayOfDate, bdDateTimeText } from "@/lib/date-bd";
 import { windowsOverlap } from "@/lib/time-utils";
 
 /**
@@ -404,7 +404,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  esc(st.fullName),
  m ? m.status.toUpperCase() : "NOT_MARKED",
  m ? esc(m.markedByName ?? "") : "",
- m ? m.updatedAt.toISOString() : "",
+ m ? esc(bdDateTimeText(m.updatedAt)) : "",
  ].join(",")
  );
  }
@@ -551,6 +551,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.schedule.findMany({
  where: { teacherId: session.userId, isActive: true },
  orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+ take: 1000, // Phase 3 D40-41: hard cap
  }),
  db.course.findMany({
  where: {
@@ -559,6 +560,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  },
  include: { program: { select: { shortName: true } } },
  orderBy: { code: "asc" },
+ take: 1000,
  }),
  db.scheduleChange.findMany({
  where: { teacherId: session.userId, isActive: true },
@@ -568,10 +570,12 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.room.findMany({
  where: { departmentId: session.departmentId!, isActive: true },
  orderBy: { roomNumber: "asc" },
+ take: 1000,
  }),
  db.timeSlot.findMany({
  where: { departmentId: session.departmentId!, isActive: true },
  orderBy: { slotOrder: "asc" },
+ take: 1000,
  }),
  // Course ids this teacher actually teaches (Schedule linkage) —
  // one tiny indexed select used only for the teacher-scope filter.
@@ -1165,7 +1169,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  csv = toCsv([
  ["Requested At", "Type", "Course", "Original", "New", "Effective Date", "Reason", "By"],
  ...rows.map((c) => [
- c.createdAt.toISOString().slice(0, 16).replace("T", " "), c.changeType,
+ bdDateTimeText(c.createdAt), c.changeType,
  c.courseCode,
  `${c.originalDay ?? ""} ${c.originalStartTime ?? ""} ${c.originalRoomNumber ?? ""}`.trim(),
  [c.newDay, c.newStartTime, c.newRoomNumber].filter(Boolean).join(" ") || "—",
@@ -1904,7 +1908,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
  data: students.map((s) => ({
  userId: s.id,
  title: `New Assignment: ${course.code}`,
- body: `${title.trim()}${dueDate ? ` — due ${new Date(dueDate).toLocaleDateString()}` : ""}`,
+ body: `${title.trim()}${dueDate ? ` — due ${bdDateTimeText(new Date(dueDate))}` : ""}`,
  type: "assignment",
  })),
  });
@@ -2353,7 +2357,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
  data: students.map((s) => ({
  userId: s.id,
  title: `Assignment Updated: ${course.code}`,
- body: `${updated.title}${updated.dueDate ? ` — due ${updated.dueDate.toLocaleDateString()}` : ""}`,
+ body: `${updated.title}${updated.dueDate ? ` — due ${bdDateTimeText(updated.dueDate)}` : ""}`,
  type: "assignment",
  })),
  });
