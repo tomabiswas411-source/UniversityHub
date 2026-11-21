@@ -7,6 +7,7 @@ import { logAdminAction, auditActor } from "@/lib/audit";
 import { hashPassword } from "@/lib/auth";
 import { gradeDistribution, passRate, resultPct } from "@/lib/grades";
 import { bdWeekday, bdEndOfDayUTC } from "@/lib/date-bd";
+import { computeCoursePerformance, computeGPA, percentToGrade } from "@/lib/grades";
 import { windowsOverlap } from "@/lib/time-utils";
 
 /**
@@ -38,6 +39,13 @@ async function getDeptId(
  if (!departmentId) throw new ApiError(400, "departmentId is required");
  await assertDeptAccess(session, departmentId);
  return departmentId;
+}
+
+/** Today in Asia/Dhaka as "YYYY-MM-DD" minus N days — for the string-date
+ attendance trend window (the attendance date column is "YYYY-MM-DD"). */
+function bdDateOnlyMinusDays(days: number): string {
+ const shifted = new Date(Date.now() + (6 - days * 24) * 60 * 60 * 1000);
+ return shifted.toISOString().slice(0, 10);
 }
 
 /**
@@ -207,6 +215,8 @@ const ENTITIES = [
  "analytics",
  "changes",
  "attendance-report",
+ "report-data",
+ "notification-stats",
  "sessions",
  "activity",
  "import",
@@ -323,7 +333,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
  case "analytics": {
  // Aggregated department insights — Day 41 + attendance loop
- const [results, schedulesForLoad, studentsForDist, coursesInfo, recentChanges, noticesCount, attendanceGroups] =
+ const [results, schedulesForLoad, studentsForDist, coursesInfo, recentChanges, noticesCount, attendanceGroups, attendanceTrendGroups] =
  await Promise.all([
  // Cap + comment: results feed per-row percentage math (marks/max
  // varies), which aggregates can't express exactly — 5000 rows is
@@ -356,6 +366,17 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.attendance.groupBy({
  by: ["courseId", "courseCode", "status"],
  where: { departmentId },
+ _count: true,
+ }),
+ // D43: weekly attendance-trend source — grouped by day × course × status
+ // over the last 6 weeks. date is a "YYYY-MM-DD" string column, so the
+ // window is a lexicographic string compare (safe for ISO dates).
+ db.attendance.groupBy({
+ by: ["date", "courseCode", "status"],
+ where: {
+ departmentId,
+ date: { gte: bdDateOnlyMinusDays(42) },
+ },
  _count: true,
  }),
  ]);
@@ -453,6 +474,97 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  else if (g.status === "excused") cur.excused += n;
  attByCourse.set(g.courseId, cur);
  }
+ // ---------- D43: attendance-trend lines per course ----------
+ // Bucket daily rows into Saturday-start weeks (the BD academic week),
+ // rate = (present + late) / counted — the same math as every other rate
+ // on the platform. Top 5 courses by volume keep the chart readable.
+ const TREND_WEEKS = 6;
+ const TREND_MAX_SERIES = 5;
+ const weekKey = (dateStr: string): string => {
+ const d = new Date(`${dateStr}T00:00:00Z`);
+ if (Number.isNaN(d.getTime())) return "?";
+ const offsetToSaturday = (d.getUTCDay() + 1) % 7; // Sat→0, Sun→1 …
+ d.setUTCDate(d.getUTCDate() - offsetToSaturday);
+ return d.toISOString().slice(0, 10);
+ };
+ const weekLabel = (key: string): string => {
+ const d = new Date(`${key}T00:00:00Z`);
+ if (Number.isNaN(d.getTime())) return key;
+ return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+ };
+ const trendByWeekCourse = new Map<string, Map<string, { attended: number; counted: number }>>();
+ const trendCourseTotals = new Map<string, number>();
+ for (const g of attendanceTrendGroups) {
+ const wk = weekKey(g.date);
+ if (wk === "?") continue;
+ const n = g._count;
+ if (g.status === "excused") continue; // excluded everywhere else
+ const courseBucket = trendByWeekCourse.get(wk) ?? new Map();
+ const cur = courseBucket.get(g.courseCode) ?? { attended: 0, counted: 0 };
+ cur.counted += n;
+ if (g.status === "present" || g.status === "late") cur.attended += n;
+ courseBucket.set(g.courseCode, cur);
+ trendByWeekCourse.set(wk, courseBucket);
+ trendCourseTotals.set(g.courseCode, (trendCourseTotals.get(g.courseCode) ?? 0) + n);
+ }
+ const trendSeriesCodes = [...trendCourseTotals.entries()]
+ .sort((a, b) => b[1] - a[1])
+ .slice(0, TREND_MAX_SERIES)
+ .map(([code]) => code);
+ const trendRows = [...trendByWeekCourse.entries()]
+ .sort((a, b) => a[0].localeCompare(b[0]))
+ .slice(-TREND_WEEKS)
+ .map(([wk, courses]) => {
+ const row: Record<string, string | number> = { week: weekLabel(wk) };
+ for (const code of trendSeriesCodes) {
+ const c = courses.get(code);
+ if (c && c.counted > 0) {
+ row[code] = Math.round((c.attended / c.counted) * 100);
+ }
+ }
+ return row;
+ });
+ const attendanceTrend = {
+ hasData: trendRows.some((r) => Object.keys(r).length > 1),
+ series: trendSeriesCodes,
+ rows: trendRows,
+ weeks: TREND_WEEKS,
+ };
+
+ // ---------- D45: teacher workload balance ----------
+ // Fairness metric over the active timetable: 100 = perfectly even split,
+ // lower = a few teachers carry most classes. Uses the same active-
+ // schedule rows as the existing load chart, so no extra query.
+ const workloadDetailed = [...loadMap.entries()].map(([id, v]) => ({
+ id,
+ name: v.name,
+ classes: v.count,
+ days: new Set(
+ schedulesForLoad.filter((s) => s.teacherId === id).map((s) => s.dayOfWeek)
+ ).size,
+ }));
+ const teacherCount = workloadDetailed.length;
+ const meanLoad = teacherCount > 0
+ ? schedulesForLoad.length / teacherCount
+ : 0;
+ const variance =
+ teacherCount > 0 && meanLoad > 0
+ ? workloadDetailed.reduce((acc, t) => acc + (t.classes - meanLoad) ** 2, 0) / teacherCount
+ : 0;
+ const balanceScore =
+ teacherCount <= 1 || meanLoad === 0
+ ? 100
+ : Math.max(0, Math.min(100, Math.round(100 * (1 - Math.sqrt(variance) / meanLoad))));
+ const sortedByLoad = [...workloadDetailed].sort((a, b) => b.classes - a.classes);
+ const workload = {
+ hasData: teacherCount > 0,
+ balance: balanceScore,
+ busiest: sortedByLoad[0]?.name ?? null,
+ lightest: sortedByLoad[sortedByLoad.length - 1]?.name ?? null,
+ avgLoad: Math.round(meanLoad * 10) / 10,
+ teachers: teacherCount,
+ };
+
  const attCounted = attCounts.present + attCounts.late + attCounts.absent;
  const attendanceAnalytics = {
  hasData: totalMarked > 0,
@@ -490,6 +602,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  studentsPerSemester,
  coursesPerSemester,
  attendance: attendanceAnalytics,
+ attendanceTrend,
+ workload,
  };
  }
 
@@ -665,8 +779,28 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  });
 
  const shortStudents = rows.filter((r) => r.rate !== null && r.rate < 75).length;
+ // D46-48: tenant branding so the Report Center can print a branded sheet
+ // without a second round-trip.
+ const universityId = await resolveUniversityId(departmentId);
+ const [uniRow, deptRow] = await Promise.all([
+ db.university.findUnique({
+ where: { id: universityId },
+ select: { name: true, shortName: true, logoURL: true, address: true },
+ }),
+ db.department.findUnique({
+ where: { id: departmentId },
+ select: { name: true },
+ }),
+ ]);
  return {
  students: rows,
+ branding: {
+ universityName: uniRow?.name ?? "University",
+ universityShort: uniRow?.shortName ?? null,
+ logoURL: uniRow?.logoURL ?? null,
+ address: uniRow?.address ?? null,
+ departmentName: deptRow?.name ?? "Department",
+ },
  summary: {
  totalStudents: rows.length,
  totalMarked,
@@ -674,6 +808,207 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  shortStudents,
  shortageLine: 75,
  },
+ };
+ }
+
+ case "report-data": {
+ // D46-48 Report Center source data. Two report types:
+ // transcript (one student, all courses, credit-weighted GPA) and
+ // batch-results (one course, every student, per-exam breakdown).
+ // Branding comes from the tenant row so printed sheets carry the
+ // university's own name/logo, not UniversityHub's.
+ const url = new URL(req.url);
+ const type = url.searchParams.get("type");
+ const universityId = await resolveUniversityId(departmentId);
+ const [university, department] = await Promise.all([
+ db.university.findUnique({
+ where: { id: universityId },
+ select: { name: true, shortName: true, logoURL: true, address: true },
+ }),
+ db.department.findUnique({
+ where: { id: departmentId },
+ select: { name: true, shortName: true },
+ }),
+ ]);
+ const branding = {
+ universityName: university?.name ?? "University",
+ universityShort: university?.shortName ?? null,
+ logoURL: university?.logoURL ?? null,
+ address: university?.address ?? null,
+ departmentName: department?.name ?? "Department",
+ };
+
+ if (type === "transcript") {
+ const studentId = url.searchParams.get("studentId");
+ if (!studentId) throw new ApiError(400, "studentId is required for the transcript report");
+ const student = await db.user.findFirst({
+ where: { id: studentId, departmentId, role: "student" },
+ select: {
+ id: true, fullName: true, rollNumber: true, studentIdNumber: true,
+ semester: true, section: true, programId: true,
+ program: { select: { name: true, shortName: true } },
+ },
+ });
+ if (!student) throw new ApiError(404, "Student not found in this department");
+ const results = await db.result.findMany({
+ where: { studentId, departmentId },
+ select: {
+ marks: true, maxMarks: true, examType: true,
+ course: { select: { id: true, code: true, name: true, creditHours: true } },
+ },
+ orderBy: { createdAt: "asc" },
+ take: 2000,
+ });
+ const byCourse = new Map<string, { course: (typeof results)[number]["course"]; entries: { marks: number; maxMarks: number; examType: string }[] }>();
+ for (const r of results) {
+ const cur = byCourse.get(r.course.id) ?? { course: r.course, entries: [] };
+ cur.entries.push({ marks: r.marks, maxMarks: r.maxMarks, examType: r.examType });
+ byCourse.set(r.course.id, cur);
+ }
+ const perf = [...byCourse.values()].map((c) =>
+ computeCoursePerformance(c.course.code, c.course.name, c.entries, c.course.creditHours)
+ );
+ // keep course ids so the UI can key rows
+ const rowsOut = perf.map((p, i) => ({
+ ...p,
+ courseId: [...byCourse.keys()][i],
+ }));
+ return {
+ type: "transcript",
+ branding,
+ student: {
+ id: student.id,
+ fullName: student.fullName,
+ rollNumber: student.rollNumber,
+ studentIdNumber: student.studentIdNumber,
+ semester: student.semester,
+ section: student.section,
+ programName: student.program?.name ?? null,
+ programShort: student.program?.shortName ?? null,
+ },
+ rows: rowsOut,
+ totalCredits: rowsOut.reduce((a, r) => a + r.creditHours, 0),
+ gpa: computeGPA(perf),
+ totalEntries: results.length,
+ };
+ }
+
+ if (type === "batch-results") {
+ const courseId = url.searchParams.get("courseId");
+ if (!courseId) throw new ApiError(400, "courseId is required for the batch result sheet");
+ const course = await db.course.findFirst({
+ where: { id: courseId, departmentId },
+ select: { id: true, code: true, name: true, creditHours: true, semester: true, type: true },
+ });
+ if (!course) throw new ApiError(404, "Course not found in this department");
+ const results = await db.result.findMany({
+ where: { courseId, departmentId },
+ select: {
+ marks: true, maxMarks: true, examType: true,
+ student: {
+ select: { id: true, fullName: true, rollNumber: true, studentIdNumber: true, semester: true },
+ },
+ },
+ take: 5000,
+ });
+ const EXAMS = ["ct1", "ct2", "midterm", "final", "assignment"] as const;
+ const perStudent = new Map<
+ string,
+ {
+ student: (typeof results)[number]["student"];
+ entries: Map<string, { marks: number; maxMarks: number }>;
+ }
+ >();
+ for (const r of results) {
+ const cur = perStudent.get(r.student.id) ?? { student: r.student, entries: new Map() };
+ cur.entries.set(r.examType, { marks: r.marks, maxMarks: r.maxMarks });
+ perStudent.set(r.student.id, cur);
+ }
+ const rowsOut = [...perStudent.values()]
+ .map(({ student, entries }) => {
+ const pctList = [...entries.values()].map((e) =>
+ e.maxMarks > 0 ? (e.marks / e.maxMarks) * 100 : 0
+ );
+ const avg = pctList.length ? pctList.reduce((a, b) => a + b, 0) / pctList.length : null;
+ const gradeLine = avg === null ? null : percentToGrade(avg).letter;
+ const perExam: Record<string, string> = {};
+ for (const ex of EXAMS) {
+ const e = entries.get(ex);
+ perExam[ex] = e ? `${e.marks}/${e.maxMarks}` : "—";
+ }
+ return {
+ studentId: student.id,
+ fullName: student.fullName,
+ rollNumber: student.rollNumber,
+ studentIdNumber: student.studentIdNumber,
+ semester: student.semester,
+ perExam,
+ avgPct: avg === null ? null : Math.round(avg * 10) / 10,
+ grade: gradeLine,
+ examCount: entries.size,
+ };
+ })
+ .sort((a, b) => (a.rollNumber ?? "").localeCompare(b.rollNumber ?? ""));
+ const marked = rowsOut.filter((r) => r.avgPct !== null);
+ const avgAll = marked.length
+ ? Math.round((marked.reduce((a, r) => a + (r.avgPct ?? 0), 0) / marked.length) * 10) / 10
+ : null;
+ const passCount = marked.filter((r) => (r.avgPct ?? 0) >= 40).length;
+ return {
+ type: "batch-results",
+ branding,
+ course,
+ rows: rowsOut,
+ stats: {
+ students: rowsOut.length,
+ marked: marked.length,
+ avgPct: avgAll,
+ passRate: marked.length ? Math.round((passCount / marked.length) * 100) : null,
+ },
+ };
+ }
+
+ throw new ApiError(400, "type must be 'transcript' or 'batch-results'");
+ }
+
+ case "notification-stats": {
+ // D51: notification delivery log — what actually reached this
+ // department's people over the last 30 days. Notification rows are
+ // per-user fan-outs, so a (title, type) group IS one delivery burst
+ // and its row count is the recipient count.
+ const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+ const rows = await db.notification.findMany({
+ where: { user: { departmentId }, createdAt: { gte: since } },
+ orderBy: { createdAt: "desc" },
+ take: 1500,
+ select: { id: true, title: true, type: true, createdAt: true, isRead: true },
+ });
+ const byType = new Map<string, number>();
+ const bursts = new Map<
+ string,
+ { title: string; type: string; recipients: number; latest: string; read: number }
+ >();
+ let readRows = 0;
+ for (const r of rows) {
+ if (r.isRead) readRows += 1;
+ const t = (r.type ?? "general").replace(/^class_/, "");
+ byType.set(t, (byType.get(t) ?? 0) + 1);
+ const key = `${t}::${r.title}`;
+ const cur = bursts.get(key) ?? { title: r.title, type: t, recipients: 0, latest: r.createdAt.toISOString(), read: 0 };
+ cur.recipients += 1;
+ if (r.isRead) cur.read += 1;
+ bursts.set(key, cur);
+ }
+ return {
+ windowDays: 30,
+ total: rows.length,
+ read: readRows,
+ byType: [...byType.entries()]
+ .sort((a, b) => b[1] - a[1])
+ .map(([label, value]) => ({ label, value })),
+ deliveries: [...bursts.values()]
+ .sort((a, b) => b.latest.localeCompare(a.latest))
+ .slice(0, 12),
  };
  }
 

@@ -104,13 +104,15 @@ self.addEventListener("fetch", (event) => {
 });
 
 /* Focus an open tab when a notification is clicked.
-   lastPushLink carries the deep link from the most recent push payload
-   (if any) so the click opens the relevant page, not always "/". */
+   The deep link comes from notification.data.link (page-shown
+   notifications via registration.showNotification) or lastPushLink
+   (web-push payloads), so the click opens the relevant page. */
 let lastPushLink = null;
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target = lastPushLink || "/";
+  const dataLink = event.notification && event.notification.data && event.notification.data.link;
+  const target = (typeof dataLink === "string" && dataLink) || lastPushLink || "/";
   lastPushLink = null;
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {

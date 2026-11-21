@@ -19,6 +19,7 @@ import { ROLE_LABELS } from "@/lib/role-labels";
 import { canSeePricing, type RoleUser } from "@/lib/role-access";
 import { initials } from "@/lib/format";
 import { NotificationBell } from "@/components/shared/notification-bell";
+import { GlobalSearch } from "@/components/shared/global-search";
 import { StaffProfileDialog } from "@/components/shared/staff-profile-dialog";
 import { GRADIENT_BTN } from "@/components/dashboards/dashboard-shared";
 import { cn } from "@/lib/utils";
@@ -186,6 +187,10 @@ export function SiteHeader({ view, navigate }: SiteHeaderProps) {
 
  {/* Right actions */}
  <div className="flex items-center gap-1.5 sm:gap-2">
+ {/* D52-54: role-scoped global search (Ctrl+K) */}
+ {mounted && user && (
+ <GlobalSearch navigate={navigate} />
+ )}
  <Button
  variant="ghost"
  size="icon"

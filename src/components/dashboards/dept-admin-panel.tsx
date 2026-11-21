@@ -38,9 +38,11 @@ import {
  Plus,
  Power,
  RefreshCw,
+ Scale,
  ScanLine,
  Search,
  Trash2,
+ TrendingDown,
  Upload,
  Users,
 } from "lucide-react";
@@ -97,10 +99,13 @@ import {
  ChartCard,
  DonutChart,
  HBarChart,
+ MultiLineChart,
  StatPill,
  VBarChart,
 } from "@/components/dashboards/analytics-charts";
 import { timeAgo } from "@/components/shared/notification-bell";
+import { DeptReportCenter } from "@/components/dashboards/report-sheets";
+import { NotificationDeliveryCard } from "@/components/dashboards/notification-delivery-card";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { downloadCsv, downloadCsvText } from "@/lib/csv";
 import { initials } from "@/lib/format";
@@ -159,6 +164,20 @@ interface DeptAnalytics {
  studentsPerProgram: { label: string; value: number }[];
  studentsPerSemester: { label: string; value: number }[];
  coursesPerSemester: { label: string; value: number }[];
+ attendanceTrend?: {
+ hasData: boolean;
+ series: string[];
+ rows: Record<string, string | number>[];
+ weeks: number;
+ };
+ workload?: {
+ hasData: boolean;
+ balance: number;
+ busiest: string | null;
+ lightest: string | null;
+ avgLoad: number;
+ teachers: number;
+ };
  attendance: {
  hasData: boolean;
  rate: number;
@@ -1542,6 +1561,70 @@ export function DeptAdminPanel({
  </div>
  )}
 
+ {/* ===== D43: per-course attendance trend (weekly lines, last 6 weeks) ===== */}
+ {analytics.attendanceTrend?.hasData && (
+ <ChartCard
+ title="Attendance Trend by Course (weekly)"
+ icon={TrendingDown}
+ height={320}
+ >
+ <MultiLineChart
+ rows={analytics.attendanceTrend.rows}
+ series={analytics.attendanceTrend.series}
+ hint="Weekly rate per course over the last six weeks; the five most-marked courses are shown."
+ />
+ </ChartCard>
+ )}
+
+ {/* ===== D44: auto at-risk list (<75%, from the register data) ===== */}
+ {attReport && attReport.students.some((s) => s.rate !== null && s.marked >= 3 && s.rate < 75) && (
+ <SectionCard
+ title={`Auto At-Risk List — below ${attReport.summary.shortageLine}%`}
+ icon={TrendingDown}
+ action={
+ <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+ {attReport.students.filter((s) => s.rate !== null && s.marked >= 3 && s.rate < 75).length} students
+ </Badge>
+ }
+ >
+ <div className="max-h-64 overflow-y-auto">
+ <table className="w-full text-sm">
+ <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+ <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+ <th className="px-3 py-2 font-medium">Student</th>
+ <th className="px-2 py-2 text-center font-medium">Marked</th>
+ <th className="px-2 py-2 text-center font-medium">Absent</th>
+ <th className="px-3 py-2 text-right font-medium">Rate</th>
+ </tr>
+ </thead>
+ <tbody>
+ {attReport.students
+ .filter((s) => s.rate !== null && s.marked >= 3 && s.rate < 75)
+ .sort((a, b) => (a.rate ?? 0) - (b.rate ?? 0))
+ .map((s) => (
+ <tr key={s.studentId} className="border-t">
+ <td className="px-3 py-2">
+ <p className="truncate font-medium">{s.fullName}</p>
+ <p className="truncate text-[11px] text-muted-foreground">
+ {[s.rollNumber, s.programShort, s.semester ? `S${s.semester}` : ""].filter(Boolean).join(" · ") || "—"}
+ </p>
+ </td>
+ <td className="px-2 py-2 text-center tabular-nums">{s.marked}</td>
+ <td className="px-2 py-2 text-center tabular-nums text-rose-600">{s.absent}</td>
+ <td className="px-3 py-2 text-right">
+ <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">{s.rate}%</Badge>
+ </td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ <p className="mt-2 text-[11px] text-muted-foreground">
+ Students with at least 3 marks and a rate below the 75% exam-permission line. Late counts as attended.
+ </p>
+ </SectionCard>
+ )}
+
  {/* ===== Attendance shortage watchlist (dept register) ===== */}
  {!attReport && attReportError ? (
  <SectionCard title="Attendance Register unavailable" icon={Users}>
@@ -1735,7 +1818,24 @@ export function DeptAdminPanel({
  hint="Shows once CT / midterm / final results are entered."
  />
  </ChartCard>
- <ChartCard title="Teacher Workload (classes per week)" icon={Users} height={300}>
+ {/* ===== D45: workload balance strip ===== */}
+ {analytics.workload?.hasData && (
+ <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+ <StatPill
+ label="Workload Balance"
+ value={`${analytics.workload.balance}/100`}
+ tone={analytics.workload.balance >= 80 ? "green" : analytics.workload.balance >= 55 ? "gold" : "rust"}
+ />
+ <StatPill label="Avg / Teacher" value={analytics.workload.avgLoad} tone="navy" />
+ <StatPill label="Heaviest" value={analytics.workload.busiest?.split(" ")[0] ?? "—"} tone="rust" />
+ <StatPill label="Lightest" value={analytics.workload.lightest?.split(" ")[0] ?? "—"} tone="navy" />
+ </div>
+ )}
+ <ChartCard
+ title="Teacher Workload (classes per week)"
+ icon={analytics.workload?.hasData ? Scale : Users}
+ height={300}
+ >
  <HBarChart
  data={analytics.teacherLoad}
  color={CHART_COLORS.navy}
@@ -2713,6 +2813,9 @@ export function DeptAdminPanel({
  )}
  </div>
  </SectionCard>
+
+ {/* ===== D51: notification delivery log ===== */}
+ <NotificationDeliveryCard departmentId={departmentId} />
  </TabsContent>
 
  {/* ===== Assignments oversight (D13) ===== */}
@@ -2926,6 +3029,16 @@ export function DeptAdminPanel({
  </div>
  )}
  </SectionCard>
+ </TabsContent>
+
+ {/* ===== D46-48: Report Center ===== */}
+ <TabsContent value="reports" className="space-y-4">
+ <DeptReportCenter
+ departmentId={departmentId}
+ students={students.map((s) => ({ id: s.id, fullName: s.fullName, rollNumber: s.rollNumber }))}
+ courses={courses.map((c) => ({ id: c.id, code: c.code, name: c.name }))}
+ programs={programs.map((p) => ({ id: p.id, shortName: p.shortName, name: p.name }))}
+ />
  </TabsContent>
  </Tabs>
 

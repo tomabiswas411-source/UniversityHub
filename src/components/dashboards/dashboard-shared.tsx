@@ -21,6 +21,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Megaphone,
+  Printer,
   ShieldCheck,
   TrendingUp,
   User,
@@ -59,6 +60,7 @@ export const DASHBOARD_SECTIONS = {
     { value: "users", label: "Platform Users", icon: Users },
     { value: "plans", label: "Plans & Billing", icon: CreditCard },
     { value: "analytics", label: "Analytics", icon: ChartNoAxesColumn },
+    { value: "reports", label: "Report Center", icon: Printer },
     { value: "activity", label: "Activity", icon: History },
     { value: "system", label: "System Control", icon: ShieldCheck },
   ],
@@ -75,6 +77,7 @@ export const DASHBOARD_SECTIONS = {
     { value: "notices", label: "Notices", icon: Megaphone },
     { value: "assignments", label: "Assignments", icon: FileText },
     { value: "results", label: "Results", icon: Award },
+    { value: "reports", label: "Report Center", icon: Printer },
   ],
   teacher: [
     { value: "schedule", label: "My Schedule", icon: CalendarDays },

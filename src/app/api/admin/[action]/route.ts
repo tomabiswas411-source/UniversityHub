@@ -121,7 +121,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  const end = dhakaMonthStart(baseMonth - (11 - i) + 1);
  return { start: start.date, end: end.date };
  });
- const [universities, plans, roleCounts, scheduleGroups, deptUniRows, userGrowthCounts] =
+ const [universities, plans, roleCounts, scheduleGroups, deptUniRows, userGrowthCounts, attendanceGroups, assignmentGroups, resultGroups, noticeGroups] =
  await Promise.all([
  db.university.findMany({
  include: {
@@ -154,6 +154,24 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  db.user.count({ where: { createdAt: { gte: b.start, lt: b.end } } })
  )
  ),
+ // D55: feature-adoption source data — four groupBys over department
+ // keys, mapped to universities with the same deptUniRows table.
+ db.attendance.groupBy({
+ by: ["departmentId"],
+ _count: { departmentId: true },
+ }),
+ db.assignment.groupBy({
+ by: ["departmentId"],
+ _count: { departmentId: true },
+ }),
+ db.result.groupBy({
+ by: ["departmentId"],
+ _count: { departmentId: true },
+ }),
+ db.notice.groupBy({
+ by: ["departmentId"],
+ _count: { departmentId: true },
+ }),
  ]);
 
  const uniByDept = new Map(
@@ -171,6 +189,22 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  );
  }
  }
+
+ // D55: roll the four department-keyed feature counters up to universities.
+ const rollupToUni = (
+ groups: { departmentId: string; _count: { departmentId: number } }[]
+ ) => {
+ const m = new Map<string, number>();
+ for (const g of groups) {
+ const uid = uniByDept.get(g.departmentId);
+ if (uid) m.set(uid, (m.get(uid) ?? 0) + g._count.departmentId);
+ }
+ return m;
+ };
+ const attendanceByUni = rollupToUni(attendanceGroups);
+ const assignmentsByUni = rollupToUni(assignmentGroups);
+ const resultsByUni = rollupToUni(resultGroups);
+ const noticesByUni = rollupToUni(noticeGroups);
 
  // Growth: universities joined per month (last 8 months) — Dhaka months,
  // matching the signup buckets above.
@@ -230,6 +264,48 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  }))
  .sort((a, b) => b.users - a.users);
 
+ // D55: retention cohorts — universities bucketed by signup month with
+ // the share still active today. A cohort that onboards and vanishes
+ // shows up here long before MRR notices. Matching is by (year, month)
+ // pair — never by label, since "Mar" collides across years.
+ const cohortBuckets = Array.from({ length: 8 }, (_, i) => {
+ const b = dhakaMonthStart(baseMonth - (7 - i));
+ return {
+ year: b.year,
+ month: b.month,
+ label: b.date.toLocaleDateString("en-US", { month: "short", timeZone: "Asia/Dhaka" }),
+ };
+ });
+ const retention = cohortBuckets.map((b) => {
+ const cohort = universities.filter((u) => {
+ const c = new Date(new Date(u.createdAt).getTime() + DHAKA_OFFSET_MS);
+ return c.getUTCFullYear() === b.year && c.getUTCMonth() === b.month;
+ });
+ const active = cohort.filter((u) => u.isActive).length;
+ return {
+ label: b.label,
+ universities: cohort.length,
+ active,
+ retentionPct: cohort.length === 0 ? null : Math.round((active / cohort.length) * 100),
+ };
+ }).filter((r) => r.universities > 0);
+
+ // D55: feature-adoption heat — one row per tenant, one column per
+ // feature, so the platform owner sees which universities actually
+ // USE the product (attendance as the stickiest feature).
+ const adoption = universities.map((u) => ({
+ id: u.id,
+ name: u.shortName || u.name,
+ plan: u.plan?.name ?? "—",
+ isActive: u.isActive,
+ users: u._count.users,
+ schedules: schedulesByUni.get(u.id) ?? 0,
+ attendance: attendanceByUni.get(u.id) ?? 0,
+ assignments: assignmentsByUni.get(u.id) ?? 0,
+ results: resultsByUni.get(u.id) ?? 0,
+ notices: noticesByUni.get(u.id) ?? 0,
+ }));
+
  const roles = roleCounts.map((r) => ({
  label: r.role.replace("_", " "),
  value: r._count.role,
@@ -246,6 +322,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  perUniversity,
  roles,
  totalSchedules,
+ retention,
+ adoption,
  };
  }
 

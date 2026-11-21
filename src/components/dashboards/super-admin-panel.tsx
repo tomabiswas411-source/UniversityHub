@@ -10,6 +10,7 @@ import {
  Check,
  CreditCard,
  DollarSign,
+ Download,
  GraduationCap,
  History,
  Layers,
@@ -92,6 +93,8 @@ import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { SuperAdminUsersCard } from "@/components/dashboards/super-admin-users-card";
+import { SuperReportCenter } from "@/components/dashboards/report-sheets";
+import { downloadCsv } from "@/lib/csv";
 import { SuperAdminSystemCard } from "@/components/dashboards/super-admin-system-card";
 import type {
  DepartmentDTO,
@@ -142,6 +145,24 @@ interface SuperOverview {
  plans: PlanRow[];
 }
 
+/** D55: tinted heat cell for the adoption matrix — 0 stays neutral,
+    small values tint light green, heavy usage deep green. */
+function heatCell(value: number) {
+ const level = value === 0 ? 0 : value < 5 ? 1 : value < 25 ? 2 : value < 100 ? 3 : 4;
+ const bg = [
+ "bg-transparent",
+ "bg-emerald-100/60 dark:bg-emerald-950/30",
+ "bg-emerald-200/80 dark:bg-emerald-900/40",
+ "bg-emerald-300/80 dark:bg-emerald-800/50",
+ "bg-emerald-400/90 dark:bg-emerald-700/60",
+ ][level];
+ return (
+ <td className={cn("px-2 py-2 text-right tabular-nums", bg)} title={`${value} rows`}>
+ {value}
+ </td>
+ );
+}
+
 interface PlatformAnalytics {
  hasData: boolean;
  growthMonths: { label: string; value: number }[];
@@ -161,6 +182,24 @@ interface PlatformAnalytics {
  }[];
  roles: { label: string; value: number }[];
  totalSchedules: number;
+ retention?: {
+ label: string;
+ universities: number;
+ active: number;
+ retentionPct: number | null;
+ }[];
+ adoption?: {
+ id: string;
+ name: string;
+ plan: string;
+ isActive: boolean;
+ users: number;
+ schedules: number;
+ attendance: number;
+ assignments: number;
+ results: number;
+ notices: number;
+ }[];
 }
 
 /* ---------------- form state ---------------- */
@@ -1757,8 +1796,136 @@ export function SuperAdminPanel({
  </table>
  </div>
  </SectionCard>
+
+ {/* ===== D55: retention cohorts ===== */}
+ {analytics.retention && analytics.retention.length > 0 && (
+ <SectionCard title="Retention cohorts (by signup month)" icon={TrendingUp}>
+ <div className="overflow-x-auto">
+ <table className="w-full min-w-[420px] text-sm">
+ <thead>
+ <tr className="border-b text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+ <th className="py-2 pr-3">Cohort</th>
+ <th className="py-2 pr-3 text-right">Joined</th>
+ <th className="py-2 pr-3 text-right">Still active</th>
+ <th className="py-2 text-right">Retention</th>
+ </tr>
+ </thead>
+ <tbody>
+ {analytics.retention.map((r) => (
+ <tr key={r.label} className="border-b last:border-0">
+ <td className="py-2.5 pr-3 font-semibold">{r.label}</td>
+ <td className="py-2.5 pr-3 text-right tabular-nums">{r.universities}</td>
+ <td className="py-2.5 pr-3 text-right tabular-nums">{r.active}</td>
+ <td className="py-2.5 text-right">
+ <Badge
+ className={cn(
+ "tabular-nums",
+ r.retentionPct === null
+ ? "bg-muted text-muted-foreground"
+ : r.retentionPct >= 80
+ ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+ : r.retentionPct >= 50
+ ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+ : "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+ )}
+ >
+ {r.retentionPct === null ? "—" : `${r.retentionPct}%`}
+ </Badge>
+ </td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ <p className="mt-2 text-xs text-muted-foreground">
+ How many universities from each signup month are still active tenants today — the earliest churn signal the platform has.
+ </p>
+ </SectionCard>
+ )}
+
+ {/* ===== D55: feature adoption heat + CSV export ===== */}
+ {analytics.adoption && analytics.adoption.length > 0 && (
+ <SectionCard
+ title="Feature adoption heat"
+ icon={Layers}
+ action={
+ <Button
+ size="sm"
+ variant="outline"
+ className="h-9 gap-1.5"
+ onClick={() =>
+ downloadCsv(
+ `platform-adoption-${new Date().toISOString().slice(0, 10)}.csv`,
+ [
+ ["university", "plan", "active", "users", "schedules", "attendance", "assignments", "results", "notices"],
+ ...analytics.adoption!.map((a) => [
+ a.name, a.plan, String(a.isActive), String(a.users),
+ String(a.schedules), String(a.attendance), String(a.assignments),
+ String(a.results), String(a.notices),
+ ]),
+ ]
+ )
+ }
+ >
+ <Download className="h-4 w-4" />
+ CSV
+ </Button>
+ }
+ >
+ <div className="max-h-96 overflow-auto rounded-xl border">
+ <table className="w-full min-w-[640px] text-sm">
+ <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
+ <tr className="text-left text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+ <th className="px-3 py-2">University</th>
+ <th className="px-2 py-2">Plan</th>
+ <th className="px-2 py-2 text-right">Users</th>
+ <th className="px-2 py-2 text-right">Routines</th>
+ <th className="px-2 py-2 text-right">Attendance</th>
+ <th className="px-2 py-2 text-right">Assign.</th>
+ <th className="px-2 py-2 text-right">Results</th>
+ <th className="px-2 py-2 text-right">Notices</th>
+ </tr>
+ </thead>
+ <tbody>
+ {analytics.adoption.map((a) => (
+ <tr key={a.id} className="border-t">
+ <td className="px-3 py-2 font-semibold">
+ <span className="inline-flex items-center gap-1.5">
+ {a.name}
+ {!a.isActive && <Badge variant="outline" className="text-[10px] text-muted-foreground">inactive</Badge>}
+ </span>
+ </td>
+ <td className="px-2 py-2 text-muted-foreground">{a.plan}</td>
+ <td className="px-2 py-2 text-right tabular-nums">{a.users}</td>
+ {heatCell(a.schedules)}
+ {heatCell(a.attendance)}
+ {heatCell(a.assignments)}
+ {heatCell(a.results)}
+ {heatCell(a.notices)}
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ <p className="mt-2 text-xs text-muted-foreground">
+ Deeper green = heavier real usage of that feature. Attendance rows are the stickiest signal — a tenant with routines but no attendance is only half-onboarded.
+ </p>
+ </SectionCard>
+ )}
  </>
  )}
+ </TabsContent>
+
+ {/* ===== D46-48: Super-admin Report Center tab ===== */}
+ <TabsContent value="reports" className="space-y-4">
+ <SuperReportCenter
+ universities={universities.map((u) => ({
+ id: u.id,
+ name: u.name,
+ shortName: u.shortName,
+ isActive: u.isActive,
+ }))}
+ />
  </TabsContent>
 
  {/* ===== Platform Users tab ===== */}

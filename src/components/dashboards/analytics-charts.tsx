@@ -197,6 +197,55 @@ export function TrendAreaChart({
  );
 }
 
+/* ---------------- Multi-series line (per-course trends) ----------------
+ D43: several lines over a shared week axis. `rows` entries look like
+ { week: "Nov 1", CSE101: 85, CSE102: 72 } and `series` names which
+ keys to draw (in order, colors cycle through PIE_PALETTE). */
+export function MultiLineChart({
+ rows,
+ series,
+ hint,
+}: {
+ rows: Record<string, string | number>[];
+ series: string[];
+ hint?: string;
+}) {
+ if (rows.length === 0 || series.length === 0) return <ChartEmpty hint={hint} />;
+ return (
+ <ResponsiveContainer width="100%" height="100%">
+ <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 0, left: -16 }}>
+ <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border, 220 13% 91%))" />
+ <XAxis dataKey="week" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+ <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={36} />
+ <Tooltip
+ contentStyle={tooltipStyle}
+ formatter={(v) => [`${Number(v)}%`]}
+ />
+ <Legend
+ verticalAlign="top"
+ height={30}
+ iconType="circle"
+ iconSize={8}
+ formatter={(value) => <span style={{ fontSize: 11 }}>{value}</span>}
+ />
+ {series.map((key, i) => (
+ <Line
+ key={key}
+ type="monotone"
+ dataKey={key}
+ name={key}
+ stroke={PIE_PALETTE[i % PIE_PALETTE.length]}
+ strokeWidth={2.2}
+ dot={{ r: 2.5, fill: PIE_PALETTE[i % PIE_PALETTE.length] }}
+ activeDot={{ r: 5 }}
+ connectNulls
+ />
+ ))}
+ </LineChart>
+ </ResponsiveContainer>
+ );
+}
+
 /* ---------------- Donut (distribution) ---------------- */
 export function DonutChart({
  data,

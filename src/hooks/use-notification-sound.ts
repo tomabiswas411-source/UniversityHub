@@ -58,6 +58,39 @@ export function showBrowserNotification(
  }
 }
 
+/** OS-level notification that also works while the tab is HIDDEN.
+ *  D49: routed through the service worker when available (the SW
+ *  survives tab-hiding; a page Notification may be suppressed), with
+ *  the deep link carried in `data` so sw.js notificationclick opens
+ *  the right view. Falls back to the classic page notification. */
+export async function showOsNotification(
+ title: string,
+ body: string,
+ link?: string | null
+) {
+ try {
+ if (typeof window === "undefined" || !("Notification" in window)) return;
+ if (Notification.permission !== "granted") return;
+ const target = link && link.startsWith("/") ? link : "/?view=dashboard";
+ if ("serviceWorker" in navigator) {
+ const reg = await navigator.serviceWorker.getRegistration();
+ if (reg) {
+ await reg.showNotification(title, {
+ body,
+ icon: "/icons/icon-192x192.png",
+ badge: "/icons/icon-96x96.png",
+ tag: "universityhub-notif",
+ data: { link: target },
+ });
+ return;
+ }
+ }
+ showBrowserNotification(title, body, link);
+ } catch {
+ // fallback silently — a failed OS notification must never break the app
+ }
+}
+
 export async function requestNotificationPermission(): Promise<boolean> {
  try {
  if (typeof window === "undefined" || !("Notification" in window))
